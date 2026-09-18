@@ -1,0 +1,10 @@
+{
+  "name": "cashier-web-admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Web 管理后台（零构建链：原生 ES modules，浏览器直接打开或 node server.mjs）",
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}

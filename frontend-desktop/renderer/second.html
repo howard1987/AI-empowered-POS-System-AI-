@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>顾客信任屏</title>
+<style>
+  /* 副屏：按高保真原型「顾客信任屏」设计；左侧购物明细 + 右侧会员卡（图三）；
+     字号随屏高自适应（1920×1080 / 1366×768 / 4K） */
+  :root { --fs: clamp(12px, 1.25vh, 18px); --mono: "JetBrains Mono", Consolas, monospace; }
+  html, body { height: 100%; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; font-size: var(--fs);
+    background: linear-gradient(160deg, #1d3a2a, #24503a 60%, #1d3a2a);
+    color: #eef3e4; display: flex; overflow: hidden;
+  }
+  .cd-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .cd-head { display: flex; justify-content: space-between; align-items: center;
+    padding: 1.1rem 2rem; border-bottom: 1px solid rgba(255, 255, 255, .12); }
+  .cd-head .t { font-size: clamp(14px, 1.7vh, 20px); letter-spacing: .2em; color: #bcd9bd; font-weight: 600; }
+  .cd-head .s { font-size: clamp(10px, 1.1vh, 13px); color: #8fae95; }
+  .cd-items { flex: 1; padding: .6rem 2rem; overflow: auto; }
+  .cd-row { display: flex; justify-content: space-between; gap: 12px;
+    padding: clamp(8px, 1.05vh, 12px) 0; border-bottom: 1px dashed rgba(255, 255, 255, .14);
+    font-size: clamp(13px, 1.6vh, 17px); }
+  .cd-row .n { color: #d7e4c9; }
+  .cd-row .a { font-family: var(--mono); font-weight: 700; color: #fff; }
+  .empty { text-align: center; color: #7fa286; font-size: clamp(14px, 2vh, 20px); margin-top: 14vh; }
+  .cd-total { padding: .9rem 2rem; border-top: 1px solid rgba(255, 255, 255, .14);
+    display: flex; align-items: baseline; justify-content: space-between; }
+  .cd-total .l { font-size: clamp(12px, 1.4vh, 15px); color: #bcd9bd; letter-spacing: .1em; }
+  .cd-total .v { font-family: var(--mono); font-size: clamp(34px, 6vh, 64px); font-weight: 800;
+    color: #ffd9a8; line-height: 1.15; }
+  .cd-total .v small { font-size: .45em; }
+  .cd-save { margin: .3rem 2rem .8rem; padding: .6rem 1.1rem;
+    background: rgba(255, 255, 255, .09); border: 1px dashed rgba(255, 255, 255, .25);
+    border-radius: 10px; font-size: clamp(11px, 1.3vh, 14px); color: #ffe9cf;
+    display: flex; justify-content: space-between; }
+  .cd-save b { font-family: var(--mono); color: #ffce8f; }
+  .cd-ads { height: clamp(60px, 11vh, 96px); margin: 0 2rem 1.3rem; border-radius: 10px;
+    background: linear-gradient(100deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .04));
+    display: flex; align-items: center; padding: 0 1.4rem; gap: 12px; }
+  .cd-ads .ad-emo { font-size: 1.6em; }
+  .cd-ads .big { font-size: clamp(14px, 1.8vh, 18px); font-weight: 700; color: #fff; }
+  .cd-ads .sm { font-size: clamp(10px, 1.2vh, 13px); color: #bcd9bd; }
+
+  /* ─── 右侧会员卡（图三：头像 / 三资产 / 等级系数 / 累计分红 / 活跃 / 失效） ─── */
+  .cd-member { width: clamp(300px, 27vw, 420px); flex: none; border-left: 1px solid rgba(255, 255, 255, .12);
+    display: flex; align-items: center; justify-content: center; padding: 1.4rem 1.5rem; }
+  .cm-empty { color: #7fa286; text-align: center; font-size: clamp(13px, 1.6vh, 17px); line-height: 2; }
+  .cm-card { width: 100%; background: #fbf9f2; color: #333; border-radius: 18px;
+    padding: 1.2rem 1.3rem 1rem; box-shadow: 0 10px 30px rgba(0, 0, 0, .3); }
+  .cm-head { display: flex; align-items: center; gap: 12px; }
+  .cm-av { width: clamp(44px, 5.2vh, 58px); height: clamp(44px, 5.2vh, 58px); border-radius: 50%;
+    background: linear-gradient(145deg, #2e8557, #1f5c3e); color: #fff; display: grid; place-items: center;
+    font-size: clamp(18px, 2.4vh, 26px); font-weight: 800; flex: none; }
+  .cm-name { font-size: clamp(15px, 2vh, 22px); font-weight: 800; color: #2c2a24; }
+  .cm-meta { font-size: clamp(10px, 1.25vh, 13px); color: #8b8574; margin-top: 2px; }
+  .cm-badge { margin-left: auto; background: #e6f4e9; color: #2e8557; font-size: clamp(10px, 1.2vh, 12px);
+    padding: .2rem .7rem; border-radius: 99px; font-weight: 700; flex: none; }
+  .cm-assets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin: 16px 0 13px; }
+  .cm-a { border-radius: 13px; padding: .65rem .4rem .6rem; text-align: center; }
+  .cm-a span { display: block; font-size: clamp(9.5px, 1.1vh, 11.5px); color: #5d5749; margin-bottom: 5px; }
+  .cm-a b { font-family: var(--mono); font-size: clamp(13px, 1.7vh, 17px); white-space: nowrap; }
+  .cm-a.bal { background: #e6f4e9; } .cm-a.bal b { color: #2e8557; }
+  .cm-a.div { background: #fdeee0; } .cm-a.div b { color: #e4682a; }
+  .cm-a.pts { background: #faf3dd; } .cm-a.pts b { color: #b8860b; }
+  .cm-rows { border-top: 1px dashed #e5dfd0; }
+  .cm-row { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    padding: clamp(6px, .8vh, 9px) 0; border-bottom: 1px dashed #efe9da; font-size: clamp(11px, 1.35vh, 14px); }
+  .cm-row span { color: #8b8574; }
+  .cm-row b { font-family: var(--mono); color: #2c2a24; font-weight: 700; text-align: right; }
+  .cm-row.dim { opacity: .5; }
+
+  #doneOverlay { position: fixed; inset: 0; background: rgba(20, 40, 28, .72); display: none;
+    align-items: center; justify-content: center; flex-direction: column; gap: 12px; z-index: 9; }
+  #doneOverlay .big { font-size: clamp(40px, 8vh, 72px); font-weight: 800; color: #ffd9a8; letter-spacing: .08em; }
+  #doneOverlay .sub { font-size: clamp(14px, 2.2vh, 20px); color: #d7e4c9; }
+</style>
+</head>
+<body>
+  <div class="cd-main">
+    <div class="cd-head">
+      <span class="t">欢 光 临 社 区 超 市</span>
+      <span class="s" id="cdMeta">—</span>
+    </div>
+    <div class="cd-items" id="cdItems"><div class="empty">扫描商品后，明细将显示在这里</div></div>
+    <div class="cd-total">
+      <span class="l">本 单 应 付</span>
+      <span class="v"><small>¥</small><span id="cdAmount">0.00</span></span>
+    </div>
+    <div class="cd-save"><span>会员已帮您节省</span><b id="cdSaved">¥0.00</b></div>
+    <div class="cd-ads">
+      <span class="ad-emo">📺</span>
+      <div><div class="big">今日促销 · 会员 95 折</div><div class="sm">全场满 100 减 10 · 储值多充多送</div></div>
+    </div>
+  </div>
+
+  <!-- 右侧会员卡（图三：识别会员后展示资产明细，未识别展示引导占位） -->
+  <aside class="cd-member">
+    <div class="cm-empty" id="cmEmpty">👤 识别会员后<br>在此展示会员权益</div>
+    <div class="cm-card" id="cmCard" style="display:none">
+      <div class="cm-head">
+        <div class="cm-av" id="cmAv">会</div>
+        <div>
+          <div class="cm-name" id="cmName">—</div>
+          <div class="cm-meta" id="cmMeta">—</div>
+        </div>
+        <span class="cm-badge">正常</span>
+      </div>
+      <div class="cm-assets">
+        <div class="cm-a bal"><span>储值余额</span><b id="cmBalance">¥0.00</b></div>
+        <div class="cm-a div"><span>可用分红</span><b id="cmDividend">¥0.00</b></div>
+        <div class="cm-a pts"><span>积分</span><b id="cmPoints">0</b></div>
+      </div>
+      <div class="cm-rows">
+        <div class="cm-row"><span>等级系数（分红权重）</span><b id="cmWeight">×1.0</b></div>
+        <div class="cm-row"><span>终身累计已得分红</span><b id="cmCum">—</b></div>
+        <div class="cm-row"><span>活跃状态</span><b id="cmActive">—</b></div>
+        <div class="cm-row"><span>下次失效分红</span><b id="cmExpire">—</b></div>
+        <div class="cm-row dim"><span>累计失效（透明展示）</span><b id="cmExpired">—</b></div>
+      </div>
+    </div>
+  </aside>
+
+  <div id="doneOverlay">
+    <div class="big">✓ 支付成功</div>
+    <div class="sub" id="doneSub">欢迎再次光临</div>
+  </div>
+<script>
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  const fmt = n => '¥' + Number(n || 0).toFixed(2);
+  const maskPhone = s => String(s || '').replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2');
+  let doneTimer = null;
+
+  // 会员卡（图三）
+  function renderMember(m) {
+    const card = $('#cmCard'), empty = $('#cmEmpty');
+    if (!m || !m.name) { card.style.display = 'none'; empty.style.display = 'block'; return; }
+    empty.style.display = 'none'; card.style.display = 'block';
+    $('#cmAv').textContent = (m.name || '会').charAt(0);
+    $('#cmName').textContent = m.name;
+    $('#cmMeta').textContent = `${maskPhone(m.phone)} · ${m.levelName || '普通会员'} · ${m.joined || '—'}`;
+    $('#cmBalance').textContent = '¥' + Number(m.balance || 0).toFixed(2);
+    $('#cmDividend').textContent = '¥' + Number(m.dividend || 0).toFixed(2);
+    $('#cmPoints').textContent = Number(m.points || 0).toLocaleString('zh-CN');
+    $('#cmWeight').textContent = '×' + (Number(m.weight) || 1);
+    $('#cmCum').textContent = `¥${Number(m.cumDividend || 0).toFixed(2)}${m.cap ? ' / 上限 ¥' + Number(m.cap).toFixed(2) : ''}`;
+    $('#cmActive').textContent = m.active || '—';
+    $('#cmExpire').textContent = m.expireAmount ? '¥' + Number(m.expireAmount).toFixed(2) + (m.expireDate ? ' · ' + m.expireDate : '') : '—';
+    $('#cmExpired').textContent = m.expiredTotal ? '¥' + Number(m.expiredTotal).toFixed(2) : '—';
+  }
+
+  window.cashier.onSync(p => {
+    const items = p.items || [];
+    $('#cdItems').innerHTML = items.length ? items.map(i =>
+      `<div class="cd-row"><span class="n">${esc(i.name)}${i.weighted
+        ? ' ' + Number(i.qty).toFixed(2) + esc(i.unit || 'kg')
+        : (Number(i.qty) > 1 ? ' ×' + Number(i.qty) : '')}</span><span class="a">${fmt(i.amount)}</span></div>`
+    ).join('') : '<div class="empty">扫描商品后，明细将显示在这里</div>';
+    $('#cdAmount').textContent = Number(p.payable || 0).toFixed(2);
+    $('#cdSaved').textContent = fmt(p.saved);
+    if (p.memberName) {
+      $('#cdSaved').parentElement.querySelector('span').textContent = `会员 ${esc(p.memberName)} 已帮您节省`;
+    } else {
+      const lab = document.querySelector('.cd-save span');
+      if (lab && lab.textContent.startsWith('会员')) lab.textContent = '会员已帮您节省';
+    }
+    $('#cdMeta').textContent = `${new Date().toLocaleString('zh-CN')} · 收银员 ${esc(p.cashierName || '—')}`;
+    renderMember(p.member || null);
+    if (p.status === 'done') {
+      const ov = $('#doneOverlay');
+      ov.style.display = 'flex';
+      $('#doneSub').textContent = `订单 ${esc(p.orderNo || '')} · 欢迎再次光临`;
+      clearTimeout(doneTimer);
+      doneTimer = setTimeout(() => { ov.style.display = 'none'; }, 5000);
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>收银端 · 服务器配置</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Microsoft YaHei", system-ui, sans-serif; background: #f5f2ea; color: #2d2a24; padding: 28px 30px; user-select: none; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { font-size: 12.5px; color: #8a857a; margin-bottom: 22px; }
+  label { display: block; font-size: 13.5px; font-weight: 600; margin: 14px 0 6px; }
+  input { width: 100%; font-size: 15px; padding: 10px 12px; border: 1.5px solid #d8d2c4; border-radius: 8px; background: #fff; color: #2d2a24; outline: none; }
+  input:focus { border-color: #2e7d52; }
+  .hint { font-size: 12px; color: #8a857a; margin-top: 6px; line-height: 1.7; }
+  .row { display: flex; gap: 10px; margin-top: 18px; }
+  button { flex: 1; font-size: 15px; font-weight: 600; padding: 11px 0; border: none; border-radius: 8px; cursor: pointer; }
+  .btn-test { background: #fff; border: 1.5px solid #2e7d52; color: #2e7d52; }
+  .btn-go { background: #2e7d52; color: #fff; }
+  .btn-go:disabled { background: #b9cfc2; cursor: not-allowed; }
+  #msg { margin-top: 14px; font-size: 13.5px; min-height: 20px; line-height: 1.6; }
+  .ok { color: #2e7d52; } .err { color: #b5544a; }
+  .cfgpath { margin-top: 20px; font-size: 11px; color: #a29d90; word-break: break-all; border-top: 1px dashed #d8d2c4; padding-top: 12px; }
+  .quit { position: fixed; right: 16px; bottom: 12px; font-size: 12px; color: #a29d90; cursor: pointer; text-decoration: underline; }
+</style>
+</head>
+<body>
+  <h1>🛒 超市收银系统 · 收银端</h1>
+  <div class="sub">首次使用：先指定收银服务器地址（服务端那台电脑的 IP + 端口）</div>
+
+  <label>收银服务器地址</label>
+  <input id="srv" placeholder="例如 http://192.168.0.6:3100" spellcheck="false">
+  <div class="hint">
+    · 服务端程序所在的电脑 IP，端口默认 3100（可在该机浏览器地址栏验证：能打开后台就填那个地址）<br>
+    · 本机作为服务器时填 <b>http://127.0.0.1:3100</b><br>
+    · 配置保存在本机，不影响其他收银台；以后想改可删除下方配置文件后重开，或在断连错误页点「修改服务器地址」
+  </div>
+
+  <div class="row">
+    <button class="btn-test" id="btnTest">🔍 测试连接</button>
+    <button class="btn-go" id="btnGo" disabled>保存并启动 →</button>
+  </div>
+  <div id="msg"></div>
+  <div class="cfgpath" id="cfgpath"></div>
+  <span class="quit" id="quit">退出程序</span>
+
+<script>
+  const $ = s => document.querySelector(s);
+  let tested = false;
+  DesktopShell.desktopInfo().then(info => {
+    $('#srv').value = info.server || '';
+    $('#cfgpath').textContent = '配置文件：' + info.configPath;
+  });
+  $('#srv').addEventListener('input', () => { tested = false; $('#btnGo').disabled = true; $('#msg').textContent = ''; });
+  $('#btnTest').onclick = async () => {
+    const url = $('#srv').value.trim();
+    if (!url) { $('#msg').innerHTML = '<span class="err">请先填写服务器地址</span>'; return; }
+    $('#msg').innerHTML = '<span style="color:#8a857a">⏳ 正在连接…</span>';
+    const r = await DesktopShell.testServer(url);
+    if (r.ok) {
+      tested = true; $('#btnGo').disabled = false;
+      $('#msg').innerHTML = '<span class="ok">✔ 连接成功（HTTP ' + r.status + '）—— 点「保存并启动」进入收银台</span>';
+    } else {
+      $('#msg').innerHTML = '<span class="err">✖ 连不上：' + (r.error || ('HTTP ' + r.status)) + '<br>检查：服务端是否已启动、IP 是否正确、Windows 防火墙是否放行 3100 端口</span>';
+    }
+  };
+  $('#btnGo').onclick = async () => {
+    if (!tested) return;
+    const r = await DesktopShell.saveServer($('#srv').value.trim());
+    if (!r.ok) { $('#msg').innerHTML = '<span class="err">' + (r.error || '保存失败') + '</span>'; return; }
+    $('#btnGo').disabled = true;
+    $('#msg').innerHTML = '<span class="ok">已保存，正在启动收银台…</span>';
+    DesktopShell.applyAndStart();
+  };
+  $('#srv').addEventListener('keydown', e => { if (e.key === 'Enter') $('#btnTest').click(); });
+  $('#quit').onclick = () => cashier.quitApp();
+</script>
+</body>
+</html>

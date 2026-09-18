@@ -1,0 +1,15 @@
+{
+  "name": "员工移动端工作台",
+  "short_name": "员工工作台",
+  "description": "超市员工移动端工作台（8.5 M15 PWA）：移动收银 / 收货 / 退货 / 盘点 / 报损",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f5f6f8",
+  "theme_color": "#2563eb",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

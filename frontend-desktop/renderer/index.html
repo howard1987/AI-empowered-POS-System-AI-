@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="fgRVRSBBFC3diDU9ObXaSz">
+<head data-page-node-id="vWR02k1KgQ9QCPg9vaNvIS">
+<meta charset="utf-8" data-page-node-id="6SMyMpKRPHibR58bTRhEId">
+<title>收银台 — 超市收银系统</title>
+<link rel="stylesheet" href="pos.css" data-page-node-id="xgTiihoZqkyd2ZXNFzX8yz">
+</head>
+<body data-page-node-id="oiT33u69chxJFE7wXugO8A">
+
+<!-- ───── 登录 ───── -->
+<div id="login" data-page-node-id="k6mt755gX7MH3fGXjsbcXl">
+  <div class="box" data-page-node-id="vSsTZNCNA3VFFkBnK9Wffm">
+    <h2 data-page-node-id="wUjbBE3mWTOl7H1CYRKXnL">🛒 社区超市 · 收银台</h2>
+    <input id="lgApi" placeholder="后端地址" value="http://localhost:3100" data-page-node-id="tyUu0pyJF6wJD6Ldbc6zp0">
+    <input id="lgUser" placeholder="员工工号" value="ADMIN" data-page-node-id="9pHEgiyKHDUCHzHP3DpqIa">
+    <input id="lgPwd" type="password" placeholder="密码" data-page-node-id="1Bupt24R0igSVEOpFb6wnC">
+    <button id="lgGo" data-page-node-id="AWArOXZ3lK32OXKv4lBrdI">登 录</button>
+    <div class="err" id="lgErr" data-page-node-id="FrANkJYpD0QUW6ls4MVgRb"></div>
+    <div class="err" id="lgNet" style="min-height:16px;font-size:12px" data-page-node-id="wqyjYIBU7Nnu30imYBZCtU"></div>
+    <div class="lg-foot" data-page-node-id="SJxDYCVPrdlr31PN5z38M0">
+      <span id="lgDisp" data-page-node-id="5c7Lal1PfN4aLlPq1tIah2"></span>
+      <button id="lgQuit" style="display:none" onclick="quitApp()" data-page-node-id="RhkQoX3UWm02LuO6ApXvZF">关闭程序</button>
+    </div>
+  </div>
+</div>
+
+<!-- ───── 主界面 ───── -->
+<div id="app" data-page-node-id="uTeWuMGph7nj6J2GYMofF7">
+  <header class="pos-header" data-page-node-id="WbzfhPTBzfz7xWAmAdiTsp">
+    <div class="hd-left" data-page-node-id="QQL2FiorropgBm2i0IEQwA"><b data-page-node-id="lv7XSoRbnQFQw8vfKKcJgx">🛒 收银台</b><span class="hd-store" data-page-node-id="EKwgpHFpHXGWm2dtWOWES0">社区超市</span></div>
+    <div class="hd-mid" id="hdShift" data-page-node-id="INSPIFgNi2ICVXFc7vZTxS">班次：未开班</div>
+    <div class="hd-right" data-page-node-id="DZkY4s640R1YiYKWHuB9He">
+      <span class="pill o" id="hdVoice" data-page-node-id="UVhrvoRAgIRAVsE3WB6YL4">🔊 语音播报已开</span>
+      <span class="pill n" id="hdDisp" data-page-node-id="w27GHM7lsmVG8Bh0NDZOJ9">🖥 单屏</span>
+      <button class="b-ai" onclick="openAI()" data-page-node-id="i3iTowmSTONpa5nn6GAVtI">🤖 AI 识别</button>
+      <button onclick="openPeriph()" data-page-node-id="kbn0KJW8XfNrPCESKCB5vA">⚙ 外设</button>
+      <button onclick="doLogout()" data-page-node-id="Se4Ll1iQiJGnbJsjZJaYzB">退出</button>
+    </div>
+  </header>
+
+  <main class="pos" data-page-node-id="F1QbYQHBCtW1YMgHsioFSU">
+    <!-- 左：搜索 + 分类 + 商品宫格 -->
+    <div class="pos-left" data-page-node-id="y76iNT7Uhowu52gfTPu6LA">
+      <div class="pos-top" data-page-node-id="odxAZTuBINCL7aQEPhBZU3">
+        <div class="search" data-page-node-id="lWWzgIetHqrsRsQTpsQ4fV">🔍 <input id="scanInput" placeholder="扫码 / 搜索：条码 ｜ PLU ｜ 商品名" autocomplete="off" autocapitalize="off" data-page-node-id="J5Xl5ozYwWmhWb9AhIqOxS"></div>
+      </div>
+      <div class="cats" id="cats" data-page-node-id="bH177M0CIxzmXMtblpHiU4"></div>
+      <div class="plu" id="plu" data-page-node-id="37fqNhlllZAGrhpsKD9Lwc"></div>
+      <button class="plu-more" id="pluMore" style="display:none" onclick="loadPlu()" data-page-node-id="iPXLeXBSHmqa9Dh9bLbTmP">加载更多商品</button>
+    </div>
+
+    <!-- 右：购物车 + 支付条 + 辅助操作 -->
+    <div class="pos-right" data-page-node-id="G3ecxDMrtU5CxJ8dsmSe5X">
+      <div class="cart" data-page-node-id="5FnSkL5x5MkHml7TQyFVKS">
+        <div class="cart-h" data-page-node-id="6Cu65CiQrwKo0AyMaq7Kg9"><b data-page-node-id="1v5k0DnrhyPdOZoDmAJ2V8">当前购物车（<span id="cartCnt" data-page-node-id="FSiAHFTexEWuWVpVy2xwu1">0</span> 件）</b><span class="pill g" id="cartPromo" data-page-node-id="jPdYvWqKefbYWC5ELnLGAz">结账自动匹配促销</span></div>
+        <div class="member-chip" id="memberChip" style="display:none" data-page-node-id="bClBKZmWScndxLAYlYZIC1">
+          <div class="av" id="mAv" data-page-node-id="ye8lckBhJ4FSNqaniMq1MG">会</div>
+          <div data-page-node-id="h5DdXYCNE9q7mA86IsT8eJ"><div class="nm" id="mName" data-page-node-id="ghmN1GXN93gWQ5eci8S0p2"></div><div class="lv" id="mSub" data-page-node-id="9GB7UEd72Kyu4kK7ooMqVw"></div></div>
+          <div class="bal" id="mBal" data-page-node-id="3nQRYZbbdkXCrEI1kuZgp2"></div>
+        </div>
+        <div class="cart-rows" id="cartRows" data-page-node-id="O2Spu2u5Rviu0izljbYQbt"><div class="cart-empty" data-page-node-id="Y04VJcesN011Fl9S9fbwDx">扫描商品条码，或用左侧商品宫格点选入车</div></div>
+        <div class="pay-bar" data-page-node-id="BHLHTcHG2gtYvoHfHfGxBr">
+          <div class="pay-total" data-page-node-id="2abNyvDG6caZhG6412qsMO">
+            <span class="lab" id="payLab" data-page-node-id="f0F0mUcij1rJC53RU5pxbQ">应收合计</span>
+            <span class="val" data-page-node-id="1iyp2jJbZXCTHtOQcrCGbF"><small data-page-node-id="JmHmkRQxSO6NyrOVsRcRo8">¥</small><span id="payable" data-page-node-id="1DuaYPy09Itr4bwEWTF6gE">0.00</span></span>
+          </div>
+          <div class="pay-keys" data-page-node-id="K9zQWCeAd3vv022veePtYB">
+            <button class="k" id="btnPay" onclick="openPay()" data-page-node-id="XeJVj47mGbEBOLDWZwM6rj">💳 结账 F9</button>
+            <button class="k" onclick="openMember()" data-page-node-id="i2QpeGK7PHihyzgesep5iG">👤 会员 F2</button>
+            <button class="k" onclick="snack('抹零：结账时按店内规则自动优惠，无需手工操作')" data-page-node-id="4vFqTktNaQICd1chKI9CLh">🏷️ 抹零</button>
+            <button class="k" onclick="holdOrder()" data-page-node-id="1m70VwAC82VPrzcXUcjRLm">⏸️ 挂单 F1</button>
+          </div>
+          <div class="pay-words" id="payWords" data-page-node-id="YMnfud2NnplCFtiVeItgy5">按 <b data-page-node-id="nOyJTD6HKyvjRiXHVoAFHJ">余额</b> 支付自动抵扣分红 · <b data-page-node-id="gJEcBOzWvMFXZZMPiGoxrp">双屏</b> 同步顾客明细</div>
+        </div>
+      </div>
+      <div class="side-ops" data-page-node-id="seDIBsVGXAlgiEG2vSrL9O">
+        <button onclick="pickOrder()" data-page-node-id="PyPGLXKoAk5ALR30h0WdPu">📂 取单</button>
+        <button onclick="clearCart()" data-page-node-id="XjH0YdCPLPL9eyHfh31EXM">🗑 清空</button>
+        <button onclick="openRecharge()" data-page-node-id="fgS8CanOA8jaAAgIoekbDR">💰 充值代收</button>
+        <button onclick="openShiftDlg()" data-page-node-id="DDgFENe9OGTksBBGJXim50">🔁 交接班</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ───── AI 识别弹层（预包装免扫码 · 一次确认多件） ───── -->
+<div class="mask" id="aiMask" style="display:none" data-page-node-id="V268ozFmJ7wTdK24GQkUJK">
+  <div class="ai-modal" data-page-node-id="A4VS7TLFQhqnzFhk5Xc65E">
+    <div class="mh" data-page-node-id="d7sAMBwe9Dyi4j33TD45T6">
+      <b data-page-node-id="LbyqV7gQbncDA8gqElYwqg">🤖 AI 识别 · 预包装食品免扫码</b>
+      <div class="ai-status" data-page-node-id="MC7KOuqqrMIJGjupFSofz6">
+        <span class="st" id="aiSt" data-page-node-id="JTmWN4uCeNDUpBZ9WFsZtW">识别中 · 本地模型已就绪</span>
+        <span class="st sub" id="aiMeta" data-page-node-id="b9z99ymL8gOnfB9JzDnyVy">—</span>
+      </div>
+      <button onclick="closeAI()" data-page-node-id="hllyLgBsbZJuspsd8EBpgu">✕</button>
+    </div>
+    <div class="ai-body" data-page-node-id="d2sqs9t3X9nyEmJQXTLwwx">
+      <div class="ai-cam" data-page-node-id="uBourZ8KLdtG5zVy0337A2">
+        <video id="aiVideo" autoplay playsinline muted data-page-node-id="VlqDA7Oiw1rIW7cYZVTXMh"></video>
+        <canvas id="aiBox" class="ai-box" data-page-node-id="wOEAmIzLetkxnBtdueKfKD"></canvas>
+        <div class="ai-weight-bar" id="aiWeightBar" style="display:none" data-page-node-id="xtzyaPNSpl3RxVeeXPYqTd"><span id="aiWeightText" data-page-node-id="DbN2bBDGiCXxakYs8Jq7rI"></span></div>
+        <div class="ai-hud" id="aiHud" style="display:none" data-page-node-id="wKddN2N5I49dnJV2XAAqtx">
+          <div class="ah-w" data-page-node-id="DbDE64iCn7xAI0FN4l2KRd"><span data-page-node-id="kYWNi6UjT6ebxaaIKWGZam">总重（已去皮）</span><b id="aiWTotal" data-page-node-id="7jqIZDLaWj9p6p3OTA6VpM">0.00<small data-page-node-id="jsVnLrIWOKfbgp0q1HUIIc"> kg</small></b></div>
+          <span class="pill g" id="aiWStable" data-page-node-id="1Q791NnDYd47gdB2xTcWXC">✓ 称重稳定，可结算</span>
+        </div>
+        <div class="ai-cam-tip" id="aiTip" data-page-node-id="HssZKGbKso8ZhMHdjO2NQS">将商品正面放入画面，点击「拍照识别」</div>
+        <canvas id="aiCanvas" style="display:none" data-page-node-id="9wHKSclJpadE7GnIL5MqO0"></canvas>
+      </div>
+      <div class="ai-side" data-page-node-id="sLCZn3QZoNrmgL3biG4XNu">
+        <div class="ai-side-head" data-page-node-id="DQNXGeH5INyTJKhjZzjKDi"><span class="t" data-page-node-id="ckgYz7dQMuJGIXFT5lYdzJ">识别结果 · 一次确认多件商品</span><span class="pill b" data-page-node-id="p9V3aVg4ComdvOFfB6bpIz">零样本完成已启用</span></div>
+        <div class="ai-cands" id="aiCands" data-page-node-id="FYKe0GFLPKgrGu5F31w3Ke"><div class="ai-cand-empty" data-page-node-id="PG7k6KzCo9trvaZWtylLwQ">识别结果将显示在这里<br data-page-node-id="tf85VCmiGNOz6AdXMtaN3D"><small data-page-node-id="YYkn3m1m1iFyNtzli6pjHh">未识别时请用扫码枪兜底</small></div></div>
+        <div class="ai-side-foot" data-page-node-id="50BBSYcwlX0CKiaOXFwihZ">
+          <button class="btn pri" id="aiConfirm" onclick="confirmAI()" data-page-node-id="XuVD7NZEnOSE0hoVcAFCjg">✓ 全部确认入车</button>
+          <button class="btn alt" onclick="aiModify()" data-page-node-id="cV6xoguzj20CsNLioYZAiC">改选单品</button>
+          <button class="qtyBtn" onclick="aiShoot()" data-page-node-id="MojLlxoyFTedqeVMHKuorj">重拍</button>
+          <button class="qtyBtn" onclick="closeAI()" data-page-node-id="oLJ1MAphFANwL4LsZJf9Yj">取消（扫码兜底）</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ───── 收款对话框 ───── -->
+<dialog id="dlgPay" data-page-node-id="3p8L89D1VPQS1m5PV1NLEs">
+  <h3 style="margin-bottom:6px" data-page-node-id="zcRKMpVjfOjNZcs2eujlek">收款 · <span id="payChannel" data-page-node-id="7Vn746qDC9r2DOxS5UdrCQ">现金</span></h3>
+  <div class="pay-big" data-page-node-id="zcG5FPIBKmbyCAU7p6rJMM">¥<span id="payAmount" data-page-node-id="YY4tFJKlDRLrGOLQBhhCSq">0.00</span></div>
+  <div class="pay-opts" data-page-node-id="s9zTGWb0mp5k4jhWe2yXQL">
+    <div class="pay-opt on" data-ch="现金" onclick="setChannel(this)" data-page-node-id="mBP95FFAWPIBMFDCmSvled">现金<small data-page-node-id="3ndmjlUqTeFDKP5SiN6Bwg">实收自动算找零</small></div>
+    <div class="pay-opt" data-ch="扫码" onclick="setChannel(this)" data-page-node-id="NB7UpXP89JVACnTSyJ9A0s">扫码<small data-page-node-id="LYMmbxuuxD3OFG5qkor2ET">顾客出示付款码</small></div>
+    <div class="pay-opt" data-ch="余额" onclick="setChannel(this)" data-page-node-id="ca50svHbGTaFP4i8g8Zcw9">余额<small data-page-node-id="MB1ivGVIZTECVs0oEZtruh">会员储值抵扣</small></div>
+  </div>
+  <div id="cashBox" data-page-node-id="LCDvahKmlJYB5vnZB3THT2">
+    <input class="t" id="cashGot" type="number" step="0.01" placeholder="实收金额（现金）" data-page-node-id="gKlglyWpn2pnbGeFbeaI0q">
+    <div class="hint" id="changeHint" data-page-node-id="nlVhe6wfTEBRGUvU4yepeN"></div>
+  </div>
+  <div id="balanceBox" class="hint" style="display:none" data-page-node-id="FoomNK8UxFnbEkQp5gpBWq"></div>
+  <div class="dlg-actions" data-page-node-id="YE1yiwzmXyNApRl5AOjpmg">
+    <button class="b ghost" onclick="dlgPay.close()" data-page-node-id="AaQQp9Lx6ozcWV5ASaRBLb">取消</button>
+    <button class="b" id="payGo" data-page-node-id="wpJTscfUGd4w0rB0C8KP1g">确认收款</button>
+  </div>
+  <div class="err" id="payErr" data-page-node-id="krpNSl89l9z7y1XcWK3uqQ"></div>
+</dialog>
+
+<!-- ───── 会员对话框 ───── -->
+<dialog id="dlgMember" data-page-node-id="8JMIDjXC0mnRhgaqLkCwQd">
+  <h3 style="margin-bottom:8px" data-page-node-id="rC124OGJQUkQLE4uFAkG5h">👤 会员识别</h3>
+  <input class="t" id="mSearch" placeholder="手机号 / 卡号 / 姓名，回车查询" autocomplete="off" data-page-node-id="wUry8c2KAJDZvQ5udgSAUE">
+  <div id="mResult" class="m-result" data-page-node-id="YdTc9WfQFy0Ghg8lHwNR69"></div>
+  <div class="dlg-actions" data-page-node-id="H9sW4A0Y1Fa4q4ma1LvlSx"><button class="b ghost" onclick="dlgMember.close()" data-page-node-id="yjEqgnvLDQmpGwsXL1fcEW">关闭</button></div>
+</dialog>
+
+<!-- ───── 挂单列表对话框 ───── -->
+<dialog id="dlgHeld" data-page-node-id="71XAdOQwjL9p7nBWWcAjZj"><h3 style="margin-bottom:10px" data-page-node-id="uCA4WjridSQHkX9oulWvEL">📂 挂单列表</h3><div id="heldList" data-page-node-id="pZyQRdmLX69Rkg1fCBxNb9"></div>
+  <div class="dlg-actions" data-page-node-id="hP5nc6hL1APFl8jFPZEBgX"><button class="b ghost" onclick="dlgHeld.close()" data-page-node-id="B1R97xlO3quiCqdDsdBwDy">关闭</button></div></dialog>
+
+<!-- ───── 开班对话框 ───── -->
+<dialog id="dlgOpen" data-page-node-id="yaEQ6ttAnxFjOYzF0MKMzu">
+  <h3 style="margin-bottom:10px" data-page-node-id="cTwA0swIk5LBxc0f2wVJuM">🔁 开班</h3>
+  <input class="t" id="openPos" placeholder="POS 机号" value="POS-01" data-page-node-id="cgXLfPOsH82T4CQ5No8wsR">
+  <input class="t" id="openFloat" type="number" step="0.01" placeholder="备用金" value="100" data-page-node-id="PeF7vc5O6hhNACx8hNdNA1">
+  <div class="dlg-actions" data-page-node-id="XQkOEBke0JIrdJbm1zW5d6"><button class="b ghost" onclick="dlgOpen.close()" data-page-node-id="og8LRhn60okGZMm1eKR7ch">取消</button><button class="b" id="openGo" data-page-node-id="dX6VjW1GMsYDtsmASw2380">确认开班</button></div>
+</dialog>
+
+<!-- ───── 交班对话框 ───── -->
+<dialog id="dlgClose" data-page-node-id="dKjfyScIOnqucdgxZAjmdR">
+  <h3 style="margin-bottom:10px" data-page-node-id="MHlYhXkI91V6LdTGGeUyRF">🔁 交班盘点</h3>
+  <div class="hint" id="closeSummary" data-page-node-id="CeOLS6qrB6CdelhDbaDCyM"></div>
+  <input class="t" id="closeCash" type="number" step="0.01" placeholder="现金实盘金额" data-page-node-id="ZPfnm5LHGvi6pJOeOjVnBC">
+  <div class="dlg-actions" data-page-node-id="9iNHpZ3wXrCIcn2NRsqJAU"><button class="b ghost" onclick="dlgClose.close()" data-page-node-id="gzJZAly8fsRlDUrSDmc47P">取消</button><button class="b warn" id="closeGo" data-page-node-id="FmCjuf6YJorIKpeaLdPDQ6">确认交班</button></div>
+</dialog>
+
+<!-- ───── 充值代收对话框 ───── -->
+<dialog id="dlgRecharge" data-page-node-id="HaKnj1gxhwOxrDsFCbFJAC">
+  <h3 style="margin-bottom:10px" data-page-node-id="lnu6rquskl9GSfWvUkp06L">💰 会员充值代收 <span class="hint" data-page-node-id="omac8CybOf6OI860ML6mXl">会员 H5 发起，收款确认后余额即时到账</span></h3>
+  <div id="rechargeQueue" style="max-height:300px;overflow:auto" data-page-node-id="8azKHOgtoEQw7vIr2iLo4Y"></div>
+  <div class="dlg-actions" data-page-node-id="lxn1Nu9mOLGTZVyzb3blHN"><button class="b ghost" onclick="dlgRecharge.close()" data-page-node-id="MOpyFnkzBJCvki7LmdAAzQ">关闭</button><button class="b ghost" onclick="refreshRechargeQueue()" data-page-node-id="3MYUMSnRgjvIFbtuvcuB3f">刷新</button></div>
+  <div class="hint" id="rechargeMsg" style="min-height:16px;color:#2a7" data-page-node-id="ACKC6j7aiibh7KfL6rSgLc"></div>
+</dialog>
+
+<!-- ───── 外设/日志对话框 ───── -->
+<dialog id="dlgPeriph" data-page-node-id="qkViaKTm9eDbpterPd2hks">
+  <h3 style="margin-bottom:10px" data-page-node-id="nVnCNzxEtxKN4wCaxV35dG">⚙ 外设连接</h3>
+  <div class="row" data-page-node-id="FBDHncHXtrQ5zER9wjiAbc">
+    <select class="t" id="pMode" style="flex:1" data-page-node-id="pSSP5i7vHZdZotw8Jliqzv">
+      <option value="net" data-page-node-id="IUnbnIl7rnZEa5ZqT0syLd">网口 TCP 9100</option><option value="usb" data-page-node-id="zpfmAAUQSCivyM9AsNLzO4">USB（虚拟串口）</option><option value="bluetooth" data-page-node-id="ma2scgQG7C2MxB9v3qpwuB">蓝牙 SPP</option>
+    </select>
+    <input class="t" id="pAddr" placeholder="IP 或 COM3" style="flex:1" data-page-node-id="vjpeHdXDuOoJvHiUSyfRb7">
+    <button class="b ghost" onclick="connPrinter()" data-page-node-id="1B2FmwZlIsrR5hldepyDnr">连接小票机</button>
+  </div>
+  <div class="row" data-page-node-id="c9RCz6GtZyTnQ4jKo4oo3J"><button class="b ghost" onclick="S && S.scaleFeed(0.536)" data-page-node-id="16lrKi4KTashvjw1dUNZfR">模拟秤读重 0.536kg</button><span class="hint" id="pInfo" data-page-node-id="BZ7EExUYLRHXUCRhkwJIFc"></span></div>
+  <h3 style="margin:10px 0 6px" data-page-node-id="55UBIuJyw3PEQ8XUJeYqTX">事件日志</h3>
+  <div class="testlog" id="log" data-page-node-id="MI212TSUdK5JKGRdbnOAtw"></div>
+  <div class="dlg-actions" data-page-node-id="4cSB8M9jC9wZia61jgKD85"><button class="b ghost" onclick="dlgPeriph.close()" data-page-node-id="W9XdDkHIZlfE2FnkLGYzKb">关闭</button></div>
+</dialog>
+
+<!-- ───── 轻提示 ───── -->
+<div id="snack" data-page-node-id="260pOhDHi1xwz7SSs2yFqz"></div>
+
+<script src="pos.js"></script>
+</body>
+</html>

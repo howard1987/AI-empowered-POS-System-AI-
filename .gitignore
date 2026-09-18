@@ -1,0 +1,31 @@
+# ── 依赖与构建产物 ──
+node_modules/
+backend/dist/
+frontend-desktop/dist-modern/
+frontend-desktop/dist-win7-build/
+dist-electron/
+release/
+
+# ── 运行资产（AI/语音模型，另行分发）──
+*.onnx
+backend/tts/voices/
+backend/models/
+
+# ── 上传与运行期数据 ──
+backend/public/uploads/
+*.log
+_pgpw.txt
+.env
+
+# ── 根目录临时调试件（体检报告建议归档清理项）──
+_*.cjs
+_*.mjs
+_*.log
+_*.out
+_*.txt
+_watchdog*
+runtime-watchdog*
+
+# ── 二进制运行资产 ──
+*.exe
+backend/tts/piper/

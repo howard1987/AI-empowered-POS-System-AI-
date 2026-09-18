@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="fAHhEiJfLwIPXC262BQ1o7">
+<head data-page-node-id="EzCc1lgx1P90HAEMXBWhC1">
+<meta charset="UTF-8" data-page-node-id="GuGVeubakJ1E2lCMvCVMgo">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" data-page-node-id="mEgJmwDs4rahi1VgyNFtDC">
+<meta name="theme-color" content="#20663f" data-page-node-id="v5PNFJfE7GCSXtnpWLg15Q">
+<link rel="manifest" href="./manifest.webmanifest" data-page-node-id="hfg014Li78S8iPYhpYeNCR">
+<link rel="icon" href="./icon.svg" type="image/svg+xml" data-page-node-id="MEbDOhaouIkHxELb2CMwiX">
+<title>员工移动端工作台</title>
+<style>
+  :root{
+    --paper:#f5f2ea; --paper-2:#efeadd; --card:#fffdf7;
+    --ink:#22301f; --ink-2:#5a6650; --ink-3:#8a947e;
+    --pri:#20663f; --pri-d:#174a2e; --pri-2:#2e8557; --green-soft:#e2efe2;
+    --orange:#e4682a; --orange-soft:#fbe7d8;
+    --red:#c0392b; --red-soft:#f9e2dd;
+    --blue:#2a6f8e; --blue-soft:#dfeaef;
+    --gold:#b98a1c; --gold-soft:#f5ecd2;
+    --line:#ddd6c4; --line-2:#c9c1ab;
+    --ok:#2e7a4e; --warn:#d98a00; --bad:#c0392b;
+    --r:10px; --r-lg:16px;
+    --shadow:0 1px 2px rgba(40,50,30,.06), 0 8px 24px -12px rgba(40,50,30,.18);
+  }
+  *{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{
+    font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",-apple-system,sans-serif;
+    background:
+      radial-gradient(600px 340px at 100% 0%, rgba(46,133,87,.08), transparent 60%),
+      radial-gradient(500px 300px at 0% 100%, rgba(228,104,42,.06), transparent 55%),
+      var(--paper);
+    color:var(--ink); font-size:15px; user-select:none;
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  input,select,textarea{user-select:text; font:inherit; color:var(--ink);}
+  button{font:inherit; border:none; background:none; cursor:pointer; color:inherit;}
+  .hidden{display:none !important;}
+
+  /* ── 登录 ── */
+  #auth{
+    min-height:100%; display:flex; flex-direction:column; justify-content:center;
+    padding:32px 24px calc(32px + env(safe-area-inset-bottom));
+    background:linear-gradient(160deg,#174a2e 0%,#20663f 55%,#2e8557 100%);
+  }
+  #auth .logo{
+    width:72px; height:72px; margin:0 auto 14px; border-radius:20px; background:#fff;
+    display:flex; align-items:center; justify-content:center; font-size:36px; box-shadow:0 8px 24px rgba(0,0,0,.18);
+  }
+  #auth h1{color:#fff; text-align:center; font-size:22px; letter-spacing:1px;}
+  #auth p{color:#d7e4c9; text-align:center; margin:6px 0 30px; font-size:13px;}
+  .only-desktop{display:none !important;}
+
+  /* ══ V4.24.0 桌面端（EXE 壳）登录页：仿银豹版式 ══
+     ① 顶部标题栏（标题 + 版本 + 最小化/最大化/关闭 三窗口按钮，替代原「关闭程序」按钮）
+     ② 居中卡片：账号（门店名，只读）/ 工号 / 密码（框内小眼睛）三行式
+     ③ 底部圆形入口：交接班记录
+     浏览器 / 手机端不带 desktop-mode，版式与行为完全不变。 */
+  html.desktop-mode #auth{padding:0; overflow:hidden; background:#eef1ee; -webkit-app-region:drag;}
+  html.desktop-mode #auth input,html.desktop-mode #auth button,html.desktop-mode #auth a,html.desktop-mode #auth label,html.desktop-mode #auth .card{-webkit-app-region:no-drag;}
+  /* ① 标题栏（窗口按钮区） */
+  .lg-bar{display:none;}
+  html.desktop-mode .only-desktop{display:flex !important;}
+  html.desktop-mode .lg-bar{
+    display:flex; flex:none; height:40px; padding:0 6px 0 14px; gap:10px; align-items:center;
+    background:linear-gradient(160deg,#174a2e,#20663f 60%,#2e8557); color:#f7f3e6;
+    box-shadow:0 1px 4px rgba(23,74,46,.28);
+  }
+  .lg-bar-title{font-size:13.5px; font-weight:700; letter-spacing:.5px;}
+  .lg-bar-ver{margin-left:auto; font-size:11.5px; color:#cfe0c0;}
+  .lg-wbtns{display:flex; align-items:center; gap:2px;}
+  .lg-wbtns button{width:38px; height:28px; border-radius:6px; color:#eaf3e4; font-size:13px; line-height:1;
+    display:flex; align-items:center; justify-content:center;}
+  .lg-wbtns button:hover{background:rgba(255,255,255,.16);}
+  .lg-wbtns button.lg-close:hover{background:#c0392b; color:#fff;}
+  /* ② 卡片主体 */
+  .lg-wrap{flex:1; min-height:0; display:flex; flex-direction:column; justify-content:center;}
+  html.desktop-mode .lg-wrap{
+    align-items:center; justify-content:center; gap:16px; padding:16px 24px 24px; overflow:auto;
+    background:radial-gradient(700px 380px at 100% 0%, rgba(46,133,87,.10), transparent 60%), #eef1ee;
+  }
+  .lg-brand{display:flex; flex-direction:column; align-items:center;}
+  html.desktop-mode .lg-brand{flex-direction:row; gap:12px;}
+  html.desktop-mode #auth .logo{width:46px; height:46px; font-size:24px; border-radius:14px; margin:0; color:var(--pri); box-shadow:0 4px 14px rgba(0,0,0,.10);}
+  html.desktop-mode #auth h1{color:var(--ink); font-size:20px; text-align:left; letter-spacing:.5px;}
+  html.desktop-mode #auth p{display:none;}
+  html.desktop-mode #auth .card{width:100%; max-width:420px; margin:0; padding:20px 22px;}
+  /* 行式字段（仿银豹：账号 / 工号 / 密码 左标签右输入） */
+  html.desktop-mode #auth .field{display:grid; grid-template-columns:58px 1fr; align-items:center; gap:10px; margin-bottom:12px;}
+  html.desktop-mode #auth .field>label{margin:0; font-size:13.5px; color:var(--ink-2);}
+  html.desktop-mode #auth .field>input,html.desktop-mode #auth .field>.pw-wrap{grid-column:2; min-width:0;}
+  html.desktop-mode #auth .field input{padding:10px 12px; font-size:15px;}
+  #auth #lgStore[readonly],#auth #rgStore[readonly]{background:#f6f4ee; border-color:transparent; color:var(--ink-2); cursor:default;}
+  /* 管理员自检提示条 */
+  .lg-notice{border-radius:10px; padding:9px 12px; font-size:12.5px; line-height:1.65; margin-bottom:12px;}
+  .lg-notice.warn{background:var(--orange-soft); border:1px solid #eecf9d; color:#7a3a0a;}
+  .lg-notice.ok{background:var(--green-soft); border:1px solid #bcd9bd; color:#14532d;}
+  .lg-notice b{color:inherit;}
+  #lgReg .lg-reg-t{font-size:14.5px; font-weight:700; margin-bottom:2px;}
+  #lgReg .lg-reg-s{font-size:12.5px; color:var(--ink-3); margin-bottom:12px; line-height:1.6;}
+  .lg-alt{display:flex; justify-content:space-between; gap:10px; margin-top:10px; font-size:13px;}
+  .lg-alt a{color:var(--pri-2); text-decoration:underline;}
+  .lg-alt a.hidden{display:none;}
+  /* ③ 底部圆形入口 */
+  .lg-foot{display:none;}
+  html.desktop-mode .lg-foot{display:flex; gap:34px; align-items:flex-start; justify-content:center;}
+  .lg-round{display:flex; flex-direction:column; align-items:center; gap:6px; font-size:12.5px; color:var(--ink-2);}
+  .lg-round .lg-ric{width:52px; height:52px; border-radius:50%; background:#fff; border:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center; font-size:22px; box-shadow:var(--shadow);}
+  .lg-round:active .lg-ric{background:var(--green-soft);} 
+  .card{
+    background:var(--card); border-radius:var(--r-lg); box-shadow:var(--shadow); padding:16px;
+    border:1px solid var(--line);
+  }
+  .field{margin-bottom:14px;}
+  .field label{display:block; font-size:13px; color:var(--ink-3); margin-bottom:6px;}
+  .field input,.field select{
+    width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:10px;
+    font-size:16px; background:#fff; outline:none;
+  }
+  .field input:focus,.field select:focus{border-color:var(--pri-2);}
+  /* ── V4.22.3 登录页增强：密码小眼睛 + 记住工号密码 ── */
+  .pw-wrap{position:relative;}
+  .pw-wrap input{padding-right:46px;}
+  .pw-wrap .pw-eye{
+    position:absolute; right:7px; top:50%; transform:translateY(-50%);
+    width:34px; height:34px; border-radius:9px; font-size:16px; line-height:1;
+    display:flex; align-items:center; justify-content:center; color:var(--ink-3); background:transparent;
+  }
+  .pw-wrap .pw-eye:active{background:var(--paper-2);}
+  .pw-wrap .pw-eye.on{color:var(--pri);}
+  .rem-row{display:flex; align-items:center; gap:6px; margin:-2px 0 12px; font-size:12.5px; color:var(--ink-2);}
+  .rem-row label{display:flex; align-items:center; gap:7px; cursor:pointer;}
+  .rem-row input[type=checkbox]{width:17px; height:17px; accent-color:var(--pri);}
+  .rem-row .rem-hint{margin-left:auto; font-size:11px; color:var(--ink-3);}
+  .btn{
+    display:block; width:100%; padding:13px; border-radius:12px; font-size:16px; font-weight:600;
+    text-align:center; background:var(--pri); color:#f7f3e6;
+  }
+  .btn:active{transform:scale(.98);}
+  .btn.ghost{background:#fff; color:var(--pri); border:1px solid var(--pri);}
+  .btn.ok{background:var(--ok);}
+  .btn.warn{background:var(--orange); color:#fff;}
+  .btn.bad{background:var(--bad); color:#fff;}
+  .acts{display:flex; gap:10px; margin-top:14px;}
+  .acts .btn{flex:1;}
+  .err{color:var(--bad); font-size:13px; min-height:18px; margin-bottom:8px; text-align:center;}
+
+  /* ── 主框架 ── */
+  #app{display:flex; flex-direction:column; height:100dvh; max-width:640px; margin:0 auto;}
+  header{
+    padding:calc(10px + env(safe-area-inset-top)) 14px 10px;
+    background:linear-gradient(160deg,#174a2e,#20663f 55%,#2e8557); color:#f7f3e6;
+    display:flex; align-items:center; gap:10px; box-shadow:0 1px 4px rgba(23,74,46,.25);
+  }
+  header .back{font-size:20px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:8px; background:rgba(255,255,255,.15);}
+  header h2{font-size:17px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  header .badge{font-size:11px; background:rgba(255,255,255,.18); padding:3px 8px; border-radius:99px;}
+  #view{flex:1; overflow-y:auto; padding:12px 12px 20px;}
+
+  /* ── 底部 Tab ── */
+  nav{
+    display:flex; background:var(--card); border-top:1px solid var(--line);
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  nav .tab{
+    flex:1; padding:8px 0 6px; display:flex; flex-direction:column; align-items:center; gap:2px;
+    color:var(--ink-3); font-size:11px;
+  }
+  nav .tab .ic{font-size:20px; line-height:1;}
+  nav .tab.on{color:var(--pri); font-weight:600;}
+
+  /* ── 作业入口（原型：白卡细边框双列网格）── */
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:9px;}
+  .entry{
+    background:var(--card); border:1px solid var(--line); border-radius:11px;
+    padding:11px 10px; display:flex; flex-direction:column; align-items:flex-start; gap:3px;
+    box-shadow:var(--shadow);
+  }
+  .entry .eic{font-size:21px; line-height:1;}
+  .entry .et{font-weight:700; font-size:12.5px; margin-top:2px;}
+  .entry .es{font-size:11px; color:var(--ink-3); line-height:1.4;}
+  .entry .tag{font-size:10px; padding:2px 8px; border-radius:99px; background:var(--orange-soft); color:#b34f18; font-weight:700;}
+  .entry:active{transform:scale(.97);}
+  .entry .badge-dot{font-size:10px; background:var(--red); color:#fff; border-radius:99px; padding:1px 6px; font-weight:700;}
+
+  /* ── 工作台横幅（移动收银 · 应急模式）── */
+  .work-hero{
+    margin-bottom:9px; background:linear-gradient(160deg,#fdf1e3,#fff);
+    border:1.5px solid var(--orange); border-radius:11px; padding:11px 12px;
+    font-size:12.5px; font-weight:800; color:var(--ink); cursor:pointer;
+  }
+  .work-hero .wh-t{display:flex; align-items:center; gap:6px; flex-wrap:wrap;}
+  .work-hero .wh-s{font-weight:400; font-size:11px; color:var(--ink-2); margin-top:3px; line-height:1.5;}
+  .work-hero:active{transform:scale(.98);}
+
+  /* ── 进行中 / 离线状态卡 ── */
+  .work-prog{
+    margin-top:9px; background:var(--card); border:1px solid var(--line); border-radius:11px;
+    padding:10px 12px; font-size:12px;
+  }
+  .work-prog .wp-r{display:flex; justify-content:space-between; color:var(--ink-2); margin-top:6px;}
+
+  /* ── 通用列表/表单 ── */
+  .sec{font-size:12.5px; color:var(--ink-3); margin:14px 2px 8px; font-weight:600;}
+  .row{
+    background:var(--card); border:1px solid var(--line); border-radius:12px;
+    padding:11px 13px; margin-bottom:8px; display:flex; align-items:center; gap:10px;
+    box-shadow:var(--shadow);
+  }
+  .row .grow{flex:1; min-width:0;}
+  .row .t{font-size:14.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .row .s{font-size:12px; color:var(--ink-3); margin-top:2px;}
+  .row .n{font-size:15px; font-weight:700; color:var(--pri);}
+  .pill{font-size:11px; padding:2px 8px; border-radius:99px; flex-shrink:0; font-weight:600;}
+  .pill.gray{background:var(--paper-2); color:var(--ink-2);}
+  .pill.blue{background:var(--blue-soft); color:var(--blue);}
+  .pill.green{background:var(--green-soft); color:var(--pri);}
+  .pill.orange{background:var(--orange-soft); color:#b34f18;}
+  .pill.red{background:var(--red-soft); color:var(--red);}
+  .pill.yellow{background:var(--gold-soft); color:#7a5d10;}
+  .pill.purple{background:#ede9fe; color:#6d28d9;}
+  .qty{
+    display:flex; align-items:center; gap:2px; flex-shrink:0;
+  }
+  .qty button{width:34px; height:34px; border-radius:9px; background:var(--paper-2); font-size:18px; font-weight:700; color:var(--ink-2);}
+  .qty button:active{background:var(--line);}
+  .qty span{min-width:38px; text-align:center; font-weight:700; font-size:16px;}
+  .qty input{width:56px; text-align:center; border:1px solid var(--line); border-radius:8px; padding:6px 4px; font-size:15px;}
+  .mini-btn{
+    border:1px solid var(--line-2); border-radius:9px; padding:7px 12px; font-size:13px; color:var(--pri);
+    background:var(--card); font-weight:600;
+  }
+  .mini-btn.danger{color:var(--bad);}
+  .mini-btn.ok{color:#fff; background:var(--ok); border-color:var(--ok);}
+  .mini-btn:active{background:var(--paper-2);}
+  .toolbar{display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;}
+  .search{
+    width:100%; padding:11px 14px; border:1px solid var(--line); border-radius:11px; font-size:16px;
+    background:var(--card); outline:none; box-shadow:var(--shadow);
+  }
+  .search:focus{border-color:var(--pri-2);}
+  .hint{font-size:12.5px; color:var(--ink-3); margin:8px 2px 0; line-height:1.5;}
+  .total-bar{
+    display:flex; align-items:center; justify-content:space-between; background:linear-gradient(160deg,#174a2e,#20663f); color:#f7f3e6;
+    border-radius:12px; padding:12px 14px; margin:12px 0; box-shadow:var(--shadow);
+  }
+  .total-bar .money{font-size:24px; font-weight:800; color:#ffd75e; text-shadow:0 1px 2px rgba(0,0,0,.35); font-variant-numeric:tabular-nums;}
+  .money{font-size:22px; font-weight:800; color:var(--pri); font-variant-numeric:tabular-nums;}
+  .mini-input{border:1px solid var(--line-2); border-radius:8px; padding:6px 8px; font-size:13px; background:#fff; outline:none;}
+  .mini-input:focus{border-color:var(--pri-2);}
+  .ok-bar{
+    background:var(--green-soft); border:1px solid #bcd9bd; color:#14532d; border-radius:12px;
+    padding:12px 14px; margin:12px 0; font-size:14px; line-height:1.6;
+  }
+  .warn-bar{
+    background:var(--orange-soft); border:1px solid #eecf9d; color:#7a3a0a; border-radius:12px;
+    padding:10px 12px; margin:10px 0; font-size:13px; line-height:1.6;
+  }
+  .chips{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;}
+  .chip{border:1px solid var(--line); border-radius:99px; padding:6px 12px; font-size:13px; background:var(--card); color:var(--ink-3);}
+  .chip.on{background:var(--pri); border-color:var(--pri); color:#f7f3e6;}
+  .empty{text-align:center; color:var(--ink-3); font-size:13px; padding:30px 0; line-height:1.8;}
+  .modal{
+    position:fixed; inset:0; background:rgba(30,40,25,.45); display:flex; align-items:flex-end; justify-content:center;
+    z-index:50;
+  }
+  .modal .sheet{
+    background:var(--card); width:100%; max-width:640px; border-radius:18px 18px 0 0;
+    padding:18px 16px calc(18px + env(safe-area-inset-bottom)); max-height:90dvh; overflow-y:auto;
+    border-top:1px solid var(--line);
+  }
+  /* V4.26.3 支付弹层液态玻璃：遮罩轻模糊 + 卡片半透明磨砂折射。
+     总开关 ui.glass.enabled=关 时 html 挂 .no-glass，自动回退上面实底样式（低配收银机/Win7） */
+  html:not(.no-glass) .modal{
+    background:rgba(30,40,25,.34);
+    -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px);
+  }
+  html:not(.no-glass) .modal .sheet,
+  html:not(.no-glass) .modal-mask .sheet{
+    background:rgba(255,253,247,.87);
+    -webkit-backdrop-filter:blur(18px) saturate(180%); backdrop-filter:blur(18px) saturate(180%);
+    border-top:1px solid rgba(255,255,255,.7);
+    box-shadow:0 -10px 40px rgba(20,30,15,.24), inset 0 1px 0 rgba(255,255,255,.6);
+  }
+  /* 玻璃底上的金额/标题加深一档，保证收银员一眼看清（磨砂会吃掉一点对比度） */
+  html:not(.no-glass) .modal .sheet h3{color:var(--ink); font-weight:700;}
+  .modal .sheet h3{margin-bottom:12px; font-size:16px;}
+  /* V4.18.2 全站修复：pwaConfirm/pwaPrompt 用的是 .modal-mask > .sheet 结构，此前 .sheet 样式只挂在 .modal 下
+     → 确认弹窗整块透明，背景商品一多文字完全看不清 */
+  .modal-mask .sheet{background:var(--card); box-shadow:0 12px 40px rgba(0,0,0,.28);}
+  .modal-mask .sheet h3{margin-bottom:12px; font-size:16px;}
+  .modal-mask .hint{color:var(--ink-2);}
+  /* V4.18.2 确认/输入弹窗视觉重做（pwaConfirm/pwaPrompt 专用 pc-* 体系）：
+     手机=底部卡片，收银台模式由 cashier.js 覆盖为居中；紧凑按钮右对齐，替代全宽巨按钮 */
+  .pc-card{width:min(400px,92vw); margin:0 auto 18px; border-radius:16px; padding:20px 20px 16px; border:none;}
+  .pc-head{display:flex; align-items:center; gap:10px; margin-bottom:10px;}
+  .pc-head h3{margin:0; font-size:16.5px; font-weight:700; color:var(--ink);}
+  .pc-ico{width:30px; height:30px; border-radius:9px; flex:none; display:flex; align-items:center; justify-content:center;
+    background:var(--green-soft, #e5f2e5); color:var(--ok, #2e7d32);}
+  .pc-ico.bad{background:#fdeaea; color:var(--bad, #c62828);}
+  .pc-body{font-size:14px; color:var(--ink-2); line-height:1.75;}
+  .pc-body b{color:var(--ink);}
+  .pc-hint{font-size:12.5px; color:var(--ink-3); margin-top:8px;}
+  .pc-actions{display:flex; justify-content:flex-end; gap:10px; margin-top:18px;}
+  .pc-btn{min-width:96px; padding:9px 18px; border-radius:10px; font-size:14px; font-weight:600; text-align:center;}
+  .pc-btn.ghost{background:#fff; color:var(--ink-2); border:1px solid var(--line-2);}
+  .pc-btn.ghost:active{background:var(--paper-2);}
+  .pc-btn.pri{background:var(--pri); color:#f7f3e6;}
+  .pc-btn.bad{background:var(--bad); color:#fff;}
+  .pc-btn:active{transform:scale(.97);}
+  .toast{
+    position:fixed; left:50%; top:18%; transform:translateX(-50%); z-index:99;
+    background:rgba(23,36,25,.92); color:#f7f3e6; padding:10px 18px; border-radius:10px;
+    font-size:14px; max-width:82vw; text-align:center; transition:opacity .2s;
+  }
+  .seg{display:flex; background:var(--paper-2); border-radius:11px; padding:3px; gap:3px; margin-bottom:10px;}
+  .seg button{flex:1; padding:8px 0; border-radius:9px; font-size:13.5px; color:var(--ink-3);}
+  .seg button.on{background:var(--card); color:var(--pri); font-weight:600; box-shadow:var(--shadow);}
+  /* V4.25.7：.v 允许收缩换行 + select 限宽 —— 修复音色下拉（长音色名）超出弹窗右边界 */
+  .kv{display:flex; justify-content:space-between; gap:10px; padding:7px 0; font-size:14px; border-bottom:1px dashed var(--line);}
+  .kv:last-child{border-bottom:none;}
+  .kv .k{color:var(--ink-3); flex:0 1 auto; min-width:0;}
+  .kv .v{font-weight:600; text-align:right; min-width:0; max-width:68%; display:flex; justify-content:flex-end; align-items:center; gap:6px; flex-wrap:wrap;}
+  .kv .v select, .kv .v input{max-width:100%;}
+  .thumb{width:44px; height:44px; border-radius:8px; object-fit:cover; border:1px solid var(--line); flex-shrink:0;}
+  /* ── 扫码取景辅助（银豹式红色基线对齐，提升对准速度与识别率）── */
+  .scan-view{position:relative; width:100%; border-radius:12px; overflow:hidden; background:#000; line-height:0;}
+  .scan-view video{width:100%; display:block; border-radius:12px; background:#000; max-height:46dvh; object-fit:cover;}
+  /* ── V4.13.9 B1 移动收银：扫码醒目 + 购物车滚动 + 结账常驻底部 + 左右手 ── */
+  .ck-scan{
+    border:2px solid var(--pri); background:#fffbe8; font-weight:600;
+    box-shadow:0 2px 8px rgba(30,90,50,.18);
+    padding:9px 12px !important; font-size:14px !important; border-radius:10px;
+  }
+  .ck-scan:focus{border-color:var(--pri); background:#fff;}
+  #ckCartWrap{max-height:30dvh; overflow-y:auto; -webkit-overflow-scrolling:touch; margin-bottom:10px;}
+  /* V4.16.2 移动收银版式：结算栏真·贴底（fixed 悬在 Tab 栏上方，内容少时也贴底）+ 三行压紧 */
+  .ck-sticky{
+    position:fixed; left:50%; transform:translateX(-50%); width:100%; max-width:640px;
+    bottom:calc(50px + env(safe-area-inset-bottom)); z-index:30;
+    background:var(--card); border-top:1px solid var(--line);
+    box-shadow:0 -6px 16px rgba(30,50,30,.10);
+    padding:7px 14px calc(7px);
+  }
+  .ck-sticky .seg{margin:0 0 6px; padding:2px; gap:2px;}
+  .ck-sticky .seg button{padding:5px 0; font-size:12.5px;}
+  .ck-sticky .total-bar{margin:0 0 6px; padding:8px 14px; border-radius:10px;}
+  .ck-sticky .total-bar .money{font-size:20px;}
+  .ck-sticky .total-bar > span:first-child{font-size:13.5px;}
+  /* V4.15.2：取单/挂单/结账 并列固定在底部（原取单/挂单在页面流里被结账条遮挡） */
+  .ck-sticky .ck-actions{display:flex;gap:8px;}
+  .ck-sticky .ck-actions .btn{padding:8px 0;font-size:14px;border-radius:10px;}
+  .ck-sticky .ck-actions #ckGo{font-size:15px;font-weight:700;}
+  /* 结算栏 fixed 脱流后的占位（高度 ≈ seg 32 + total 44 + actions 40 + 间距/内边距 ≈ 128px） */
+  .ck-spacer{height:128px;}
+  .hand-left #ckTools, .hand-left .ck-actions{flex-direction:row-reverse;}
+  .hand-left .row .qty{flex-direction:row-reverse;}
+  /* V4.14.1：左右手切换同步作用到作业模块（AI智拍靠右→左手时靠左；收货双按钮镜像） */
+  .hand-left .ai-right{justify-content:flex-start !important;}
+  .hand-left #rcTools{flex-direction:row-reverse;}
+  /* V4.14.1：数量手输框样式（手输 + 加减按钮泛化） */
+  .qty .qty-in{width:64px;text-align:center;border:1px solid var(--line);border-radius:8px;padding:5px 2px;font-size:15px;background:#fff;}
+  /* ── V4.15.3 收货明细两行式：首行 名称+规格+进价+条码，次行「单价/数量/生产日期」标题+输入 ── */
+  .recv-line{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px;box-shadow:var(--shadow);}
+  .recv-line .rl-top{display:flex;align-items:center;gap:8px;min-width:0;}
+  .recv-line .rl-top .t{flex:1;min-width:0;font-size:14.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .recv-line .rl-meta{font-size:12px;font-weight:400;color:var(--ink-3);margin:0 6px;}
+  .recv-line .rl-grid{display:flex;gap:8px;margin-top:8px;align-items:flex-end;}
+  .recv-line .rl-cell{display:flex;flex-direction:column;gap:4px;}
+  .recv-line .rl-cell label{font-size:11px;color:var(--ink-3);line-height:1;}
+  .recv-line .rl-cell .qty{align-self:center;}
+  /* V4.14.2：隐藏 file input 用视觉隐藏而非 display:none——display:none 会让部分安卓 WebView 的 input.click() 不弹相机/文件选择器 */
+  .file-hidden{position:absolute;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;}
+  .scan-frame{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:66%; aspect-ratio:1/1; max-width:300px; pointer-events:none;}
+  .sc-corner{position:absolute; width:24px; height:24px; border:3px solid #ff3b30; opacity:.95;}
+  .sc-corner.tl{left:0; top:0; border-right:none; border-bottom:none; border-top-left-radius:6px;}
+  .sc-corner.tr{right:0; top:0; border-left:none; border-bottom:none; border-top-right-radius:6px;}
+  .sc-corner.bl{left:0; bottom:0; border-right:none; border-top:none; border-bottom-left-radius:6px;}
+  .sc-corner.br{right:0; bottom:0; border-left:none; border-top:none; border-bottom-right-radius:6px;}
+  /* 静态红色基线：把二维码/条码的横向中心对准这条线即可快速识别 */
+  .sc-baseline{position:absolute; left:8%; right:8%; top:50%; height:2px; background:#ff3b30; box-shadow:0 0 7px rgba(255,59,48,.85); transform:translateY(-50%);}
+  /* 动态扫描线：上下扫动表示正在识别 */
+  .sc-scanline{position:absolute; left:6%; right:6%; height:3px; background:linear-gradient(90deg, transparent, #ff3b30 20%, #ff6b5e 50%, #ff3b30 80%, transparent); box-shadow:0 0 10px rgba(255,59,48,.9); animation:sc-sweep 2.2s ease-in-out infinite;}
+  @keyframes sc-sweep{0%{top:8%}50%{top:92%}100%{top:8%}}
+  @media (prefers-reduced-motion: reduce){ .sc-scanline{animation:none; top:50%;} }
+
+  /* ── V4.9.15 全局自绘下拉（范本同后台建档单位面板） ── */
+  input.pick-display { cursor: pointer; user-select: none; }
+  .pick-panel {
+    position: absolute; top: calc(100% + 2px); left: 0; right: auto; z-index: 90; display: none;
+    flex-wrap: wrap; gap: 6px; align-content: flex-start;
+    padding: 8px; background: var(--card);
+    border: 1px solid var(--line-2); border-radius: 10px; box-shadow: var(--shadow);
+    max-width: min(380px, calc(100vw - 32px)); max-height: 40vh; overflow: auto; box-sizing: border-box;
+  }
+  .pick-opt {
+    padding: 7px 14px; border: 1px solid var(--line); border-radius: 12px;
+    background: var(--card); cursor: pointer; font-size: 13.5px; color: var(--ink);
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .pick-opt:active { background: var(--green-soft); border-color: var(--pri-2); }
+</style>
+</head>
+<body data-page-node-id="4v1aj3jfXPBC0fxdPTIzKV">
+
+<!-- 登录 -->
+<div id="auth" data-page-node-id="FDExOxZLe2mYVEklreh1v6">
+  <!-- V4.24.0 ⑤：桌面端标题栏（拖动窗口 + 最小化/最大化/关闭，替代原「关闭程序」按钮） -->
+  <div class="lg-bar only-desktop" id="lgBar">
+    <span class="lg-bar-title" id="lgBarTitle">收银台</span>
+    <span class="lg-bar-ver" id="lgVer"></span>
+    <div class="lg-wbtns">
+      <button type="button" id="lgMin" title="最小化" aria-label="最小化">&#8211;</button>
+      <button type="button" id="lgMax" title="最大化 / 还原" aria-label="最大化">&#9633;</button>
+      <button type="button" id="lgClose" class="lg-close" title="关闭" aria-label="关闭">&#10005;</button>
+    </div>
+  </div>
+
+  <div class="lg-wrap">
+    <div class="lg-brand">
+      <div class="logo" data-page-node-id="pobQqEkJbi03oQ3yFgoRd3">🛒</div>
+      <h1 id="lgTitle" data-page-node-id="C8thWfn6d7v1AOUIvoYl2a">员工移动端工作台</h1>
+      <p id="lgSub" data-page-node-id="A6gveayES96pnBcwzSaYGw">移动收银 · 收货 · 退货 · 盘点 · 报损（8.5 M15）</p>
+    </div>
+
+    <div class="card" data-page-node-id="B7lfb26yCCjQuxhKsJvv7e">
+      <div class="err" id="authErr" data-page-node-id="nDrcuKBAjbH5sPMegjDzrd"></div>
+
+      <!-- V4.24.0 ⑥：启动自检提示条（无管理员 → 提示创建；有管理员 → 提示用其密码登录） -->
+      <div class="lg-notice" id="lgNotice" style="display:none"></div>
+
+      <!-- 正常登录表单 -->
+      <div id="lgForm">
+        <div class="field">
+          <label>账号</label>
+          <input id="lgStore" type="text" readonly tabindex="-1" value="本店">
+        </div>
+        <div class="field" data-page-node-id="qS4ANuDxVh1Ois0dU5nDHt">
+          <label data-page-node-id="BCojubLaRknBiP5jyzPi8R">工号</label>
+          <input id="lgNo" type="text" placeholder="员工工号" autocomplete="username" data-page-node-id="CS5GZ8rlAGF0ULkFa6NuMA">
+        </div>
+        <div class="field" data-page-node-id="OBqellNzArXcVnSjf6Yykr">
+          <label id="lgPwLabel" data-page-node-id="tPSB124vteggnGBVsG7lps">密码</label>
+          <!-- ③ 小眼睛在密码框内部（.pw-wrap 相对定位 + 绝对定位按钮） -->
+          <div class="pw-wrap">
+            <input id="lgPw" type="password" placeholder="登录密码" autocomplete="current-password" data-page-node-id="64HnXGlL2o0zvvZFq7G6J7">
+            <button type="button" class="pw-eye" id="lgEye" aria-label="显示密码" title="显示 / 隐藏密码">👁</button>
+          </div>
+        </div>
+        <!-- ⑨ 只记工号 + 记住 PIN：勾选后本地留一把「PIN 免密登录」钥匙（PIN 存后端 bcrypt，本机不存密码） -->
+        <div class="rem-row" id="lgPinRow">
+          <label class="rem" for="lgPin"><input type="checkbox" id="lgPin"> 记住 PIN（下次免密登录）</label>
+          <span class="rem-hint" id="lgPinHint">工号本机记住</span>
+        </div>
+        <div class="field" id="lgPinSet" style="display:none">
+          <label>设置 PIN</label>
+          <div class="pw-wrap">
+            <input id="lgPinVal" type="password" inputmode="numeric" maxlength="8" placeholder="4~8 位数字" autocomplete="off">
+            <button type="button" class="pw-eye" id="lgPinEye" aria-label="显示 PIN" title="显示 / 隐藏">👁</button>
+          </div>
+        </div>
+        <button class="btn" id="lgGo" data-page-node-id="CVRWRFTGvCn2HXcBIjMoa4">登 录</button>
+        <div class="lg-alt">
+          <a href="javascript:void(0)" id="lgMode" class="hidden">用 PIN 快速登录</a>
+          <a href="javascript:void(0)" id="lgForgot" data-page-node-id="hUo2VAoCJp6WULXrZBKRd8">忘记密码？</a>
+        </div>
+      </div>
+
+      <!-- ⑥ 首次运行：库中无管理员 → 引导用户自定义创建（工号不再写死 ADMIN） -->
+      <div id="lgReg" class="hidden">
+        <div class="lg-reg-t">创建管理员账号</div>
+        <div class="lg-reg-s">本机数据库尚未初始化管理员。请设置你自己的工号与密码，该账号将绑定「超级管理员」角色并拥有全部权限。</div>
+        <div class="field"><label>门店名称</label><input id="rgStore" type="text" maxlength="60" placeholder="如：乐美鲜祥成家园店"></div>
+        <div class="field"><label>管理员工号</label><input id="rgNo" type="text" maxlength="32" placeholder="自定义，如 BOSS / 0001"></div>
+        <div class="field"><label>姓名</label><input id="rgName" type="text" maxlength="30" placeholder="管理员姓名"></div>
+        <div class="field">
+          <label>登录密码</label>
+          <div class="pw-wrap">
+            <input id="rgPw" type="password" placeholder="至少 8 位，含字母与数字" autocomplete="new-password">
+            <button type="button" class="pw-eye" id="rgEye" aria-label="显示密码" title="显示 / 隐藏密码">👁</button>
+          </div>
+        </div>
+        <div class="field"><label>确认密码</label><input id="rgPw2" type="password" placeholder="再输一次" autocomplete="new-password"></div>
+        <button class="btn ok" id="rgGo">创建并进入收银台</button>
+      </div>
+    </div>
+
+    <!-- 底部圆形入口（仿银豹；桌面端显示） -->
+    <div class="lg-foot only-desktop" id="lgFoot">
+      <button type="button" class="lg-round" id="lgShifts"><span class="lg-ric">🧾</span>交接班记录</button>
+    </div>
+  </div>
+</div>
+
+<!-- 主框架 -->
+<div id="app" class="hidden" data-page-node-id="7jzagq0Mwi7s7fGfBmesMZ">
+  <header data-page-node-id="iH8WMtt03qw82LKl5OgO3C">
+    <button class="back hidden" id="hdBack" data-page-node-id="ayh9vvp1QPEVFTTtETTFiu">‹</button>
+    <h2 id="hdTitle" data-page-node-id="yiQSvbeT9EnYgbUq0w9CA8">作业</h2>
+    <span class="badge" id="hdUser" data-page-node-id="Va9sM86J4j1jsktIFV0jqs"></span>
+  </header>
+  <div id="view" data-page-node-id="shCgru5wA4JqLFkZe41CDg"></div>
+  <nav id="tabbar" data-page-node-id="mRFtFQRlIB9VXF2wtI5gpn">
+    <button class="tab on" data-tab="work" data-page-node-id="d52kBlFmvUBDJkPELCFp2B"><span class="ic" data-page-node-id="HIFd0qTg2maVKkk4PnxTlW">🧰</span>作业</button>
+    <button class="tab" data-tab="docs" data-page-node-id="CERG4fRY3Hp8kJFcNoLdcI"><span class="ic" data-page-node-id="uVQtyXfaWoLUHACvhIbocs">📄</span>单据</button>
+    <button class="tab" data-tab="msg" data-page-node-id="F40oQgBickKoxyXCTB7KZZ"><span class="ic" data-page-node-id="x1OZj7566GfLIXSde0kiJF">🔔</span>消息</button>
+    <button class="tab" data-tab="me" data-page-node-id="7MvZDiwvCPRzRQ9nLGUUIb"><span class="ic" data-page-node-id="rwh3vmaJh2bQOoLnMiQ6aW">👤</span>我的</button>
+  </nav>
+</div>
+
+<div class="toast hidden" id="toast" data-page-node-id="7aqIRbNlQRfQEbZjCEvnWy"></div>
+
+
+<script src="./vendor/zxing.min.js" defer></script>
+<script type="module" src="./barcode-decode.js"></script>
+<script src="./app.js" defer></script>
+<script src="../tts.js" defer></script>
+<script src="./sign-pad.js" defer></script>
+<script src="./ai-scan.js" defer></script>
+<script src="./scale.js" defer></script>
+<script src="./printers.js" defer></script>
+<script src="./receipt.js" defer></script>
+<script src="./voice.js" defer></script>
+<script src="./pick-panel.js" defer></script>
+<script src="./work.js" defer></script>
+<script src="./checkout.js" defer></script>
+<script src="./cdisp.js" defer></script>
+<script src="./cashier.js" defer></script>
+<script src="./docs.js" defer></script>
+<script src="./ops2.js" defer></script>
+</body>
+</html>

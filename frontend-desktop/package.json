@@ -1,0 +1,52 @@
+{
+  "name": "cashier-desktop",
+  "version": "5.0.0",
+  "description": "超市收银系统 - Electron 收银端（双轨构建：modern=Electron44/x64，win7 冻结=Electron22.3.27/ia32；源码共享）",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "node src/print/smoke.js",
+    "dist": "electron-builder --win --config electron-builder.modern.json",
+    "dist:modern": "electron-builder --win --config electron-builder.modern.json",
+    "dist:win7": "electron-builder --win --config electron-builder.win7.json",
+    "start:modern-dev": "npx electron@44.3.0 ."
+  },
+  "devDependencies": {
+    "electron": "22.3.27",
+    "electron-builder": "^25.1.8"
+  },
+  "optionalDependencies": {
+    "serialport": "^12.0.0"
+  },
+  "build": {
+    "appId": "cn.community.cashier",
+    "productName": "超市收银系统",
+    "directories": {
+      "output": "dist-build"
+    },
+    "files": [
+      "src/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "ia32"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "portable": {
+      "artifactName": "超市收银系统-${version}-portable.exe"
+    }
+  }
+}

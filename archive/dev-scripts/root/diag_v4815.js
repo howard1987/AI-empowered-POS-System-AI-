@@ -1,0 +1,25 @@
+async page => {
+  const out = {};
+  await page.goto('http://localhost:8088', { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(800);
+  // 登录（幂等）
+  const needLogin = await page.evaluate(() => { const s = document.querySelector('#side'); return !(s && s.offsetParent !== null); });
+  if (needLogin) {
+    await page.fill('#lgNo', 'ADMIN');
+    await page.fill('#lgPw', 'admin123');
+    await page.click('#lgGo');
+    await page.waitForTimeout(1500);
+  }
+  await page.evaluate(() => { location.hash = '#/prices'; });
+  await page.waitForTimeout(1500);
+  out.hash = await page.evaluate(() => location.hash);
+  out.hasPcProd = await page.evaluate(() => Boolean(document.querySelector('#pcProd')));
+  out.viewSnip = await page.evaluate(() => (document.querySelector('#view') || document.querySelector('main') || document.body).innerHTML.slice(0, 400));
+  const errs = [];
+  page.on('pageerror', e => errs.push(String(e).slice(0, 200)));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1500);
+  out.pageErrors = errs;
+  out.consoleAfter = await page.evaluate(() => document.title);
+  return JSON.stringify(out);
+}

@@ -1,0 +1,16 @@
+services:
+  db:
+    image: pgvector/pgvector:pg15
+    container_name: cashier-pg
+    environment:
+      POSTGRES_USER: cashier
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cashier123}
+      POSTGRES_DB: cashier
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:

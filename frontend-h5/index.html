@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="xaIH8k0Ij3Ufarzu0kQ3GZ">
+<head data-page-node-id="etFAH0t4bAIPhf51FA7A6t">
+  <meta charset="UTF-8" data-page-node-id="G3NlPwQpEl886OgR6HF9MA">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" data-page-node-id="yXKA45Bx5YkygJlYfTV0TF">
+  <title>会员中心 · 社区超市</title>
+  <link rel="stylesheet" href="./styles.css" data-page-node-id="ZSWwDM0LBAGqH4IdRa3eyf">
+</head>
+<body data-page-node-id="1tRHgfaOcNuHqnA0ZgqgEG">
+  <div id="app" data-page-node-id="DBiD4rH1iD0f2DSyWq6Af2">
+    <!-- 登录前 -->
+    <div id="auth" class="auth-wrap" hidden data-page-node-id="githuxR1otyUHabSdwyv1N">
+      <div class="logo" data-page-node-id="sdMyDf1Q3KhBFdwG1MeNS4">🛒 社区超市 · 会员中心</div>
+      <div class="tabs" data-page-node-id="qNF9wEYpiasvneY9A4jUhA">
+        <button class="tab on" data-t="login" data-page-node-id="GGfSfdjVYUfUhhoSCnRO8S">登录</button>
+        <button class="tab" data-t="register" data-page-node-id="O6MxyzWFqs4W8fIFOTkJ86">注册</button>
+        <button class="tab" data-t="init" data-page-node-id="ARty0YM42E1RuZAwYeeFK5">首次设密</button>
+      </div>
+      <form id="fLogin" class="pane" data-page-node-id="MLu7nJLOQMvgTPl2lF0Qth">
+        <input name="phone" type="tel" placeholder="手机号" maxlength="11" required data-page-node-id="zDSqfdlQ5R5cW4NH6AMg8W">
+        <input name="password" type="password" placeholder="密码" required data-page-node-id="QwnGIEjxjgkMvInjEh7uQa">
+        <button class="primary" type="submit" data-page-node-id="SDWQUDSD1tFDVtKfEbsu4I">登 录</button>
+        <p class="hint" data-page-node-id="GZe4RqI6o2puVFxuuF0Vk1">连续错误 5 次将锁定 30 分钟</p>
+      </form>
+      <form id="fRegister" class="pane" hidden data-page-node-id="CRS8xcce7F79Oae2DXGdp8">
+        <input name="phone" type="tel" placeholder="手机号" maxlength="11" required data-page-node-id="0KbHaxfzKeFGRuJ59E5kWS">
+        <input name="name" type="text" placeholder="姓名（选填）" data-page-node-id="g5dETDZMfqziD7NqBCTnef">
+        <input name="password" type="password" placeholder="设置密码（≥6位）" required data-page-node-id="HBjvk4ad0EIdcHDAZGYOSf">
+        <label class="agree" data-page-node-id="F9X5BcWvk57Ub3kPlhJvaP"><input name="privacyAgreed" type="checkbox" required data-page-node-id="paJ9k8ZuatE9Q8gbVt0ZHU">
+          我已阅读并同意《隐私政策》（个保法）</label>
+        <button class="primary" type="submit" data-page-node-id="mIwUlBqd1aRK30vZpzWy1f">注 册</button>
+        <p class="hint" data-page-node-id="TFJpoOQpAajS7WC4pCRgEY">注册即成为会员，储值余额可享每日分红（消费权益，非投资）</p>
+      </form>
+      <form id="fInit" class="pane" hidden data-page-node-id="BInw2FwDOhL6I4hIjSypao">
+        <p class="hint" data-page-node-id="sjOQGr9P2XVbIG8eDE7hPM">到店建档的老会员（未设过密码）：手机号 + 身份证后6位 核对后设置密码</p>
+        <input name="phone" type="tel" placeholder="手机号" maxlength="11" required data-page-node-id="mDnHhMHa98dMvolv5LknzG">
+        <input name="idCardTail" type="text" placeholder="身份证后6位" maxlength="6" required data-page-node-id="q1fy5ufHaTt0dyhxhTkNl0">
+        <input name="password" type="password" placeholder="设置密码（≥6位）" required data-page-node-id="wdCKphXnc4qN9O3sA7ezQv">
+        <button class="primary" type="submit" data-page-node-id="oU9v3eHmeVsfeaguLyTAiW">设置密码</button>
+      </form>
+      <p class="foot" data-page-node-id="vDuolCFumNMY94q1l22EHp">分红为消费让利回馈 · 不可提现/转赠 · 有封顶与时效</p>
+    </div>
+
+    <!-- 登录后 -->
+    <div id="main" hidden data-page-node-id="PjkKYF4Hz0F4s8Vj1wEn8Y">
+      <nav class="nav" data-page-node-id="0nU4oBd9PMGWMeV2q5DIY1">
+        <button class="nav-b on" data-v="flows" data-page-node-id="lS0UIHAlXibThP1WAmShHa">🏠 首页</button>
+        <button class="nav-b" data-v="mall">🛍️ 商城</button>
+        <button class="nav-b" data-v="orders">🧾 订单</button>
+        <button class="nav-b" data-v="me" data-page-node-id="fCmFLxudkP9tGLcYC6Atzf">👤 我的</button>
+      </nav>
+
+      <section id="vScan" class="view" hidden>
+        <div class="scan-mem" id="scanMem"></div>
+        <div class="scan-in">
+          <div class="f">📷 对准商品条码…</div>
+          <button type="button" class="go" id="scCam">⌕ 扫码</button>
+        </div>
+        <div class="scan-row">
+          <input id="scBarcode" type="text" inputmode="numeric" placeholder="扫码枪扫条码 / 手输条码后回车" style="flex:1">
+        </div>
+        <div class="scan-row">
+          <input id="scKw" type="text" placeholder="搜商品名称/条码" style="flex:1">
+          <button class="primary sm" id="scGo">搜索</button>
+        </div>
+        <div id="scResults" class="list" style="margin-top:8px"></div>
+        <div id="scCart" class="list"></div>
+        <div class="sc-checkout">
+          <div class="sc-tot"><span class="muted" id="scCount">共 0 件 · 已优惠 ¥0.00</span><b id="scTotal">¥0.00</b></div>
+          <button class="primary" id="scPay">余额支付（自动抵扣分红）</button>
+          <div class="hint" style="text-align:center;margin-top:7px">单笔限 ≤¥500 · 微信支付也可选</div>
+        </div>
+        <div id="scDone" class="exit-code" hidden>
+          <div class="ec-t">✅ 结算成功 · 离场核销码</div>
+          <div class="ec-code" id="scCode">------</div>
+          <div class="ec-tip" id="scDoneInfo"></div>
+          <button class="primary" id="scAgain">继续购物</button>
+        </div>
+      </section>
+
+      <section id="vFlows" class="view" data-page-node-id="pYLMVunN69tP3AhCjo36te">
+        <!-- 顶部资产（原型 21 会员端：店名 + 双资产卡 + 会员付款码） -->
+        <header class="hero" data-page-node-id="FDfER3OdmATS1RXecAm6hB">
+          <div class="hd-top" data-page-node-id="8GCOeFLD3d9feuJFZAgXWo">
+            <div class="hd-l"><b class="hd-store">🛒 门店加载中…</b><span id="hLevel" class="lv" data-page-node-id="WlkEJQCz8gMouSFOa4CP4D"></span></div>
+            <div class="hd-r" id="hCard" data-page-node-id="VXFLr7eV0NsDcn6cEUw4wc"></div>
+          </div>
+          <div class="hd-user" id="hName" data-page-node-id="k6GZXXoUX3EiHpJC7DNDor">—</div>
+          <div class="a-cards" data-page-node-id="69aPDhmcqy40l4KZPp2dV3">
+            <div class="a-card">
+              <div class="a-label" data-page-node-id="WJ5vwvdqkRWpyhy7A69GzW">储值余额（元）</div>
+              <div class="a-val" id="aBalance" data-page-node-id="xlg7896qP8GqH5NeoLoNvU">0.00</div>
+            </div>
+            <div class="a-card">
+              <div class="a-label" data-page-node-id="khGaYSvbCxtgf39Wij2FPX">分红账户（元）</div>
+              <div class="a-val" id="aDividend" data-page-node-id="qEGKQ8b1AU88CMPElHA4bx">0.00</div>
+            </div>
+          </div>
+          <div class="paycode">
+            <span class="pc-line">▌▌▌▌ 会员付款码 ▌▌▌▌</span>
+            <span class="pc-sub">收银扫码 · 自动积分与分红</span>
+          </div>
+          <div class="a-sub" id="aSplit" data-page-node-id="K19uHVQrhzgt89B3Baanz8"></div>
+        </header>
+
+        <!-- 快捷入口 + 分红播报（原型 21 首页宫格） -->
+        <div class="egrid">
+          <button class="e-card" data-jump="mall"><span class="eic">🛍️</span><b>在线下单</b><small id="mallTip">满 50 免配送费</small></button>
+          <button class="e-card" data-jump="scan"><span class="eic">🛒</span><b>扫码购</b><small>边逛边扫</small></button>
+          <button class="e-card" data-jump="recharge"><span class="eic">💳</span><b>在线充值</b><small>500+20</small></button>
+          <button class="e-card" data-jump="sales"><span class="eic">🧾</span><b>消费记录</b><small>含分红明细</small></button>
+        </div>
+        <div class="divcard">
+          <div class="dc-t"><b>今日分红播报</b><span class="pill" id="aDivCum" data-page-node-id="CDjOkdgdd2QSCkFbiEq8IS">累计 ¥0.00</span></div>
+          <div class="dc-line">分红账户 <b id="aPoints" data-page-node-id="eUNAVtFotUcu7ThUOycKCG">¥0.00</b> · 积分 <b id="aPoints2">0</b></div>
+          <div class="dc-tip muted" id="aTip" data-page-node-id="v1vOgMeIuR4P9RrpdnJxDz"></div>
+        </div>
+
+        <div class="subtabs" data-page-node-id="9ZqpNAbsoaTHKlVjNEfDmN">
+          <button class="stab on" data-t="balance" data-page-node-id="JrzPSlE5VPj2DpT8dG6Lo8">余额</button>
+          <button class="stab" data-t="dividend" data-page-node-id="DNokCCC27uh67xBzQzaGJA">分红</button>
+          <button class="stab" data-t="points" data-page-node-id="gXMeiIHCzbQBDEIxESuXMO">积分</button>
+        </div>
+        <div id="flowList" class="list" data-page-node-id="ji27uCcACfdzWAlfQN8kPg"></div>
+      </section>
+
+      <section id="vRecharge" class="view" hidden>
+        <div class="card">
+          <h3>发起充值</h3>
+          <p class="hint">选择档位到店付款（收银台现金/扫码代收），收款确认后余额即时到账；赠送部分不计分红权重</p>
+          <div id="rechargePlans" class="plan-grid"></div>
+          <form id="fRecharge">
+            <input name="amount" type="number" step="0.01" min="0.01" placeholder="自定义金额（元，无赠送）" style="flex:1">
+            <button class="primary" type="submit">发起充值</button>
+          </form>
+        </div>
+        <div class="card">
+          <h3>我的充值单</h3>
+          <div id="rechargeList" class="list"></div>
+        </div>
+      </section>
+
+      <!-- 在线商城（方向4：分类/搜索/加购/下单） -->
+      <section id="vMall" class="view" hidden>
+        <div class="mcat" id="mallCats"></div>
+        <div class="scan-row" style="margin-top:8px">
+          <input id="mallKw" type="text" placeholder="搜商品名称/条码" style="flex:1">
+          <button class="primary sm" id="mallGo">搜索</button>
+        </div>
+        <div id="mallList" class="mgrid"></div>
+        <div class="mbar" id="mBar" hidden>
+          <div class="mbar-l"><span id="mCount">0 件</span><b id="mTotal">¥0.00</b></div>
+          <button class="primary" id="mGo" style="flex:0 0 auto;padding:12px 26px">去结算</button>
+        </div>
+      </section>
+
+      <!-- 在线订单（方向4：列表/详情/取消） -->
+      <section id="vOrders" class="view" hidden>
+        <div id="ordersList" class="list"></div>
+      </section>
+
+      <section id="vSales" class="view" hidden data-page-node-id="mcwUrfXv3KIzyhuZgXPVMq">
+        <div id="salesList" class="list" data-page-node-id="5x8Drviy3LqUWA63H27Cb3"></div>
+      </section>
+
+      <section id="vMe" class="view" hidden data-page-node-id="0OlgQ0mln8bkCzYWxzHVoR">
+        <div class="card">
+          <h3>收货地址</h3>
+          <div id="addrList" class="list"></div>
+          <button class="primary sm" id="addrAdd" style="margin-top:10px;width:100%">＋ 新增地址</button>
+        </div>
+        <div class="card" data-page-node-id="qkJAcbsCRpWHHBmDGi4OD0">
+          <h3 data-page-node-id="X5uipHtIUD7hKQSy0yoI5F">修改密码</h3>
+          <form id="fPwd" data-page-node-id="YBRweMamDElTcsSfrptvE3">
+            <input name="old" type="password" placeholder="原密码" required data-page-node-id="AzwKUjj8A6s8GDAi4T5JAr">
+            <input name="new" type="password" placeholder="新密码（≥6位）" required data-page-node-id="KMYnSBtYx9abTRPB40J96L">
+            <button class="primary" type="submit" data-page-node-id="gCwwVzY8k4biC0Ma7tFn9w">保存</button>
+          </form>
+        </div>
+        <div class="card muted" id="memberMeta" data-page-node-id="WJvGIX2VMZOz9obuDeFg7G"></div>
+        <button class="danger" id="btnLogout" data-page-node-id="fy9Ist33rPBlG0P0l64kVH">退出登录</button>
+      </section>
+    </div>
+
+    <div id="toast" class="toast" hidden data-page-node-id="f4oV1HBtRLLuXBjdDEca1B"></div>
+  </div>
+  <script type="module" src="./app.js"></script>
+  <div id="hStoreFoot" style="padding:14px 16px 30px;text-align:center;font-size:11px;color:var(--mut)"></div>
+</body>
+</html>

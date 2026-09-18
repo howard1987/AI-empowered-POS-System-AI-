@@ -1,0 +1,9 @@
+{
+  "name": "cashier-h5-member",
+  "version": "0.1.0",
+  "private": true,
+  "description": "H5 会员端（零构建链）：余额/积分/分红查询、消费记录、密码自助。node server.mjs → :8089",
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}

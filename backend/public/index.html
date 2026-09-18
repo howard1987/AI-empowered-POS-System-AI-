@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="dMLCDIgnSZQHrg56TOFZBI">
+<head data-page-node-id="SEvNXaqBAMSWw0UTqxJiZm">
+<meta charset="UTF-8" data-page-node-id="wKzjIiLjDOKc0mXZKP1t7g">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="zD5fV4gWsrHXnBIltVDZBJ">
+<title>社区超市收银系统 · 后端管理页（初版）</title>
+<style>
+  :root { --green:#3a7d44; --ink:#2c2a26; --paper:#faf7f0; --line:#e5ddd0; }
+  * { box-sizing:border-box; margin:0; font-family:"Microsoft YaHei",system-ui,sans-serif; }
+  body { background:var(--paper); color:var(--ink); padding:24px; max-width:960px; margin:0 auto; }
+  h1 { font-size:20px; margin-bottom:4px; } .sub { color:#8a8378; font-size:12px; margin-bottom:20px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  .card h2 { font-size:14px; margin-bottom:10px; color:var(--green); }
+  input, button { padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:13px; }
+  button { background:var(--green); color:#fff; cursor:pointer; border:none; }
+  button:hover { opacity:.9; }
+  .row { display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  #out { white-space:pre-wrap; font-size:12px; background:#f4f1ea; border-radius:8px; padding:10px; max-height:300px; overflow:auto; }
+  .ok { color:var(--green); } .err { color:#c0392b; }
+</style>
+</head>
+<body data-page-node-id="JHy4GvokV3yNCAxVl2WBZv">
+  <h1 data-page-node-id="KCKTkHZbestVBMuBNXPCzH">社区超市收银系统 · 后端管理页（初版骨架）</h1>
+  <div class="sub" data-page-node-id="lLVIaMKpwJe78FThHXW4mO">完整 24 屏界面见《超市收银系统-界面原型.html》；本页仅用于后端联调演示</div>
+
+  <div class="card" data-page-node-id="QDL7IYP85zSdvD5Ske90Vr">
+    <h2 data-page-node-id="OVTf9FqtShypbV0JKFuPhb">① 健康检查</h2>
+    <div class="row" data-page-node-id="IB8eCUDMmhQy0MMlg7DQAj"><button onclick="checkHealth()" data-page-node-id="cTFAcCZCPL66t3PS6CHEQc">检查 /health</button><span id="health" data-page-node-id="bPvQfeuKxNYtN6q6QezrgZ"></span></div>
+  </div>
+
+  <div class="card" data-page-node-id="GYlXvcaSfSxNbmbgIiPuuw">
+    <h2 data-page-node-id="lPsUNAGLi6NQm0M9Dois4T">② 员工登录（ADMIN / admin123）</h2>
+    <div class="row" data-page-node-id="zMHtnWX5F0c9Ju5BB3WUmK">
+      <input id="empNo" value="ADMIN" placeholder="工号" style="width:120px" data-page-node-id="BAkXx3I175xnFhkT4ImOPA">
+      <input id="pwd" value="admin123" type="password" placeholder="密码" style="width:120px" data-page-node-id="EsGEmYYQKvgCWF2215R5E2">
+      <button onclick="login()" data-page-node-id="6bsKUqBUIjRc9WmFrqq0wZ">登录</button>
+      <span id="loginState" data-page-node-id="8NalXQ1OBoHQ6azYPApYMi"></span>
+    </div>
+  </div>
+
+  <div class="card" data-page-node-id="T7BgxBjFWe9yeNQOQwMlMM">
+    <h2 data-page-node-id="mKTPTLhLnbn5qAa1csCVaQ">③ 系统设置（分红参数等 40 项，修改全量留痕）</h2>
+    <div class="row" data-page-node-id="lCrHFTw0qTA02hoxZnqax0">
+      <button onclick="loadSettings()" data-page-node-id="6DjrlvhQkKfJFTTBQLjEdj">加载设置</button>
+      <button onclick="previewDividend()" data-page-node-id="tjHjWzUui0U0tXtLVSJ1He">分红试算（净利 1000 元）</button>
+    </div>
+    <div id="settingsWrap" style="display:none" data-page-node-id="bbG1JJoSy2fGDPaqSuPQfc">
+      <table id="settingsTb" data-page-node-id="i2eLIqyCyVFp3LK5qfgiUb"></table>
+    </div>
+  </div>
+
+  <div class="card" data-page-node-id="IZAZBrkwwqFZmpyI2tqNBC"><h2 data-page-node-id="RXu9bLNOCMOrlEvc3l1n6B">④ 输出</h2><div id="out" data-page-node-id="4AniBFkWJDG2UVFsOVglNW">等待操作…</div></div>
+
+<script>
+  var TOKEN = '';
+  function out(o) { document.getElementById('out').textContent = typeof o === 'string' ? o : JSON.stringify(o, null, 2); }
+  async function api(path, opts) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+    const r = await fetch(path, Object.assign({ headers }, opts));
+    const j = await r.json();
+    out(j);
+    return j;
+  }
+  async function checkHealth() {
+    const j = await api('/health');
+    document.getElementById('health').innerHTML = j.code === 0
+      ? '<span class="ok">✔ 服务正常 ' + j.data.version + '</span>'
+      : '<span class="err">✘ 异常</span>';
+  }
+  async function login() {
+    const j = await api('/auth/login', { method: 'POST', body: JSON.stringify({ empNo: empNo.value, password: pwd.value }) });
+    if (j.code === 0) { TOKEN = j.data.token; document.getElementById('loginState').innerHTML = '<span class="ok">✔ 已登录：' + j.data.name + '</span>'; }
+    else document.getElementById('loginState').innerHTML = '<span class="err">✘ ' + j.msg + '</span>';
+  }
+  async function loadSettings() {
+    const j = await api('/settings');
+    if (j.code !== 0) return;
+    const tb = document.getElementById('settingsTb');
+    tb.innerHTML = '<tr><th>分组</th><th>键</th><th>名称</th><th>当前值</th><th>类型</th></tr>' +
+      j.data.map(s => '<tr><td>' + s.group_name + '</td><td>' + s.setting_key + '</td><td>' + s.display_name +
+        '</td><td>' + JSON.stringify(s.value) + '</td><td>' + s.value_type + '</td></tr>').join('');
+    document.getElementById('settingsWrap').style.display = '';
+  }
+  async function previewDividend() {
+    if (!TOKEN) { out('请先登录'); return; }
+    await api('/dividend/preview?netProfit=1000');
+  }
+</script>
+</body>
+</html>

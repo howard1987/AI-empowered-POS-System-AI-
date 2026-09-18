@@ -1,0 +1,419 @@
+- generic [ref=e2]:
+  - generic [ref=e17]:
+    - generic [ref=e18]:
+      - generic [ref=e19]: 🛒 社区超市收银系统
+      - button "《" [ref=e20] [cursor=pointer]
+    - navigation [ref=e21]:
+      - generic [ref=e22]: 经营
+      - link "🏠 后台首页" [ref=e23] [cursor=pointer]:
+        - /url: "#/home"
+      - link "📊 经营看板" [ref=e24] [cursor=pointer]:
+        - /url: "#/dashboard"
+      - link "📈 报表中心" [ref=e25] [cursor=pointer]:
+        - /url: "#/report"
+      - generic [ref=e26]: 商品与库存
+      - link "📦 商品档案" [ref=e27] [cursor=pointer]:
+        - /url: "#/products"
+      - link "🏭 供应商管理" [ref=e28] [cursor=pointer]:
+        - /url: "#/suppliers"
+      - generic [ref=e29] [cursor=pointer]:
+        - generic [ref=e30]: ▸
+        - generic [ref=e31]: 🚚 采购管理
+      - link "💱 调价管理" [ref=e32] [cursor=pointer]:
+        - /url: "#/prices"
+      - link "🧩 组合拆分" [ref=e33] [cursor=pointer]:
+        - /url: "#/bundles"
+      - generic [ref=e34] [cursor=pointer]:
+        - generic [ref=e35]: ▸
+        - generic [ref=e36]: 🏷️ 库存管理
+      - link "📑 对账结算" [ref=e37] [cursor=pointer]:
+        - /url: "#/recon"
+      - generic [ref=e38]: 收银
+      - link "🧾 销售流水" [ref=e39] [cursor=pointer]:
+        - /url: "#/sales"
+      - link "🛎️ 挂单/价目表" [ref=e40] [cursor=pointer]:
+        - /url: "#/counter"
+      - link "⏱️ 交接班" [ref=e41] [cursor=pointer]:
+        - /url: "#/shifts"
+      - link "🏬 大客户与团购" [ref=e42] [cursor=pointer]:
+        - /url: "#/bigcustomer"
+      - link "🛡️ 智能防损" [ref=e43] [cursor=pointer]:
+        - /url: "#/fraud"
+      - generic [ref=e44]: 会员与营销
+      - link "👥 会员管理" [ref=e45] [cursor=pointer]:
+        - /url: "#/members"
+      - link "💰 分红引擎" [ref=e46] [cursor=pointer]:
+        - /url: "#/dividend"
+      - link "🎯 营销引擎" [ref=e47] [cursor=pointer]:
+        - /url: "#/marketing"
+      - link "🎭 会员画像" [ref=e48] [cursor=pointer]:
+        - /url: "#/profiles"
+      - link "🎉 促销活动" [ref=e49] [cursor=pointer]:
+        - /url: "#/promotions"
+      - link "🎟️ 优惠券" [ref=e50] [cursor=pointer]:
+        - /url: "#/coupons"
+      - generic [ref=e51]: AI 智能
+      - link "🧠 智能决策中心" [ref=e52] [cursor=pointer]:
+        - /url: "#/brain"
+      - link "🤖 AI 训练台" [ref=e53] [cursor=pointer]:
+        - /url: "#/ai"
+      - link "🛰️ AI 模型管理" [ref=e54] [cursor=pointer]:
+        - /url: "#/models"
+      - link "💹 AI 动态定价" [ref=e55] [cursor=pointer]:
+        - /url: "#/pricing"
+      - generic [ref=e56]: 系统
+      - link "🔐 员工与权限" [ref=e57] [cursor=pointer]:
+        - /url: "#/staff"
+      - link "🖨️ 打印中心" [ref=e58] [cursor=pointer]:
+        - /url: "#/print"
+      - link "⚙️ 系统设置" [ref=e59] [cursor=pointer]:
+        - /url: "#/settings"
+  - generic [ref=e3]:
+    - generic [ref=e60]:
+      - generic [ref=e61]: 📦 商品档案
+      - generic [ref=e62]: 超级管理员（ADMIN）
+      - button "退出" [ref=e63] [cursor=pointer]
+    - generic [ref=e150]:
+      - generic [ref=e151]:
+        - generic [ref=e152]:
+          - textbox "🔍 商品名称 / 条码 / 货号 / 拼音码" [ref=e153]
+          - generic [ref=e154] [cursor=pointer]:
+            - text: 全部
+            - generic [ref=e155]: "15"
+          - generic [ref=e156] [cursor=pointer]:
+            - text: 在售
+            - generic [ref=e157]: "15"
+          - generic [ref=e158] [cursor=pointer]:
+            - text: 禁售·待补保质期
+            - generic [ref=e159]: "0"
+          - generic [ref=e160] [cursor=pointer]:
+            - text: 临期
+            - generic [ref=e161]: "0"
+          - generic [ref=e162] [cursor=pointer]:
+            - text: 停用
+            - generic [ref=e163]: "0"
+          - button "🗂️" [ref=e164] [cursor=pointer]
+          - button "＋ 新增商品" [ref=e165] [cursor=pointer]
+          - button "📥 批量导入" [ref=e166] [cursor=pointer]
+        - generic [ref=e167]:
+          - generic [ref=e168]:
+            - generic [ref=e169]:
+              - generic [ref=e170]: 🗂️ 分类管理
+              - button "＋ 新增分类" [ref=e171] [cursor=pointer]
+            - generic [ref=e172]:
+              - generic [ref=e180] [cursor=pointer]:
+                - generic [ref=e181]: 🗂️
+                - generic [ref=e182]: 全部商品
+                - generic [ref=e183]: "15"
+              - generic [ref=e184]:
+                - button "＋" [ref=e185] [cursor=pointer]
+                - generic [ref=e186]: 🥤
+                - generic [ref=e187]: E2E饮品704292
+                - generic [ref=e188]: "3"
+                - button "−" [ref=e189] [cursor=pointer]
+              - generic [ref=e190]:
+                - button "＋" [ref=e191] [cursor=pointer]
+                - generic [ref=e192]: └
+                - generic [ref=e193]: E2E碳酸704292
+                - generic [ref=e194]: "1"
+                - button "−" [ref=e195] [cursor=pointer]
+            - generic [ref=e173]: 拖拽分类可排序/合并 · 双击改名 · 级首＋加子类 · 行末−删空类
+          - generic [ref=e174]:
+            - table [ref=e196]:
+              - rowgroup [ref=e197]:
+                - row [ref=e198]:
+                  - columnheader [ref=e199]:
+                    - checkbox "全选/取消全选本页" [ref=e200]
+                  - columnheader "商品名称" [ref=e201]
+                  - columnheader "条码" [ref=e202]
+                  - columnheader "规格" [ref=e203]
+                  - columnheader "单位" [ref=e204]
+                  - columnheader "分类" [ref=e205]
+                  - columnheader "进货价" [ref=e206]
+                  - columnheader "售价" [ref=e207]
+                  - columnheader "会员价" [ref=e208]
+                  - columnheader "批发价" [ref=e209]
+                  - columnheader "会员折扣" [ref=e210]
+                  - columnheader "利润率" [ref=e211]
+                  - columnheader "库存" [ref=e212]
+                  - columnheader "供货商" [ref=e213]
+              - rowgroup [ref=e214]:
+                - row [ref=e215] [cursor=pointer]:
+                  - cell [ref=e216]:
+                    - checkbox [ref=e217]
+                  - cell "🏷️ 宜简饮用纯净水 补货" [ref=e218]:
+                    - text: 🏷️ 宜简饮用纯净水
+                    - generic [ref=e219]: 补货
+                  - cell "6950549800187" [ref=e220]
+                  - cell "480ml" [ref=e221]
+                  - cell "瓶" [ref=e222]
+                  - cell "E2E饮品704292" [ref=e223]
+                  - cell "¥2.00" [ref=e224]
+                  - cell "¥10.00" [ref=e225]
+                  - cell "¥1.80 低于进价" [ref=e226]:
+                    - text: ¥1.80
+                    - generic [ref=e227]: 低于进价
+                  - cell "—" [ref=e228]
+                  - cell "否" [ref=e229]
+                  - cell "80.0%" [ref=e230]
+                  - cell "0 瓶" [ref=e231]
+                  - cell "V494测试供应商" [ref=e232]
+                - row [ref=e233] [cursor=pointer]:
+                  - cell [ref=e234]:
+                    - checkbox [ref=e235]
+                  - cell "🏷️ AI测试商品C 补货" [ref=e236]:
+                    - text: 🏷️ AI测试商品C
+                    - generic [ref=e237]: 补货
+                  - cell "68430820693" [ref=e238]
+                  - cell "—" [ref=e239]
+                  - cell "件" [ref=e240]
+                  - cell "—" [ref=e241]
+                  - cell "—" [ref=e242]
+                  - cell "¥50.00" [ref=e243]
+                  - cell "—" [ref=e244]
+                  - cell "—" [ref=e245]
+                  - cell "否" [ref=e246]
+                  - cell "—" [ref=e247]
+                  - cell "0 件" [ref=e248]
+                  - cell "AI测试供应商43082069" [ref=e249]
+                - row [ref=e250] [cursor=pointer]:
+                  - cell [ref=e251]:
+                    - checkbox [ref=e252]
+                  - cell "🏷️ AI测试商品B 补货" [ref=e253]:
+                    - text: 🏷️ AI测试商品B
+                    - generic [ref=e254]: 补货
+                  - cell "68430820692" [ref=e255]
+                  - cell "—" [ref=e256]
+                  - cell "件" [ref=e257]
+                  - cell "—" [ref=e258]
+                  - cell "—" [ref=e259]
+                  - cell "¥20.00" [ref=e260]
+                  - cell "—" [ref=e261]
+                  - cell "—" [ref=e262]
+                  - cell "否" [ref=e263]
+                  - cell "—" [ref=e264]
+                  - cell "0 件" [ref=e265]
+                  - cell "AI测试供应商43082069" [ref=e266]
+                - row [ref=e267] [cursor=pointer]:
+                  - cell [ref=e268]:
+                    - checkbox [ref=e269]
+                  - cell "🏷️ AI测试商品A 补货" [ref=e270]:
+                    - text: 🏷️ AI测试商品A
+                    - generic [ref=e271]: 补货
+                  - cell "68430820691" [ref=e272]
+                  - cell "—" [ref=e273]
+                  - cell "件" [ref=e274]
+                  - cell "—" [ref=e275]
+                  - cell "—" [ref=e276]
+                  - cell "¥10.00" [ref=e277]
+                  - cell "—" [ref=e278]
+                  - cell "—" [ref=e279]
+                  - cell "否" [ref=e280]
+                  - cell "—" [ref=e281]
+                  - cell "0 件" [ref=e282]
+                  - cell "AI测试供应商43082069" [ref=e283]
+                - row [ref=e284] [cursor=pointer]:
+                  - cell [ref=e285]:
+                    - checkbox [ref=e286]
+                  - cell "🏷️ AI测试商品C 补货" [ref=e287]:
+                    - text: 🏷️ AI测试商品C
+                    - generic [ref=e288]: 补货
+                  - cell "68418890683" [ref=e289]
+                  - cell "—" [ref=e290]
+                  - cell "件" [ref=e291]
+                  - cell "—" [ref=e292]
+                  - cell "—" [ref=e293]
+                  - cell "¥50.00" [ref=e294]
+                  - cell "—" [ref=e295]
+                  - cell "—" [ref=e296]
+                  - cell "否" [ref=e297]
+                  - cell "—" [ref=e298]
+                  - cell "0 件" [ref=e299]
+                  - cell "AI测试供应商41889068" [ref=e300]
+                - row [ref=e301] [cursor=pointer]:
+                  - cell [ref=e302]:
+                    - checkbox [ref=e303]
+                  - cell "🏷️ AI测试商品B 补货" [ref=e304]:
+                    - text: 🏷️ AI测试商品B
+                    - generic [ref=e305]: 补货
+                  - cell "68418890682" [ref=e306]
+                  - cell "—" [ref=e307]
+                  - cell "件" [ref=e308]
+                  - cell "—" [ref=e309]
+                  - cell "—" [ref=e310]
+                  - cell "¥20.00" [ref=e311]
+                  - cell "—" [ref=e312]
+                  - cell "—" [ref=e313]
+                  - cell "否" [ref=e314]
+                  - cell "—" [ref=e315]
+                  - cell "0 件" [ref=e316]
+                  - cell "AI测试供应商41889068" [ref=e317]
+                - row [ref=e318] [cursor=pointer]:
+                  - cell [ref=e319]:
+                    - checkbox [ref=e320]
+                  - cell "🏷️ AI测试商品A 补货" [ref=e321]:
+                    - text: 🏷️ AI测试商品A
+                    - generic [ref=e322]: 补货
+                  - cell "68418890681" [ref=e323]
+                  - cell "—" [ref=e324]
+                  - cell "件" [ref=e325]
+                  - cell "—" [ref=e326]
+                  - cell "—" [ref=e327]
+                  - cell "¥10.00" [ref=e328]
+                  - cell "—" [ref=e329]
+                  - cell "—" [ref=e330]
+                  - cell "否" [ref=e331]
+                  - cell "—" [ref=e332]
+                  - cell "0 件" [ref=e333]
+                  - cell "AI测试供应商41889068" [ref=e334]
+                - row [ref=e335] [cursor=pointer]:
+                  - cell [ref=e336]:
+                    - checkbox [ref=e337]
+                  - cell "🏷️ AI测试商品C 补货" [ref=e338]:
+                    - text: 🏷️ AI测试商品C
+                    - generic [ref=e339]: 补货
+                  - cell "68399651243" [ref=e340]
+                  - cell "—" [ref=e341]
+                  - cell "件" [ref=e342]
+                  - cell "—" [ref=e343]
+                  - cell "—" [ref=e344]
+                  - cell "¥50.00" [ref=e345]
+                  - cell "—" [ref=e346]
+                  - cell "—" [ref=e347]
+                  - cell "否" [ref=e348]
+                  - cell "—" [ref=e349]
+                  - cell "0 件" [ref=e350]
+                  - cell "AI测试供应商39965124" [ref=e351]
+                - row [ref=e352] [cursor=pointer]:
+                  - cell [ref=e353]:
+                    - checkbox [ref=e354]
+                  - cell "🏷️ AI测试商品B 补货" [ref=e355]:
+                    - text: 🏷️ AI测试商品B
+                    - generic [ref=e356]: 补货
+                  - cell "68399651242" [ref=e357]
+                  - cell "—" [ref=e358]
+                  - cell "件" [ref=e359]
+                  - cell "—" [ref=e360]
+                  - cell "—" [ref=e361]
+                  - cell "¥20.00" [ref=e362]
+                  - cell "—" [ref=e363]
+                  - cell "—" [ref=e364]
+                  - cell "否" [ref=e365]
+                  - cell "—" [ref=e366]
+                  - cell "0 件" [ref=e367]
+                  - cell "AI测试供应商39965124" [ref=e368]
+                - row [ref=e369] [cursor=pointer]:
+                  - cell [ref=e370]:
+                    - checkbox [ref=e371]
+                  - cell "🏷️ AI测试商品A 补货" [ref=e372]:
+                    - text: 🏷️ AI测试商品A
+                    - generic [ref=e373]: 补货
+                  - cell "68399651241" [ref=e374]
+                  - cell "—" [ref=e375]
+                  - cell "件" [ref=e376]
+                  - cell "—" [ref=e377]
+                  - cell "—" [ref=e378]
+                  - cell "¥10.00" [ref=e379]
+                  - cell "—" [ref=e380]
+                  - cell "—" [ref=e381]
+                  - cell "否" [ref=e382]
+                  - cell "—" [ref=e383]
+                  - cell "0 件" [ref=e384]
+                  - cell "AI测试供应商39965124" [ref=e385]
+                - row [ref=e386] [cursor=pointer]:
+                  - cell [ref=e387]:
+                    - checkbox [ref=e388]
+                  - cell "🏷️ 益达无糖口香糖清新西柚味56g 补货" [ref=e389]:
+                    - text: 🏷️ 益达无糖口香糖清新西柚味56g
+                    - generic [ref=e390]: 补货
+                  - cell "6923450657188" [ref=e391]
+                  - cell "—" [ref=e392]
+                  - cell "瓶" [ref=e393]
+                  - cell "E2E饮品704292" [ref=e394]
+                  - cell "—" [ref=e395]
+                  - cell "¥11.00" [ref=e396]
+                  - cell "—" [ref=e397]
+                  - cell "—" [ref=e398]
+                  - cell "否" [ref=e399]
+                  - cell "—" [ref=e400]
+                  - cell "0 瓶" [ref=e401]
+                  - cell "—" [ref=e402]
+                - row [ref=e403] [cursor=pointer]:
+                  - cell [ref=e404]:
+                    - checkbox [ref=e405]
+                  - cell "🏷️ E2E香烟A704292 补货" [ref=e406]:
+                    - text: 🏷️ E2E香烟A704292
+                    - generic [ref=e407]: 补货
+                  - cell "6970429202" [ref=e408]
+                  - cell "—" [ref=e409]
+                  - cell "包" [ref=e410]
+                  - cell "—" [ref=e411]
+                  - cell "¥18.00" [ref=e412]
+                  - cell "¥20.00" [ref=e413]
+                  - cell "—" [ref=e414]
+                  - cell "—" [ref=e415]
+                  - cell "否" [ref=e416]
+                  - cell "10.0%" [ref=e417]
+                  - cell "0 包" [ref=e418]
+                  - cell "鑫岚小吃供应" [ref=e419]
+                - row [ref=e420] [cursor=pointer]:
+                  - cell [ref=e421]:
+                    - checkbox [ref=e422]
+                  - cell "🏷️ E2E矿泉水550ml704292 补货" [ref=e423]:
+                    - text: 🏷️ E2E矿泉水550ml704292
+                    - generic [ref=e424]: 补货
+                  - cell "6970429201" [ref=e425]
+                  - cell "—" [ref=e426]
+                  - cell "瓶" [ref=e427]
+                  - cell "E2E碳酸704292" [ref=e428]
+                  - cell "¥1.25" [ref=e429]
+                  - cell "¥2.50" [ref=e430]
+                  - cell "¥2.20" [ref=e431]
+                  - cell "—" [ref=e432]
+                  - cell "否" [ref=e433]
+                  - cell "50.0%" [ref=e434]
+                  - cell "0 瓶" [ref=e435]
+                  - cell "鑫岚小吃供应" [ref=e436]
+                - row [ref=e437] [cursor=pointer]:
+                  - cell [ref=e438]:
+                    - checkbox [ref=e439]
+                  - cell "🏷️ PWA可乐700943 补货" [ref=e440]:
+                    - text: 🏷️ PWA可乐700943
+                    - generic [ref=e441]: 补货
+                  - cell "6970094312" [ref=e442]
+                  - cell "—" [ref=e443]
+                  - cell "罐" [ref=e444]
+                  - cell "—" [ref=e445]
+                  - cell "¥2.00" [ref=e446]
+                  - cell "¥3.50" [ref=e447]
+                  - cell "—" [ref=e448]
+                  - cell "—" [ref=e449]
+                  - cell "否" [ref=e450]
+                  - cell "42.9%" [ref=e451]
+                  - cell "0 罐" [ref=e452]
+                  - cell "—" [ref=e453]
+                - row [ref=e454] [cursor=pointer]:
+                  - cell [ref=e455]:
+                    - checkbox [ref=e456]
+                  - cell "🏷️ PWA矿泉水700943 补货" [ref=e457]:
+                    - text: 🏷️ PWA矿泉水700943
+                    - generic [ref=e458]: 补货
+                  - cell "6970094311" [ref=e459]
+                  - cell "—" [ref=e460]
+                  - cell "瓶" [ref=e461]
+                  - cell "—" [ref=e462]
+                  - cell "¥1.10" [ref=e463]
+                  - cell "¥2.50" [ref=e464]
+                  - cell "—" [ref=e465]
+                  - cell "—" [ref=e466]
+                  - cell "否" [ref=e467]
+                  - cell "56.0%" [ref=e468]
+                  - cell "0 瓶" [ref=e469]
+                  - cell "—" [ref=e470]
+            - generic [ref=e176]:
+              - generic [ref=e177]: 点行看详情 · 双击行直接编辑 · 扫码枪扫码 = 锁定商品
+              - generic [ref=e471]: 共 15 个商品 · 每页 30 行
+              - button "‹ 上一页" [disabled] [ref=e178]
+              - generic [ref=e472]: 第 1 / 1 页
+              - button "下一页 ›" [disabled] [ref=e179]
+      - text: "* * * * * * * * * * * * * * *"

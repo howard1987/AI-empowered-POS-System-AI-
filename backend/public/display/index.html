@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>顾客副屏 · 客显</title>
+<style>
+  /* 顾客副屏（V4.21.0 P16 批2）：店招+欢迎语常驻顶栏 · 购物明细/会员卡 · 支付引导大字 · 空闲轮播
+     断线自动重连（EventSource 原生），断连期间显示「等待主屏」提示，不影响主屏交易 */
+  :root { --mono: Consolas, "JetBrains Mono", monospace; }
+  html, body { height: 100%; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: linear-gradient(160deg, #1d3a2a, #24503a 60%, #1d3a2a);
+    color: #eef3e4; display: flex; overflow: hidden;
+  }
+  .cd-main { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 1.2rem; gap: 1rem; }
+  .cd-head { display: flex; justify-content: space-between; align-items: center;
+    padding: .9rem 1.4rem; border-radius: 14px;
+    background: rgba(255,255,255,.08); backdrop-filter: blur(6px); }
+  .cd-head .t { font-size: clamp(16px, 2vh, 24px); letter-spacing: .12em; color: #ffe9c4; font-weight: 700; }
+  .cd-head .s { font-size: clamp(11px, 1.3vh, 15px); color: #bcd9bd; }
+  .cd-conn { font-size: clamp(10px, 1.2vh, 13px); padding: .18rem .7rem; border-radius: 99px;
+    background: rgba(255,255,255,.1); color: #ffdca8; }
+  .cd-conn.on { color: #b9f0c8; }
+
+  /* 商品明细区：浅色卡片，提升可读性 */
+  .cd-items-wrap { flex: 1; background: #f8f6f0; border-radius: 18px; overflow: hidden;
+    box-shadow: 0 8px 30px rgba(0,0,0,.18); display: flex; flex-direction: column; }
+  .cd-items { flex: 1; padding: .2rem 1.2rem; overflow: auto; }
+  .cd-row { display: flex; align-items: center; gap: 14px;
+    padding: clamp(10px, 1.2vh, 14px) .6rem; border-bottom: 1px dashed rgba(0,0,0,.1);
+    font-size: clamp(13px, 1.6vh, 17px); color: #2c2a24; }
+  .cd-row .n { flex: 1; color: #2c2a24; font-weight: 500; }
+  .cd-row .q { color: #6d6759; font-size: .9em; }
+  .cd-row .a { font-family: var(--mono); font-weight: 800; color: #b45c1a; }
+  .empty { text-align: center; color: #8b8574; font-size: clamp(14px, 2vh, 20px); margin-top: 12vh; }
+
+  .cd-total { padding: .8rem 1.6rem; border-radius: 14px; background: rgba(255,255,255,.08);
+    display: flex; align-items: baseline; justify-content: space-between; }
+  .cd-total .l { font-family: var(--mono); font-size: clamp(26px, 5vh, 54px); color: #ffe9cf;
+    font-weight: 700; }
+  .cd-total .v { font-family: var(--mono); font-size: clamp(32px, 6vh, 64px); font-weight: 800;
+    color: #ffd9a8; line-height: 1.15; }
+  .cd-total .v small { font-size: .45em; }
+  .cd-save { padding: .5rem 1.3rem; font-size: clamp(11px, 1.35vh, 15px); color: #ffe9cf;
+    display: flex; justify-content: space-between; background: rgba(255,255,255,.08); border-radius: 12px; }
+  .cd-save b { font-family: var(--mono); color: #ffce8f; }
+
+  /* 支付引导层：覆盖明细区，大字居中 */
+  #guide { position: absolute; inset: 64px 0 96px 0; display: none; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1.2vh; background: rgba(16,35,24,.88); z-index: 5; }
+  #guide .big { font-size: clamp(30px, 7vh, 68px); font-weight: 800; color: #ffd9a8; letter-spacing: .06em; text-align: center; }
+  #guide .sub { font-size: clamp(15px, 2.6vh, 24px); color: #d7e4c9; }
+  #guide .num { font-family: var(--mono); font-size: clamp(26px, 5.4vh, 52px); font-weight: 800; color: #fff; }
+  #guide .row3 { display: flex; gap: 4vw; margin-top: 1.4vh; }
+  #guide .cell { text-align: center; }
+  #guide .cell span { display: block; font-size: clamp(11px, 1.6vh, 16px); color: #9fc4a8; margin-bottom: .6vh; }
+  #guide .cell b { font-family: var(--mono); font-size: clamp(20px, 3.8vh, 40px); color: #ffd9a8; }
+
+  /* 完成层 */
+  #done { position: fixed; inset: 0; background: rgba(20,40,28,.82); display: none;
+    align-items: center; justify-content: center; flex-direction: column; gap: 1.4vh; z-index: 9; }
+  #done .big { font-size: clamp(40px, 9vh, 80px); font-weight: 800; color: #ffd9a8; letter-spacing: .08em; }
+  #done .sub { font-size: clamp(15px, 2.6vh, 24px); color: #d7e4c9; }
+
+  /* 空闲轮播 */
+  .cd-ads { height: clamp(64px, 12vh, 100px); border-radius: 10px;
+    background: linear-gradient(100deg, rgba(255,255,255,.12), rgba(255,255,255,.04));
+    display: flex; align-items: center; padding: 0 1.4rem; gap: 14px; }
+  .cd-ads .ad-emo, .cd-ads img { font-size: 1.8em; height: 70%; max-width: 140px; object-fit: cover; border-radius: 8px; }
+  .cd-ads .big { font-size: clamp(15px, 2vh, 20px); font-weight: 700; color: #fff; }
+  .cd-ads .sm { font-size: clamp(11px, 1.4vh, 14px); color: #bcd9bd; }
+  .cd-ads .dots { margin-left: auto; display: flex; gap: 5px; }
+  .cd-ads .dots i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.25); }
+  .cd-ads .dots i.on { background: #ffd9a8; }
+
+  /* 右侧会员卡 */
+  .cd-member { width: clamp(300px, 28vw, 440px); flex: none; border-left: 1px solid rgba(255,255,255,.12);
+    display: flex; align-items: center; justify-content: center; padding: 1.2rem; }
+  .cm-empty { color: #7fa286; text-align: center; font-size: clamp(13px, 1.7vh, 18px); line-height: 2; }
+  .cm-card { width: 100%; background: #fbf9f2; color: #333; border-radius: 22px;
+    padding: 1.2rem 1.4rem 1rem; box-shadow: 0 12px 40px rgba(0,0,0,.32); }
+  .cm-titlebar { display: flex; justify-content: space-between; align-items: center; margin-bottom: .8rem; }
+  .cm-title { font-size: clamp(14px, 1.8vh, 20px); font-weight: 800; color: #2c2a24; }
+  .cm-status { font-size: clamp(10px, 1.2vh, 12px); padding: .2rem .7rem; border-radius: 99px;
+    background: #e6f4e9; color: #2e8557; font-weight: 700; }
+  .cm-head { display: flex; align-items: center; gap: 14px; margin-bottom: 1rem; }
+  .cm-av { width: clamp(56px, 7vh, 76px); height: clamp(56px, 7vh, 76px); border-radius: 50%;
+    background: linear-gradient(145deg, #2e8557, #1f5c3e); color: #fff; display: grid; place-items: center;
+    font-size: clamp(22px, 3vh, 32px); font-weight: 800; flex: none; box-shadow: 0 4px 12px rgba(46,133,87,.3); }
+  .cm-name { font-size: clamp(16px, 2.2vh, 23px); font-weight: 800; color: #2c2a24; }
+  .cm-meta { font-size: clamp(11px, 1.4vh, 14px); color: #8b8574; margin-top: 3px; }
+
+  /* 资产三宫格 */
+  .cm-assets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: .9rem 0 1rem; }
+  .cm-asset { background: #f0efe8; border-radius: 14px; padding: .7rem .5rem; text-align: center; }
+  .cm-asset:nth-child(2) { background: #faece6; }
+  .cm-asset:nth-child(3) { background: #fbf4d9; }
+  .cm-asset span { display: block; font-size: clamp(10px, 1.2vh, 13px); color: #6d6759; margin-bottom: 3px; }
+  .cm-asset b { font-family: var(--mono); font-size: clamp(15px, 2vh, 22px); color: #2c2a24; }
+  .cm-asset:nth-child(2) b { color: #b45c1a; }
+  .cm-asset:nth-child(3) b { color: #a67c00; }
+
+  /* 详细权益行 */
+  .cm-rows { border-top: 1px dashed rgba(0,0,0,.12); padding-top: .6rem; }
+  .cm-row { display: flex; justify-content: space-between; align-items: baseline;
+    padding: .32rem 0; font-size: clamp(11px, 1.4vh, 14px); color: #5d5749; }
+  .cm-row b { font-family: var(--mono); color: #2c2a24; font-weight: 700; }
+  .cm-row .muted { color: #9b9588; font-size: .9em; }
+</style>
+</head>
+<body>
+  <div class="cd-main">
+    <div class="cd-head">
+      <span class="t" id="cdSign">欢迎光临</span>
+      <span class="s" id="cdMeta">—</span>
+      <span class="cd-conn" id="cdConn">连接中…</span>
+    </div>
+    <div class="cd-items-wrap" style="position:relative;flex:1;display:flex;flex-direction:column;min-height:0">
+      <div class="cd-items" id="cdItems"><div class="empty">扫描商品后，明细将显示在这里</div></div>
+      <!-- 支付引导（V4.21.0）：出示付款码 / 现金应收实收找零大字 -->
+      <div id="guide">
+        <div class="big" id="gdBig">请出示付款码</div>
+        <div class="sub" id="gdSub"></div>
+        <div class="row3" id="gdCash" style="display:none">
+          <div class="cell"><span>应 收</span><b id="gdDue">¥0.00</b></div>
+          <div class="cell"><span>实 收</span><b id="gdPaid">¥0.00</b></div>
+          <div class="cell"><span>找 零</span><b id="gdChange">¥0.00</b></div>
+        </div>
+      </div>
+    </div>
+    <div class="cd-total">
+      <span class="l">本单应付</span>
+      <span class="v"><small>¥</small><span id="cdAmount">0.00</span></span>
+    </div>
+    <div class="cd-save"><span id="cdSavedLab">会员已帮您节省</span><b id="cdSaved">¥0.00</b></div>
+    <div class="cd-ads" id="cdAds">
+      <span class="ad-emo" id="adEmo">📺</span>
+      <img id="adImg" style="display:none">
+      <div><div class="big" id="adTitle">今日促销</div><div class="sm" id="adSub"></div></div>
+      <div class="dots" id="adDots"></div>
+    </div>
+  </div>
+
+  <aside class="cd-member">
+    <div class="cm-empty" id="cmEmpty">👤 识别会员后<br>在此展示会员权益</div>
+    <div class="cm-card" id="cmCard" style="display:none">
+      <div class="cm-titlebar"><span class="cm-title">会员卡</span><span class="cm-status" id="cmStatus">正常</span></div>
+      <div class="cm-head">
+        <div class="cm-av" id="cmAv">会</div>
+        <div>
+          <div class="cm-name" id="cmName">—</div>
+          <div class="cm-meta" id="cmMeta2">—</div>
+        </div>
+      </div>
+      <div class="cm-assets">
+        <div class="cm-asset"><span>储值余额</span><b id="cmBalance">¥0.00</b></div>
+        <div class="cm-asset"><span>可用分红</span><b id="cmDividend">¥0.00</b></div>
+        <div class="cm-asset"><span>积分</span><b id="cmPoints">0</b></div>
+      </div>
+      <div class="cm-rows">
+        <div class="cm-row"><span>等级系数（分红权重）</span><b id="cmRate">×1.0</b></div>
+        <div class="cm-row"><span>终身累计已得分红</span><b id="cmCumDiv">—</b></div>
+        <div class="cm-row"><span>活跃状态</span><b id="cmActive">—</b></div>
+        <div class="cm-row"><span>下次失效分红</span><b class="muted" id="cmNextInvalid">—</b></div>
+        <div class="cm-row"><span>累计失效（透明展示）</span><b class="muted" id="cmInvalid">—</b></div>
+      </div>
+    </div>
+  </aside>
+
+  <div id="done">
+    <div class="big">✓ 支付成功</div>
+    <div class="sub" id="doneSub">欢迎再次光临</div>
+  </div>
+
+<script>
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  const fmt = n => '¥' + Number(n || 0).toFixed(2);
+  const maskPhone = s => String(s || '').replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2');
+  const store = new URLSearchParams(location.search).get('store') || 1;
+  let doneTimer = 0, ads = [], adIdx = 0, adTimer = 0, payState = 'idle';
+
+  // ── 配置（店招/欢迎语/轮播）：连上即取 + 每 5 分钟刷新 ──
+  async function loadCfg() {
+    try {
+      const c = await fetch('/display/cfg?store=' + store).then(r => r.json()).then(j => j.data || j);
+      $('#cdSign').textContent = `${esc(c.storeName)} · ${esc(c.welcome)}`;
+      ads = Array.isArray(c.ads) ? c.ads : [];
+      adIdx = 0; renderAd();
+    } catch { /* 配置取不到用静态默认 */ }
+  }
+  function renderAd() {
+    if (!ads.length) { $('#adTitle').textContent = '欢迎光临'; $('#adSub').textContent = ''; $('#adDots').innerHTML = ''; return; }
+    const a = ads[adIdx % ads.length];
+    $('#adEmo').style.display = a.image ? 'none' : '';
+    $('#adEmo').textContent = a.emoji || '📺';
+    $('#adImg').style.display = a.image ? '' : 'none';
+    $('#adImg').src = a.image || '';
+    $('#adTitle').textContent = a.title || '';
+    $('#adSub').textContent = a.sub || '';
+    $('#adDots').innerHTML = ads.map((_, i) => `<i class="${i === (adIdx % ads.length) ? 'on' : ''}"></i>`).join('');
+  }
+  clearInterval(adTimer);
+  adTimer = setInterval(() => { if (ads.length > 1) { adIdx++; renderAd(); } }, 8000);
+
+  // ── 状态渲染 ──
+  function fmtNum(n) {
+    const v = Number(n);
+    return Number.isFinite(v) ? v.toLocaleString('zh-CN') : '0';
+  }
+  function fmtDate(d) {
+    if (!d) return '—';
+    const s = String(d).slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '—';
+  }
+  function renderMember(m) {
+    const card = $('#cmCard'), empty = $('#cmEmpty');
+    if (!m || !m.name) { card.style.display = 'none'; empty.style.display = 'block'; return; }
+    empty.style.display = 'none'; card.style.display = 'block';
+    $('#cmAv').textContent = (m.name || '会').charAt(0);
+    $('#cmName').textContent = m.name;
+    const phoneMasked = m.phone ? maskPhone(m.phone) : (m.card_no || '');
+    const level = m.level_name && m.level_name !== '普通会员' ? m.level_name : '';
+    const joinDate = m.created_at ? fmtDate(m.created_at) : '—';
+    $('#cmMeta2').textContent = [phoneMasked, level, joinDate && joinDate !== '—' ? `${joinDate} 入会` : ''].filter(Boolean).join(' · ') || '尊贵的会员';
+    $('#cmStatus').textContent = m.status || '正常';
+    $('#cmBalance').textContent = fmt(m.balance);
+    $('#cmDividend').textContent = fmt(m.dividend_balance);
+    $('#cmPoints').textContent = fmtNum(m.points);
+    const rate = Number(m.level_rate || m.dividend_weight || 1);
+    $('#cmRate').textContent = '×' + (Number.isFinite(rate) ? rate.toFixed(1) : '1.0');
+    const cum = Number(m.dividend_cumulative);
+    $('#cmCumDiv').textContent = Number.isFinite(cum) && cum > 0 ? fmt(cum) : '—';
+    const active = m.last_active_date ? `活跃 · 最近消费 ${fmtDate(m.last_active_date)}` : '活跃';
+    $('#cmActive').textContent = active;
+    $('#cmNextInvalid').textContent = m.invalid_at ? `¥${fmtNum(m.dividend_balance)} · ${fmtDate(m.invalid_at)}` : '—';
+    $('#cmInvalid').textContent = '—';
+  }
+  function setConn(on) {
+    const el = $('#cdConn');
+    el.classList.toggle('on', on);
+    el.textContent = on ? '● 已连接' : '○ 等待主屏…';
+  }
+  function hideGuide() { $('#guide').style.display = 'none'; }
+  window.onState = function (p) {
+    payState = p.status || 'idle';
+    // 明细 / 合计 / 会员 / 头部（V4.25.8：去掉商品缩略图以节省空间）
+    const items = p.items || [];
+    const listEl = $('#cdItems');
+    listEl.innerHTML = '';
+    if (!items.length) {
+      listEl.innerHTML = '<div class="empty">扫描商品后，明细将显示在这里</div>';
+    } else {
+      const frag = document.createDocumentFragment();
+      for (const i of items) {
+        const row = document.createElement('div'); row.className = 'cd-row';
+        const name = document.createElement('span'); name.className = 'n'; name.textContent = i.name || '';
+        const qty = document.createElement('span'); qty.className = 'q';
+        qty.textContent = i.weighted ? Number(i.qty).toFixed(2) + (i.unit || 'kg') : (Number(i.qty) > 1 ? '×' + Number(i.qty) : '');
+        const amt = document.createElement('span'); amt.className = 'a'; amt.textContent = fmt(i.amount);
+        row.append(name, qty, amt);
+        frag.appendChild(row);
+      }
+      listEl.appendChild(frag);
+    }
+    $('#cdAmount').textContent = Number(p.payable || 0).toFixed(2);
+    $('#cdSaved').textContent = fmt(p.saved);
+    $('#cdSavedLab').textContent = (p.member && p.member.name) ? `会员 ${esc(p.member.name)} 已帮您节省` : '会员已帮您节省';
+    const tbl = p.tableName ? `台位 ${esc(p.tableName)}` : '';
+    // V4.26.2：去掉常驻欢迎语（与店招重复）；仅台位信息需要时显示
+    const meta = $('#cdMeta');
+    meta.textContent = tbl;
+    meta.style.display = tbl ? '' : 'none';
+    renderMember(p.member || null);
+    // 支付引导层
+    clearTimeout(doneTimer);
+    $('#done').style.display = 'none';
+    if (payState === 'pay_scan' || payState === 'pay_cash' || (payState === 'pay' && p.guide)) {
+      $('#guide').style.display = 'flex';
+      $('#gdBig').textContent = payState === 'pay_cash' ? '请递给收银员现金' : (p.guide || '请出示付款码');
+      $('#gdSub').textContent = payState === 'pay_scan' ? '扫码后请输入支付密码' : '';
+      if (payState === 'pay_cash') {
+        $('#gdCash').style.display = 'flex';
+        $('#gdDue').textContent = fmt(p.due);
+        $('#gdPaid').textContent = fmt(p.paid);
+        $('#gdChange').textContent = fmt(Math.max(0, p.change));
+        $('#gdSub').textContent = p.guide || '';
+      } else $('#gdCash').style.display = 'none';
+    } else hideGuide();
+    // 支付成功大字（6 秒后自动回到明细/空闲）
+    if (payState === 'done') {
+      hideGuide();
+      const ov = $('#done');
+      ov.style.display = 'flex';
+      $('#doneSub').textContent = `订单 ${esc(p.orderNo || '')}${p.change > 0 ? ' · 找零 ¥' + Number(p.change).toFixed(2) : ''} · 欢迎再次光临`;
+      doneTimer = setTimeout(() => { ov.style.display = 'none'; }, 6000);
+    }
+  };
+
+  // ── SSE 订阅（EventSource 断线自动重连——E3 副屏断连恢复自动续显） ──
+  let es = null, cfgTimer = 0;
+  function connect() {
+    try { es && es.close(); } catch { /* noop */ }
+    es = new EventSource('/display/events?store=' + store);
+    es.addEventListener('state', e => {
+      setConn(true);
+      try { window.onState(JSON.parse(e.data)); } catch { /* 坏帧忽略 */ }
+    });
+    es.onopen = () => { setConn(true); loadCfg(); };
+    es.onerror = () => setConn(false);   // 浏览器自动重连，无需手工
+  }
+  connect();
+  clearInterval(cfgTimer);
+  cfgTimer = setInterval(loadCfg, 5 * 60 * 1000);
+</script>
+</body>
+</html>

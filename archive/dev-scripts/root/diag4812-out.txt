@@ -1,0 +1,42 @@
+### Result
+{"preSide":"none","viewText":"\n  \n    社区超市收银系统\n    本地部署 · 会员即股东 · V4.8 Web 管理后台\n    服务地址\n    工号\n    密码\n    登 录\n    \n  ","postSide":"flex","lgErr":"","hash":"#/purchase","purchaseHasSup":false,"viewText2":"\n    \n      📝 开单\n      📋 单据浏览\n      生产日期必填 → 自动到期日 · 录入即生效 · 审核后置\n    \n\n    \n      \n        \n          📥 采购入库单\n          录入中\n          \n            删单重录\n            💾 保存单据\n          \n        \n    "}
+### Ran Playwright code
+```js
+await (async page => {
+  const out = {};
+  await page.goto('http://localhost:8088', { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1500);
+  out.preSide = await page.evaluate(() => {
+    const s = document.getElementById('side');
+    return s ? getComputedStyle(s).display : 'no-el';
+  });
+  out.viewText = await page.evaluate(() => (document.getElementById('view')?.textContent || '').slice(0, 120));
+  await page.screenshot({ path: 'shot-v4812-diag1.png' }).catch(() => {});
+  if (out.preSide === 'none') {
+    await page.fill('#lgNo', 'ADMIN');
+    await page.fill('#lgPw', 'admin123');
+    await page.click('#lgGo');
+    await page.waitForTimeout(3500);
+    out.postSide = await page.evaluate(() => {
+      const s = document.getElementById('side');
+      return s ? getComputedStyle(s).display : 'no-el';
+    });
+    out.lgErr = await page.evaluate(() => document.getElementById('lgErr')?.textContent || '');
+    await page.screenshot({ path: 'shot-v4812-diag2.png' }).catch(() => {});
+  }
+  await page.evaluate(() => { location.hash = '#/purchase'; });
+  await page.waitForTimeout(4000);
+  out.hash = await page.evaluate(() => location.hash);
+  out.purchaseHasSup = await page.evaluate(() => !!document.querySelector('#iSup option'));
+  out.viewText2 = await page.evaluate(() => (document.getElementById('view')?.textContent || '').slice(0, 200));
+  await page.screenshot({ path: 'shot-v4812-diag3.png' }).catch(() => {});
+  return out;
+}
+)(page);
+```
+### Page
+- Page URL: http://localhost:8088/#/purchase
+- Page Title: 社区超市收银系统 · Web 管理后台
+- Console: 1 errors, 0 warnings
+### Events
+- New console entries: .playwright-cli\console-2026-09-05T06-37-46-191Z.log#L1-L2

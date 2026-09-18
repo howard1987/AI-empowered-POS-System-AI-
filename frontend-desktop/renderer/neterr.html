@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>收银端 · 无法连接服务器</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Microsoft YaHei", system-ui, sans-serif; background: #f5f2ea; color: #2d2a24;
+         height: 100vh; display: flex; align-items: center; justify-content: center; user-select: none; }
+  .card { width: min(620px, 88vw); background: #fff; border-radius: 14px; padding: 34px 38px; box-shadow: 0 4px 24px rgba(0,0,0,.08); }
+  h1 { font-size: 21px; margin-bottom: 14px; }
+  .kv { font-size: 14px; line-height: 2; color: #55503f; }
+  .kv b { color: #2d2a24; }
+  ul { font-size: 13px; color: #8a857a; line-height: 1.9; margin: 12px 0 0 18px; }
+  .row { display: flex; gap: 12px; margin-top: 24px; }
+  button { flex: 1; font-size: 15px; font-weight: 600; padding: 12px 0; border: none; border-radius: 8px; cursor: pointer; }
+  .btn-retry { background: #2e7d52; color: #fff; }
+  .btn-setup { background: #fff; border: 1.5px solid #2e7d52; color: #2e7d52; }
+  .btn-quit { background: #fff; border: 1.5px solid #d8d2c4; color: #8a857a; flex: 0.6; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>📡 连不上收银服务器</h1>
+    <div class="kv">
+      服务器地址：<b id="srv">-</b><br>
+      失败原因：<b id="reason">-</b><br>
+      发生时间：<span id="at">-</span>
+    </div>
+    <ul>
+      <li>确认服务端电脑已开机、收银服务端程序已启动（窗口/任务栏可见）</li>
+      <li>确认本机与服务端在同一局域网，地址和端口填对（默认 3100）</li>
+      <li>首次部署需在服务端电脑放行防火墙：入站规则 TCP 3100</li>
+      <li>服务端启动后点「重试连接」即可进入收银台——收银台界面本身可离线打开，联网后数据自动同步</li>
+    </ul>
+    <div class="row">
+      <button class="btn-retry" id="btnRetry">🔄 重试连接</button>
+      <button class="btn-setup" id="btnSetup">修改服务器地址</button>
+      <button class="btn-quit" id="btnQuit">退出</button>
+    </div>
+  </div>
+<script>
+  const $ = s => document.querySelector(s);
+  DesktopShell.desktopInfo().then(info => {
+    $('#srv').textContent = info.server || '-';
+    if (info.lastError) {
+      $('#reason').textContent = info.lastError.reason || '-';
+      $('#at').textContent = info.lastError.at || '-';
+    }
+  });
+  $('#btnRetry').onclick = () => { $('#btnRetry').disabled = true; $('#btnRetry').textContent = '⏳ 连接中…'; DesktopShell.retryConnect(); };
+  $('#btnSetup').onclick = () => DesktopShell.openSetup();
+  $('#btnQuit').onclick = () => cashier.quitApp();
+</script>
+</body>
+</html>

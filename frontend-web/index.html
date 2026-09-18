@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="ELVdNZ9Q3COpzd3mLFtPUp">
+<head data-page-node-id="Dt7Ghtc7LMWmhz0MUH296Y">
+<meta charset="UTF-8" data-page-node-id="RDja3vDAVbDpEzeUqHnRjo">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="xWYXQOpc48zj30xtkFQ569">
+<title>社区超市收银系统 · Web 管理后台</title>
+<link rel="stylesheet" href="styles.css?v=20260917a" data-page-node-id="yC6vObFHYQv7UFP6VJXnEf">
+<link rel="stylesheet" href="vendor/hiprint/print-lock.css?v=20260910a">
+<script src="vendor/hiprint/stubs.js?v=20260910a"></script>
+<script src="vendor/hiprint/jquery.min.js?v=20260910a"></script>
+<script src="vendor/hiprint/JsBarcode.all.min.js?v=20260910a"></script>
+<script src="vendor/hiprint/vue-plugin-hiprint.js?v=20260910a"></script>
+</head>
+<body data-page-node-id="lUEFTj36ZnX0CXrg06WQpX">
+<div id="app" data-page-node-id="oceFz8ayLW6hzT3oCZatig">
+  <div id="side" style="display:none" data-page-node-id="czeEvdDMgfb9COucFjbktj">
+    <div class="logo" data-page-node-id="CBivade4eWMZmxMBJFE1VN"><span class="logo-txt">🛒 社区超市收银系统</span><button id="sideHide" title="收起菜单">《</button></div>
+    <nav id="nav" data-page-node-id="SJu9jpKrnbdNJAZ5b3QlFJ"></nav>
+  </div>
+  <button id="sideShow" title="展开菜单" style="display:none">》</button>
+  <div id="main" data-page-node-id="mxXq7JatO54RlqUFcrEE1q">
+    <div id="topbar" style="display:none" data-page-node-id="ZVvQWGjdhFMJj7weVaOP3y">
+      <div class="crumb" id="crumb" data-page-node-id="AikjB2xFc5vSfMMIeRKLpa"></div>
+      <div id="noticeWrap" style="position:relative;display:none;margin-left:auto">
+        <button class="btn sm" id="btnNotices" title="站内提醒" style="position:relative">🔔
+          <span id="noticeBadge" style="display:none;position:absolute;top:-6px;right:-6px;background:#d5453c;color:#fff;
+            font-size:10px;line-height:1;min-width:16px;padding:3px 4px;border-radius:9px;text-align:center">0</span>
+        </button>
+        <div id="noticePanel" style="display:none;position:absolute;right:0;top:120%;width:360px;max-height:420px;overflow:auto;
+          background:#fff;border:1px solid #ddd8cc;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.14);z-index:80"></div>
+      </div>
+      <span class="who" id="who" data-page-node-id="Oq8pbyjm6zrU8kafFUf284"></span>
+      <button class="btn sm" id="btnLogout" data-page-node-id="MKTGAtruqDZ9PFY9dvwGTm">退出</button>
+    </div>
+    <!-- V4.25.7 多标签页导航条：打开过的页面在此列成标签，可关闭/切换（首页固定） -->
+    <div id="tabbar" style="display:none"></div>
+    <div id="view" data-page-node-id="H09ehRJFkbQ6ICsbjZm3I4"></div>
+  </div>
+</div>
+<script type="module" src="app.js?v=20260917a"></script>
+</body>
+</html>

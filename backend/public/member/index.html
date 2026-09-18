@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="nudkydBLm46b2WmErw5F5K">
+<head data-page-node-id="rHs3obcWQSgrmxNHlmmQm4">
+<meta charset="utf-8" data-page-node-id="YMlpVvV1zukugfAtxSRE0u">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" data-page-node-id="VkwIbBy9dW77H7KkI0nTJ2">
+<meta name="theme-color" content="#20663f" data-page-node-id="2JA7CUFFFxLT6Jqfnsjnkb">
+<title>绿源会员 · 掌上会员</title>
+<style>
+  :root{
+    --paper:#f5f2ea; --paper-2:#efeadd; --card:#fffdf7;
+    --ink:#22301f; --ink-2:#5a6650; --ink-3:#8a947e;
+    --pri:#20663f; --pri-d:#174a2e; --pri-2:#2e8557; --green-soft:#e2efe2;
+    --orange:#e4682a; --orange-soft:#fbe7d8;
+    --red:#c0392b; --red-soft:#f9e2dd;
+    --blue:#2a6f8e; --blue-soft:#dfeaef;
+    --gold:#b98a1c; --gold-soft:#f5ecd2;
+    --line:#ddd6c4; --line-2:#c9c1ab;
+    --ok:#2e7a4e; --warn:#d98a00; --bad:#c0392b;
+    --r:10px; --r-lg:16px;
+    --shadow:0 1px 2px rgba(40,50,30,.06), 0 8px 24px -12px rgba(40,50,30,.18);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",-apple-system,sans-serif;
+    background:radial-gradient(600px 340px at 100% 0%,rgba(46,133,87,.08),transparent 60%),
+      radial-gradient(500px 300px at 0% 100%,rgba(228,104,42,.06),transparent 55%),var(--paper);
+    color:var(--ink);font-size:15px;-webkit-font-smoothing:antialiased}
+  input,select,textarea{font:inherit;color:var(--ink)}
+  button{font:inherit;border:none;background:none;cursor:pointer;color:inherit}
+  #app{max-width:520px;margin:0 auto;min-height:100dvh;display:flex;flex-direction:column}
+  .page{flex:1;padding:14px 14px calc(76px + env(safe-area-inset-bottom));}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
+  .card h3{font-size:15px;margin-bottom:12px;display:flex;align-items:center;gap:6px}
+  .muted{color:var(--ink-3)}.small{font-size:12px}.big{font-size:22px;font-weight:700}
+  .row{display:flex;align-items:center;gap:8px}
+  .between{justify-content:space-between}
+  .fld{margin-bottom:12px}
+  .fld label{display:block;font-size:13px;color:var(--ink-2);margin-bottom:5px}
+  .fld input,.fld select,.fld textarea{width:100%;border:1px solid var(--line-2);border-radius:var(--r);
+    padding:11px 12px;background:#fff;outline:none;font-size:15px}
+  .fld input:focus{border-color:var(--pri-2)}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;border-radius:var(--r);
+    padding:10px 16px;font-size:15px;border:1px solid var(--line-2);background:#fff;transition:filter .15s}
+  .btn:active{filter:brightness(.93)}
+  .btn.pri{background:var(--pri);border-color:var(--pri);color:#fff;font-weight:600}
+  .btn.warn{background:var(--orange);border-color:var(--orange);color:#fff}
+  .btn.danger{background:var(--red);border-color:var(--red);color:#fff}
+  .btn.block{width:100%;padding:13px}
+  .btn.sm{padding:6px 10px;font-size:13px}
+  .btn:disabled{opacity:.5;pointer-events:none}
+  .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
+  .tag.g{background:var(--green-soft);color:var(--pri-d)}
+  .tag.o{background:var(--orange-soft);color:#8a3c10}
+  .tag.r{background:var(--red-soft);color:#7c1f14}
+  .tag.b{background:var(--blue-soft);color:#1c4a60}
+  .tag.gold{background:var(--gold-soft);color:#6d5004}
+  /* 会员卡 */
+  .mcard{background:linear-gradient(135deg,var(--pri) 0%,var(--pri-d) 100%);color:#fff;border-radius:var(--r-lg);
+    padding:20px 18px;box-shadow:var(--shadow);position:relative;overflow:hidden;margin-bottom:14px}
+  .mcard::after{content:'';position:absolute;right:-40px;top:-40px;width:150px;height:150px;border-radius:50%;
+    background:rgba(255,255,255,.08)}
+  .mcard .no{font-family:ui-monospace,Consolas,monospace;letter-spacing:2px;font-size:17px}
+  .mcard .lv{position:absolute;right:16px;top:16px;background:rgba(255,255,255,.18);padding:3px 10px;border-radius:999px;font-size:12px}
+  /* 资产 */
+  .assets{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+  .asset{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:13px 8px;text-align:center;box-shadow:var(--shadow)}
+  .asset .v{font-size:19px;font-weight:700;color:var(--pri-d)}
+  .asset .k{font-size:12px;color:var(--ink-3);margin-top:3px}
+  /* 宫格 */
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .gitem{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:14px 4px;
+    text-align:center;box-shadow:var(--shadow);cursor:pointer}
+  .gitem .ic{font-size:24px}.gitem .t{font-size:12px;color:var(--ink-2);margin-top:6px}
+  /* 列表 */
+  .li{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 2px;border-bottom:1px dashed var(--line)}
+  .li:last-child{border-bottom:none}
+  .li .t{font-size:14px}.li .s{font-size:12px;color:var(--ink-3);margin-top:3px}
+  .li .amt{font-weight:700;white-space:nowrap}
+  .in{color:var(--pri-2)}.out{color:var(--orange)}
+  /* 底部导航 */
+  .tabbar{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:520px;
+    display:flex;background:var(--card);border-top:1px solid var(--line);padding:6px 0 env(safe-area-inset-bottom);z-index:50}
+  .tabbar button{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;color:var(--ink-3);font-size:11px}
+  .tabbar button .ic{font-size:20px}
+  .tabbar button.on{color:var(--pri);font-weight:600}
+  /* 悬浮购物车条 */
+  .cartbar{position:fixed;bottom:calc(64px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);
+    width:calc(100% - 28px);max-width:492px;background:var(--pri);color:#fff;border-radius:999px;
+    padding:12px 18px;display:flex;align-items:center;justify-content:space-between;box-shadow:var(--shadow);z-index:49;cursor:pointer}
+  /* 步进器 */
+  .stepper{display:inline-flex;align-items:center;gap:0;border:1px solid var(--line-2);border-radius:999px;overflow:hidden}
+  .stepper button{width:30px;height:28px;font-size:16px;color:var(--pri);background:var(--green-soft)}
+  .stepper span{min-width:34px;text-align:center;font-weight:600;font-size:14px}
+  /* 弹窗 */
+  .mask{position:fixed;inset:0;background:rgba(30,40,25,.45);z-index:80;display:flex;align-items:center;justify-content:center;padding:20px}
+  .sheet{background:var(--card);border-radius:var(--r-lg);padding:20px;width:100%;max-width:420px;max-height:86dvh;overflow:auto}
+  .sheet h3{margin-bottom:14px;font-size:16px}
+  .toast{position:fixed;top:18px;left:50%;transform:translateX(-50%);background:rgba(34,48,31,.92);color:#fff;
+    padding:10px 18px;border-radius:999px;font-size:14px;z-index:99;max-width:86vw;text-align:center}
+  .toast.bad{background:rgba(150,40,28,.94)}
+  .empty{text-align:center;color:var(--ink-3);padding:30px 0;font-size:14px}
+  .hd{display:flex;align-items:center;gap:8px;padding:14px 6px 8px}
+  .hd .back{font-size:20px;padding:2px 8px;cursor:pointer}
+  .hd .tt{font-size:17px;font-weight:700}
+  .tabs{display:flex;gap:6px;margin-bottom:12px}
+  .tabs button{flex:1;padding:9px 0;border-radius:999px;border:1px solid var(--line-2);background:#fff;font-size:14px;color:var(--ink-2)}
+  .tabs button.on{background:var(--pri);border-color:var(--pri);color:#fff;font-weight:600}
+  .code-box{background:var(--green-soft);border:2px dashed var(--pri-2);border-radius:var(--r-lg);
+    text-align:center;padding:22px;margin:14px 0}
+  .code-box .code{font-family:ui-monospace,Consolas,monospace;font-size:38px;letter-spacing:10px;font-weight:800;color:var(--pri-d)}
+  .prod{display:flex;gap:10px;align-items:center;padding:12px 2px;border-bottom:1px dashed var(--line)}
+  .prod:last-child{border-bottom:none}
+  .prod .ph{width:52px;height:52px;border-radius:var(--r);background:var(--green-soft);display:flex;align-items:center;
+    justify-content:center;font-size:22px;flex:none;overflow:hidden}
+  .prod .ph img{width:100%;height:100%;object-fit:cover}
+  .cats{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:10px}
+  .cats button{flex:none;padding:7px 14px;border-radius:999px;border:1px solid var(--line-2);background:#fff;font-size:13px;color:var(--ink-2)}
+  .cats button.on{background:var(--pri);border-color:var(--pri);color:#fff}
+  .banner{background:var(--gold-soft);border:1px solid #e8d9a8;border-radius:var(--r);padding:9px 12px;font-size:12px;color:#6d5004;margin-bottom:12px}
+</style>
+</head>
+<body data-page-node-id="bBzHl5p89jgFtrTfeHcKhW">
+<div id="app" data-page-node-id="QaSlxQxMz7VpexB4D6I3x6"></div>
+<script>
+'use strict';
+/* ═══════════ 绿源会员 · 掌上会员 H5（V4.14.5）
+   后端 /m/* 全量前端化：账户资产/流水/消费记录/充值/扫码自助/商城购物/订单/地址簿/密码自助 ═══════════ */
+
+/* ── 基础工具 ── */
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = n => '¥' + Number(n ?? 0).toFixed(2);
+const dt = s => { if (!s) return '—'; const d = new Date(s);
+  return `${d.getMonth()+1}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; };
+function toast(msg, ok = true) {
+  $$('.toast').forEach(t => t.remove());
+  const t = document.createElement('div');
+  t.className = 'toast' + (ok ? '' : ' bad');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2400);
+}
+async function api(path, { method = 'GET', body } = {}) {
+  const res = await fetch('/m' + path, {
+    method,
+    headers: {
+      ...(MB.token ? { authorization: 'Bearer ' + MB.token } : {}),
+      ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const j = await res.json().catch(() => ({ code: -1, msg: '网络异常，请稍后再试' }));
+  if (j.code !== 0) { const e = new Error(j.msg || '请求失败'); e.code = j.code; throw e; }
+  return j.data;
+}
+
+/* ── 会话与购物车 ── */
+/* V4.15.0 修复：MB 必须先声明再使用——原先 MB.policyLabel 写在 const MB 声明之前，触发 TDZ ReferenceError，整页脚本报死（会员端白屏） */
+const MB = { token: localStorage.getItem('mb_token') || '', me: null };
+/* V4.14.6 R8：密码强度策略文案（公开端点，注册/设密/找回/改密页动态提示，与员工端同策略） */
+MB.policyLabel = localStorage.getItem('mb_policy') || '';
+loadPolicy();
+async function loadPolicy() {
+  try {
+    const r = await api('/password-policy');
+    if (r && r.label) { MB.policyLabel = r.label; localStorage.setItem('mb_policy', r.label); }
+  } catch { /* 拉不到就沿用缓存/默认 */ }
+}
+function setToken(t) { MB.token = t || '';
+  if (t) localStorage.setItem('mb_token', t); else localStorage.removeItem('mb_token'); }
+const CART_KEY = 'mb_cart';
+const cart = {
+  list: JSON.parse(localStorage.getItem(CART_KEY) || '[]'),
+  save() { localStorage.setItem(CART_KEY, JSON.stringify(this.list)); },
+  add(p, qty = 1) {
+    const it = this.list.find(x => x.id === p.id);
+    if (it) it.qty += qty; else this.list.push({ id: p.id, qty, name: p.name, spec: p.spec || '',
+      price: p.memberPrice ?? p.sellPrice, unit: p.baseUnit || '', stock: p.stock });
+    this.save();
+  },
+  setQty(id, qty) { const it = this.list.find(x => x.id === id);
+    if (it) { it.qty = Math.max(0, qty); if (!it.qty) this.list = this.list.filter(x => x.id !== id); this.save(); } },
+  clear() { this.list = []; this.save(); },
+  get total() { return this.list.reduce((s, x) => s + x.price * x.qty, 0); },
+  get count() { return this.list.reduce((s, x) => s + x.qty, 0); },
+};
+
+/* ── 路由 ── */
+function nav(hash) { location.hash = hash; }
+window.addEventListener('hashchange', render);
+const PUBLIC_VIEWS = ['login', 'register', 'init', 'forgot'];
+function currentRoute() { return (location.hash || '#home').replace(/^#\//, '#').slice(1); }
+
+async function render() {
+  const app = $('#app');
+  const route = currentRoute();
+  const [view, arg] = route.split('/');
+  if (!PUBLIC_VIEWS.includes(view) && !MB.token) { app.innerHTML = authShell('login'); bindLogin(); return; }
+  try {
+    switch (view) {
+      case 'login': case 'register': case 'init': case 'forgot': {
+        app.innerHTML = authShell(view);
+        if (view === 'login') bindLogin();
+        if (view === 'register') bindRegister();
+        if (view === 'init') bindInit();
+        if (view === 'forgot') bindForgot();
+        return;
+      }
+      case 'home': return await viewHome();
+      case 'flows': return await viewFlows(arg || 'balance');
+      case 'sales': return await viewSales();
+      case 'recharge': return await viewRecharge();
+      case 'scan': return await viewScan();
+      case 'mall': return await viewMall(arg ? Number(arg) : null);
+      case 'cart': return viewCart();
+      case 'orders': return await viewOrders();
+      case 'order': return await viewOrderDetail(Number(arg));
+      case 'me': return await viewMe();
+      case 'password': return viewPassword();
+      case 'addresses': return await viewAddresses();
+      case 'address-form': return viewAddressForm(arg ? Number(arg) : null);
+      default: return await viewHome();
+    }
+  } catch (e) {
+    if (e.code === -96 || /登录已过期|未登录/.test(e.message || '')) { setToken(''); MB.me = null; render(); return; }
+    app.innerHTML = shellWrap(view, `<div class="card"><div class="empty">😢 ${esc(e.message || '加载失败')}</div>
+      <button class="btn block" onclick="location.reload()">重试</button></div>`);
+  }
+}
+
+/* ── 骨架 ── */
+function shellWrap(view, inner, backHash) {
+  const titles = { flows: '我的流水', sales: '消费记录', recharge: '充值', scan: '扫码自助', cart: '购物车',
+    password: '修改密码', addresses: '收货地址', 'address-form': '编辑地址', order: '订单详情' };
+  const tabbar = ['home', 'mall', 'orders', 'me'].includes(view) ? `
+    <div class="tabbar">
+      ${[['home','🏠','首页'],['mall','🛒','商城'],['orders','📋','订单'],['me','👤','我的']]
+        .map(([v, ic, t]) => `<button class="${view === v ? 'on' : ''}" onclick="nav('#${v}')"><span class="ic">${ic}</span>${t}</button>`).join('')}
+    </div>` : '';
+  const head = titles[view] && !tabbar ? `<div class="hd"><span class="back" onclick="nav('${backHash || '#home'}')">‹</span><span class="tt">${titles[view]}</span></div>` : '';
+  return `${head}<div class="page">${inner}</div>${tabbar}`;
+}
+
+/* ═══════════ 登录 / 注册 / 首次设密 / 忘记密码 ═══════════ */
+function authShell(mode) {
+  const map = {
+    login:    { tt: '👋 欢迎回来', sub: '登录绿源会员，余额积分随时查' },
+    register: { tt: '🎉 注册会员', sub: '会员即股东，余额每日分红' },
+    init:     { tt: '🔑 首次设置密码', sub: '到店建档的老会员：手机号 + 身份证后 6 位' },
+    forgot:   { tt: '🛡️ 忘记密码', sub: '回答密保问题即可重置' },
+  }[mode];
+  const links = mode === 'login'
+    ? `<div class="row between" style="margin-top:10px">
+         <button class="btn sm" onclick="nav('#init')">首次设密</button>
+         <button class="btn sm" onclick="nav('#forgot')">忘记密码</button>
+         <button class="btn sm" onclick="nav('#register')">注册会员</button></div>`
+    : `<div style="margin-top:10px;text-align:center"><button class="btn sm" onclick="nav('#login')">返回登录</button></div>`;
+  return `<div class="page" style="padding-top:6vh">
+    <div style="text-align:center;margin-bottom:20px">
+      <div style="font-size:44px">🛒</div>
+      <div style="font-size:20px;font-weight:800;color:var(--pri-d)">绿源社区超市 · 掌上会员</div>
+      <div class="muted small" style="margin-top:4px">${map.sub}</div></div>
+    <div class="card">
+      <h3>${map.tt}</h3>
+      <div id="f_${mode}"></div>${links}
+    </div>
+    <div class="muted small" style="text-align:center;line-height:1.7">会员余额每日参与分红（不可提现·有封顶）<br>门店现场消费请出示会员卡号或手机号</div>
+  </div>`;
+}
+
+function bindLogin() {
+  $('#f_login').innerHTML = `
+    <div class="fld"><label>手机号</label><input id="lPhone" type="tel" maxlength="11" placeholder="注册/建档手机号"></div>
+    <div class="fld"><label>密码</label><input id="lPwd" type="password" placeholder="登录密码"></div>
+    <button class="btn pri block" id="lGo">登 录</button>`;
+  const go = async () => {
+    try {
+      const r = await api('/login', { method: 'POST', body: { phone: $('#lPhone').value.trim(), password: $('#lPwd').value } });
+      setToken(r.token); MB.me = null; toast('登录成功'); nav('#home');
+    } catch (e) { toast(e.message, false); }
+  };
+  $('#lGo').onclick = go;
+  $('#f_login').addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+}
+
+function bindRegister() {
+  $('#f_register').innerHTML = `
+    <div class="fld"><label class="req">手机号</label><input id="rPhone" type="tel" maxlength="11" placeholder="11 位手机号"></div>
+    <div class="fld"><label class="req">设置密码（${esc(MB.policyLabel || '至少 6 位')}）</label><input id="rPwd" type="password"></div>
+    <div class="fld"><label>姓名</label><input id="rName" placeholder="怎么称呼您（选填）"></div>
+    <div class="fld"><label>生日</label><input id="rBirth" type="date"></div>
+    <div class="banner">🛡️ 请设置至少 2 个密保问题（用于忘记密码时自助找回），答案请记牢</div>
+    <div id="rSqs"></div>
+    <button class="btn sm" id="rAddSq" style="margin-bottom:12px">＋ 加一问</button>
+    <div class="fld"><label class="row" style="gap:6px"><input type="checkbox" id="rAgree" style="width:auto">我已阅读并同意《会员隐私协议》（信息仅用于会员服务与分红核算）</label></div>
+    <button class="btn pri block" id="rGo">注 册</button>`;
+  const sqBox = $('#rSqs');
+  const addSq = () => {
+    if ($$('.sq-row', sqBox).length >= 3) return toast('最多 3 个密保问题', false);
+    const div = document.createElement('div');
+    div.className = 'fld sq-row';
+    div.innerHTML = `<div class="fld"><label>密保问题</label><input class="sq-q" placeholder="如：您的母亲姓氏是？"></div>
+      <div class="fld"><label>答案</label><input class="sq-a" placeholder="答案不区分大小写"></div>
+      <button class="btn sm danger" style="margin:-6px 0 10px">删除此问</button>`;
+    div.querySelector('button').onclick = () => div.remove();
+    sqBox.appendChild(div);
+  };
+  addSq(); addSq();           // 默认两问
+  $('#rAddSq').onclick = addSq;
+  $('#rGo').onclick = async () => {
+    const questions = $$('.sq-row', sqBox).map(d => ({
+      question: $('.sq-q', d).value.trim(), answer: $('.sq-a', d).value.trim(),
+    })).filter(x => x.question && x.answer);
+    try {
+      const r = await api('/register', { method: 'POST', body: {
+        phone: $('#rPhone').value.trim(), password: $('#rPwd').value,
+        name: $('#rName').value.trim() || undefined, birthday: $('#rBirth').value || undefined,
+        privacyAgreed: $('#rAgree').checked, securityQuestions: questions } });
+      setToken(r.token); MB.me = null;
+      toast(`注册成功！您的会员卡号：${r.member.cardNo}`);
+      nav('#home');
+    } catch (e) { toast(e.message, false); }
+  };
+}
+
+function bindInit() {
+  $('#f_init').innerHTML = `
+    <div class="fld"><label>手机号（建档时登记）</label><input id="iPhone" type="tel" maxlength="11"></div>
+    <div class="fld"><label>身份证后 6 位</label><input id="iTail" maxlength="6" style="text-transform:uppercase" placeholder="包含 X 请大写"></div>
+    <div class="fld"><label>设置密码（≥6 位）</label><input id="iPwd" type="password"></div>
+    <button class="btn pri block" id="iGo">设置并登录</button>`;
+  $('#iGo').onclick = async () => {
+    try {
+      await api('/password/init', { method: 'POST', body: {
+        phone: $('#iPhone').value.trim(), idCardTail: $('#iTail').value.trim().toUpperCase(), password: $('#iPwd').value } });
+      toast('设置成功，请登录'); nav('#login');
+    } catch (e) { toast(e.message, false); }
+  };
+}
+
+function bindForgot() {
+  const box = $('#f_forgot');
+  box.innerHTML = `
+    <div class="fld"><label>手机号</label><input id="gPhone" type="tel" maxlength="11"></div>
+    <button class="btn block" id="gLoad">获取我的密保问题</button>
+    <div id="gStep2" style="display:none">
+      <div id="gQs" style="margin:12px 0"></div>
+      <div class="fld"><label>设置新密码（≥6 位）</label><input id="gPwd" type="password"></div>
+      <button class="btn pri block" id="gGo">重置密码</button>
+    </div>`;
+  let questions = [];
+  $('#gLoad').onclick = async () => {
+    try {
+      const r = await api('/password/forgot/questions?phone=' + encodeURIComponent($('#gPhone').value.trim()));
+      questions = r.questions || [];
+      if (!questions.length) return toast('该会员未设置密保问题，请到店由店员协助', false);
+      $('#gQs').innerHTML = questions.map((q, i) => `
+        <div class="fld"><label>问题 ${i + 1}：${esc(q)}</label><input class="g-a" data-q="${esc(q)}" placeholder="输入答案"></div>`).join('');
+      $('#gStep2').style.display = '';
+    } catch (e) { toast(e.message, false); }
+  };
+  $('#gGo').onclick = async () => {
+    try {
+      await api('/password/forgot', { method: 'POST', body: {
+        phone: $('#gPhone').value.trim(),
+        answers: $$('.g-a').map(inp => ({ question: inp.dataset.q, answer: inp.value.trim() })),
+        newPassword: $('#gPwd').value } });
+      toast('密码已重置，请用新密码登录'); nav('#login');
+    } catch (e) { toast(e.message, false); }
+  };
+}
+
+/* ═══════════ 首页（资产总览 + 宫格） ═══════════ */
+async function ensureMe() {
+  if (!MB.me) MB.me = await api('/me');
+  return MB.me;
+}
+async function viewHome() {
+  const { member, assets } = await ensureMe();
+  const inner = `
+    <div class="mcard">
+      <div class="lv">${esc(member.level)}${member.discount ? ' · ' + (member.discount * 10).toFixed(1).replace(/\.0$/, '') + ' 折' : ''}</div>
+      <div class="small" style="opacity:.8">尊敬的${esc(member.name || '会员')}，您好</div>
+      <div class="no" style="margin-top:10px">${esc(member.cardNo)}</div>
+      <div class="small" style="opacity:.75;margin-top:4px">${esc(member.phone)} · ${member.status === '正常' ? '账户正常' : esc(member.status)}</div>
+    </div>
+    <div class="assets">
+      <div class="asset" onclick="nav('#recharge')"><div class="v">${money(assets.balance)}</div><div class="k">余额</div></div>
+      <div class="asset" onclick="nav('#flows/points')"><div class="v">${assets.points}</div><div class="k">积分</div></div>
+      <div class="asset" onclick="nav('#flows/dividend')"><div class="v">${money(assets.dividendBalance)}</div><div class="k">分红余额</div></div>
+    </div>
+    <div class="card" style="padding:12px 14px">
+      <div class="row between small"><span class="muted">累计充值本金</span><b>${money(assets.principalTotal)}</b></div>
+      <div class="row between small" style="margin-top:6px"><span class="muted">其中赠送余额</span><b>${money(assets.giftBalance)}</b></div>
+      <div class="row between small" style="margin-top:6px"><span class="muted">累计分红</span><b>${money(assets.dividendCumulative)}</b>
+        ${assets.dividendCapped ? '<span class="tag gold">已达上限</span>' : ''}</div>
+    </div>
+    <div class="grid">
+      ${[['#scan', '📷', '扫码自助'], ['#recharge', '💰', '余额充值'], ['#flows/balance', '📒', '我的流水'], ['#sales', '🧾', '消费记录'],
+         ['#mall', '🛍️', '线上商城'], ['#orders', '📋', '我的订单'], ['#addresses', '📮', '收货地址'], ['#password', '🔒', '修改密码']]
+        .map(([h, ic, t]) => `<div class="gitem" onclick="nav('${h}')"><div class="ic">${ic}</div><div class="t">${t}</div></div>`).join('')}
+    </div>
+    <div class="muted small" style="text-align:center;margin-top:16px;line-height:1.7">
+      会员即股东 · 余额每日分红（不可提现 · 封顶 ${money(assets.principalTotal * 0.3)} 口径以门店设置为准）<br>
+      门店现场出示卡号 <b>${esc(member.cardNo)}</b> 即可积分与用余额</div>`;
+  $('#app').innerHTML = shellWrap('home', inner);
+}
+
+/* ═══════════ 流水 / 消费记录 ═══════════ */
+async function viewFlows(tab) {
+  const r = await api('/flows?tab=' + tab + '&limit=50');
+  const tabs = [['balance', '余额'], ['points', '积分'], ['dividend', '分红']];
+  const items = (r.items || []).map(x => {
+    if (tab === 'points') {
+      const dir = Number(x.points) >= 0;
+      return `<div class="li"><div><div class="t">${esc(x.biz_type || x.ref_type || '积分变动')}</div>
+        <div class="s">${dt(x.created_at)}</div></div>
+        <div class="amt ${dir ? 'in' : 'out'}">${dir ? '+' : ''}${Number(x.points)} 分</div></div>`;
+    }
+    if (tab === 'dividend') {
+      const amt = Number(x.amount);
+      return `<div class="li"><div><div class="t">${esc(x.record_type || '分红')}${x.remark ? ' · ' + esc(x.remark) : ''}</div>
+        <div class="s">${dt(x.created_at)}${x.expire_at ? ' · 失效 ' + dt(x.expire_at) : ''}</div></div>
+        <div class="amt ${amt >= 0 ? 'in' : 'out'}">${amt >= 0 ? '+' : ''}${money(amt)}</div></div>`;
+    }
+    const amt = Number(x.amount);
+    return `<div class="li"><div><div class="t">${esc(x.biz_type || x.ref_type || '余额变动')}${x.remark ? ' · ' + esc(x.remark) : ''}</div>
+      <div class="s">${dt(x.created_at)} · 余 ${money(x.balance_after)}${Number(x.gift_part) ? '（含赠送 ' + money(x.gift_part) + '）' : ''}</div></div>
+      <div class="amt ${amt >= 0 ? 'in' : 'out'}">${amt >= 0 ? '+' : ''}${money(amt)}</div></div>`;
+  }).join('');
+  $('#app').innerHTML = shellWrap('flows', `
+    <div class="tabs">${tabs.map(([v, t]) => `<button class="${tab === v ? 'on' : ''}" onclick="nav('#flows/${v}')">${t}</button>`).join('')}</div>
+    <div class="card">${items || '<div class="empty">暂无流水记录</div>'}</div>`);
+}
+
+async function viewSales() {
+  const r = await api('/sales');
+  const items = (r.items || []).map(o => `
+    <div class="li"><div><div class="t">${esc(o.order_no)}</div>
+      <div class="s">${dt(o.created_at)} · ${esc(o.channel)} · ${esc(o.status)}</div></div>
+      <div class="amt">${money(o.payable_amount)}</div></div>`).join('');
+  $('#app').innerHTML = shellWrap('sales', `
+    <div class="card"><h3>最近 20 笔消费（脱敏，不含成本毛利）</h3>${items || '<div class="empty">还没有消费记录</div>'}</div>`);
+}
+
+/* ═══════════ 充值 ═══════════ */
+async function viewRecharge() {
+  const [{ plans, maxSingle }, mine] = await Promise.all([api('/recharge/plans'), api('/recharge-orders')]);
+  const planCards = (plans || []).map(p => `
+    <div class="li"><div><div class="t">${esc(p.name)}</div>
+      <div class="s">充 ${money(p.principal)}${Number(p.gift) > 0 ? ' 送 ' + money(p.gift) : '（无赠送）'}</div></div>
+      <button class="btn sm pri" data-plan="${p.id}">选这个</button></div>`).join('');
+  const mineList = (mine.items || []).map(o => `
+    <div class="li"><div><div class="t">${esc(o.order_no)}</div>
+      <div class="s">${dt(o.created_at)} · 充 ${money(o.principal)}${Number(o.gift) > 0 ? ' 送 ' + money(o.gift) : ''}</div></div>
+      <div style="text-align:right"><span class="tag ${o.status === '待支付' ? 'o' : o.status === '已到账' ? 'g' : ''}">${esc(o.status)}</span>
+        ${o.status === '待支付' ? `<div><button class="btn sm" style="margin-top:6px" data-cancel="${o.id}">取消</button></div>` : ''}</div></div>`).join('');
+  $('#app').innerHTML = shellWrap('recharge', `
+    <div class="banner">💰 充值流程：本页发起充值单 → 到收银台出示单号由店员代收 → 到账自动含赠送（不可提现，每日分红）</div>
+    <div class="card"><h3>充值档位</h3>${planCards || '<div class="empty">门店暂未配置充值档位</div>'}
+      ${plans?.length ? `<div class="row" style="margin-top:10px">
+        <input id="cAmt" type="number" min="1" max="${maxSingle}" placeholder="自定义金额（无赠送，上限 ${maxSingle}）" style="flex:1;border:1px solid var(--line-2);border-radius:var(--r);padding:10px">
+        <button class="btn pri" id="cGo">充值</button></div>` : ''}</div>
+    <div class="card"><h3>我的充值单</h3>${mineList || '<div class="empty">暂无充值单</div>'}</div>`);
+  $$('[data-plan]').forEach(b => b.onclick = () => createRecharge({ planId: Number(b.dataset.plan) }));
+  $('#cGo') && ($('#cGo').onclick = () => {
+    const v = Number($('#cAmt').value);
+    if (!(v > 0)) return toast('请输入充值金额', false);
+    createRecharge({ principal: v });
+  });
+  $$('[data-cancel]').forEach(b => b.onclick = async () => {
+    if (!confirm('取消这张待支付充值单？')) return;
+    try { await api(`/recharge-orders/${b.dataset.cancel}/cancel`, { method: 'POST' }); toast('已取消'); viewRecharge(); }
+    catch (e) { toast(e.message, false); }
+  });
+}
+async function createRecharge(body) {
+  try {
+    const r = await api('/recharge-orders', { method: 'POST', body });
+    toast(`充值单已创建：${r.order_no}，请到收银台完成支付`);
+    viewRecharge();
+  } catch (e) { toast(e.message, false); }
+}
+
+/* ═══════════ 扫码自助（扫码购：余额自动付清 → 离场核销码） ═══════════ */
+let scanList = [];
+let aiCounts = Object.create(null); // V4.14.6：摄像头识别计数（结算时传 aiItems 供漏扫校验；手动搜索加入不计数）
+async function viewScan() {
+  scanList = [];
+  aiCounts = Object.create(null);
+  $('#app').innerHTML = shellWrap('scan', `
+    <div class="banner">📷 扫商品条码或搜索加入清单 → 结算从会员余额自动付清 → 凭 6 位离场核销码离店<br>
+    <span class="small">🛡️ 摄像头识别会记入 AI 清单，结算时自动核对防漏扫（称重商品请到人工台）</span></div>
+    <div class="card">
+      <div class="row" style="margin-bottom:10px">
+        <input id="scBar" placeholder="扫描/输入条码" style="flex:1;border:1px solid var(--line-2);border-radius:var(--r);padding:11px" inputmode="search">
+        <button class="btn pri" id="scAdd">添加</button></div>
+      <div class="row">
+        <input id="scKw" placeholder="或按名称搜索商品" style="flex:1;border:1px solid var(--line-2);border-radius:var(--r);padding:9px 11px">
+        <button class="btn" id="scSearch">搜索</button></div>
+      <div id="scHint" class="small muted" style="margin-top:8px"></div>
+      <div id="scResults"></div>
+    </div>
+    <div class="card"><h3>🧺 我的清单</h3><div id="scList"><div class="empty">还没有加商品</div></div></div>`, '#home');
+  $('#scAdd').onclick = () => scanLookup($('#scBar').value.trim(), true);
+  $('#scBar').addEventListener('keydown', e => { if (e.key === 'Enter') scanLookup($('#scBar').value.trim(), true); });
+  $('#scSearch').onclick = () => scanSearch($('#scKw').value.trim());
+  renderScanList();
+  startBarcodeScan();
+}
+async function scanLookup(code, add) {
+  if (!code) return;
+  try {
+    const r = await api('/pricebook?kw=' + encodeURIComponent(code));
+    const hit = (r.items || [])[0];
+    if (!hit) { $('#scHint').textContent = `未找到条码 ${code} 的商品`; return; }
+    if (add) { scanListAdd(hit); $('#scBar').value = ''; $('#scBar').focus(); }
+    return hit;
+  } catch (e) { $('#scHint').textContent = e.message; }
+}
+async function scanSearch(kw) {
+  try {
+    const r = await api('/pricebook?kw=' + encodeURIComponent(kw));
+    $('#scResults').innerHTML = (r.items || []).slice(0, 10).map(p => `
+      <div class="li"><div><div class="t">${esc(p.name)}</div>
+        <div class="s">${esc(p.spec || '')} · ${money(p.memberPrice ?? p.sellPrice)}${p.memberPrice ? '（会员价）' : ''}</div></div>
+        <button class="btn sm pri" data-add='${esc(JSON.stringify(p))}'>加入</button></div>`).join('')
+      || '<div class="empty">无匹配商品</div>';
+    $$('[data-add]').forEach(b => b.onclick = () => scanListAdd(JSON.parse(b.dataset.add)));
+  } catch (e) { toast(e.message, false); }
+}
+function scanListAdd(p) {
+  const it = scanList.find(x => x.id === p.id);
+  if (it) it.qty += 1; else scanList.push({ productId: p.id, qty: 1, name: p.name,
+    price: p.memberPrice ?? p.sellPrice, unit: p.baseUnit || '' });
+  renderScanList();
+}
+function renderScanList() {
+  const box = $('#scList'); if (!box) return;
+  box.innerHTML = scanList.length ? scanList.map((it, i) => `
+    <div class="li"><div><div class="t">${esc(it.name)}</div>
+      <div class="s">${money(it.price)} × ${it.qty}${it.unit ? ' ' + esc(it.unit) : ''} = <b>${money(it.price * it.qty)}</b></div></div>
+      <div class="row"><span class="stepper"><button data-m="${i}">−</button><span>${it.qty}</span><button data-p="${i}">＋</button></span></div></div>`).join('')
+    + `<button class="btn pri block" style="margin-top:12px" id="scPay">结算 ${money(scanList.reduce((s, x) => s + x.price * x.qty, 0))}（余额支付）</button>`
+    : '<div class="empty">还没有加商品</div>';
+  $$('[data-m]', box).forEach(b => b.onclick = () => { scanList[b.dataset.m].qty--; if (scanList[b.dataset.m].qty <= 0) scanList.splice(b.dataset.m, 1); renderScanList(); });
+  $$('[data-p]', box).forEach(b => b.onclick = () => { scanList[b.dataset.p].qty++; renderScanList(); });
+  $('#scPay') && ($('#scPay').onclick = doSelfCheckout);
+}
+async function doSelfCheckout() {
+  try {
+    // P2-3（2026-09-18 口径）：自助结算只走余额付清，不赊账 —— 余额不足提前拦截，引导到收银台组合支付
+    const needTotal = scanList.reduce((s, x) => s + x.price * x.qty, 0);
+    const bal = Number((typeof assets !== 'undefined' && assets) ? assets.balance : 0);
+    if (bal < needTotal) {
+      toast('余额不足（余额 ¥' + money(bal) + ' < 应付 ¥' + money(needTotal) + '）：请到收银台组合支付（余额抵一部分 + 现金/扫码当场结清）或先充值', false);
+      return;
+    }
+    const body = { items: scanList.map(x => ({ productId: x.productId, qty: x.qty })) };
+    const ai = Object.entries(aiCounts).filter(([, n]) => n > 0).map(([productId, count]) => ({ productId: Number(productId), count }));
+    if (ai.length) body.aiItems = ai; // V4.14.6：漏扫校验传参（后端开关 antileak.selfcheckout.enabled）
+    const r = await api('/self-checkout', { method: 'POST', body });
+    $('#app').innerHTML = shellWrap('scan', `
+      <div class="card" style="text-align:center">
+        <div style="font-size:40px">✅</div>
+        <h3 style="justify-content:center">结算成功，欢迎购物！</h3>
+        <div class="muted small">实付 ${money(r.payable ?? 0)} · 余额自动付清</div>
+        <div class="code-box"><div class="small muted" style="margin-bottom:8px">离场请向工作人员出示核销码</div>
+          <div class="code">${esc(r.leaveCode)}</div></div>
+        <button class="btn block" onclick="nav('#scan')">继续购物</button>
+        <button class="btn block" style="margin-top:8px" onclick="nav('#home')">返回首页</button>
+      </div>`);
+    scanList = [];
+  } catch (e) { toast(e.message, false); }
+}
+/* 条码扫描：BarcodeDetector 可用则持续取流；不可用则手输（iOS Safari 等降级） */
+let scanStream = null;
+async function startBarcodeScan() {
+  try {
+    if (!('BarcodeDetector' in window)) { $('#scHint') && ($('#scHint').textContent = '此浏览器不支持自动扫码，请手动输入条码'); return; }
+    const fmts = await window.BarcodeDetector.getSupportedFormats();
+    const use = ['ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a', 'upc_e', 'itf'].filter(f => fmts.includes(f));
+    if (!use.length) return;
+    const video = document.createElement('video');
+    video.autoplay = true; video.playsInline = true; video.muted = true;
+    video.style.cssText = 'width:100%;border-radius:var(--r-lg);margin-bottom:10px;background:#000;max-height:200px;object-fit:cover';
+    $('#scBar').closest('.card').prepend(video);
+    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    video.srcObject = scanStream;
+    const detector = new window.BarcodeDetector({ formats: use });
+    let last = '', lastAt = 0;
+    const tick = async () => {
+      if (!video.isConnected || video.readyState < 2) return;
+      try {
+        const codes = await detector.detect(video);
+        const now = Date.now();
+        if (codes.length && codes[0].rawValue && !(codes[0].rawValue === last && now - lastAt < 2500)) {
+          last = codes[0].rawValue; lastAt = now;
+          navigator.vibrate && navigator.vibrate(60);
+          scanDetect(last); // V4.14.6：识别计数+确认加入（不再直接入清单）
+        }
+      } catch { /* 单帧失败忽略 */ }
+    };
+    setInterval(tick, 450);
+  } catch { /* 无摄像头/权限拒绝：手输兜底 */ }
+}
+window.addEventListener('pagehide', () => { scanStream && scanStream.getTracks().forEach(t => t.stop()); });
+
+/* ═══════════ 商城 ═══════════ */
+let mallState = { cat: null, kw: '', page: 1, total: 0 };
+async function viewMall(cat) {
+  if (cat !== null && cat !== undefined) mallState.cat = cat;
+  const [cats, settings, prods] = await Promise.all([
+    api('/mall/categories'), api('/mall/settings'),
+    api(`/mall/products?${mallState.cat ? 'cat=' + mallState.cat + '&' : ''}kw=${encodeURIComponent(mallState.kw)}&page=${mallState.page}&size=20`),
+  ]);
+  mallState.total = prods.total;
+  const pages = Math.max(1, Math.ceil(prods.total / 20));
+  const prodsHtml = (prods.items || []).map(p => `
+    <div class="prod">
+      <div class="ph">${p.photoPath ? `<img src="${esc(p.photoPath)}" onerror="this.remove()">` : '🧺'}</div>
+      <div style="flex:1;min-width:0"><div class="t" style="font-weight:600">${esc(p.name)}</div>
+        <div class="s muted">${esc(p.spec || '')}${p.stock <= 0 ? ' · <span style="color:var(--orange)">暂时缺货</span>' : ''}</div>
+        <div class="row between" style="margin-top:4px">
+          <span>${p.memberPrice != null ? `<b style="color:var(--pri-d)">${money(p.memberPrice)}</b> <s class="small muted">${money(p.sellPrice)}</s>` : `<b style="color:var(--pri-d)">${money(p.sellPrice)}</b>`}
+            <span class="small muted">/${esc(p.baseUnit || '件')}</span></span>
+          <button class="btn sm pri" ${p.stock <= 0 ? 'disabled' : ''} data-add='${esc(JSON.stringify(p))}'>＋ 加购</button></div></div>
+    </div>`).join('');
+  const inner = `
+    ${Number(settings.serving) === 1 ? `<div class="banner">🚚 支持在线配送：满 ${money(settings.freeAbove)} 免配送费（否则 ${money(settings.fee)}）；也可到店自提</div>` : '<div class="banner">🏪 门店暂未开通在线配送，下单请选到店自提</div>'}
+    <div class="row" style="margin-bottom:10px">
+      <input id="mallKw" placeholder="搜索商城商品" value="${esc(mallState.kw)}" style="flex:1;border:1px solid var(--line-2);border-radius:999px;padding:10px 14px">
+      <button class="btn pri" id="mallSearch">搜索</button></div>
+    <div class="cats"><button class="${mallState.cat ? '' : 'on'}" data-cat="">全部</button>
+      ${(cats.items || []).filter(c => c.prod_count > 0).map(c => `<button class="${mallState.cat === c.id ? 'on' : ''}" data-cat="${c.id}">${esc(c.name)}（${c.prod_count}）</button>`).join('')}</div>
+    <div class="card">${prodsHtml || '<div class="empty">该分类暂无可售商品</div>'}
+      ${pages > 1 ? `<div class="row between" style="margin-top:10px">
+        <button class="btn sm" ${mallState.page <= 1 ? 'disabled' : ''} id="mallPrev">‹ 上一页</button>
+        <span class="small muted">${mallState.page} / ${pages}（共 ${prods.total} 件）</span>
+        <button class="btn sm" ${mallState.page >= pages ? 'disabled' : ''} id="mallNext">下一页 ›</button></div>` : ''}</div>
+    ${cart.count ? `<div class="cartbar" onclick="nav('#cart')"><span>🧺 ${cart.count} 件商品</span><b>${money(cart.total)} 去结算 ›</b></div>` : ''}`;
+  $('#app').innerHTML = shellWrap('mall', inner);
+  $$('[data-cat]').forEach(b => b.onclick = () => { mallState.cat = b.dataset.cat ? Number(b.dataset.cat) : null; mallState.page = 1; viewMall(); });
+  $('#mallSearch').onclick = () => { mallState.kw = $('#mallKw').value.trim(); mallState.page = 1; viewMall(); };
+  $('#mallKw').addEventListener('keydown', e => { if (e.key === 'Enter') $('#mallSearch').click(); });
+  $('#mallPrev') && ($('#mallPrev').onclick = () => { mallState.page--; viewMall(); });
+  $('#mallNext') && ($('#mallNext').onclick = () => { mallState.page++; viewMall(); });
+  $$('[data-add]').forEach(b => b.onclick = () => { cart.add(JSON.parse(b.dataset.add)); toast('已加入购物车'); viewMall(); });
+}
+
+function viewCart() {
+  const inner = `
+    <div class="card"><h3>🧺 购物车（${cart.count} 件）</h3>
+      ${cart.list.length ? cart.list.map(it => `
+        <div class="li"><div><div class="t">${esc(it.name)}</div>
+          <div class="s">${money(it.price)}/${esc(it.unit || '件')}</div></div>
+          <div class="row"><span class="stepper"><button data-m="${it.id}">−</button><span>${it.qty}</span><button data-p="${it.id}">＋</button></span>
+            <span style="width:74px;text-align:right;font-weight:700">${money(it.price * it.qty)}</span></div></div>`).join('')
+        : '<div class="empty">购物车是空的，去商城逛逛吧</div>'}</div>
+    ${cart.list.length ? `<button class="btn pri block" id="cartGo">去结算 ${money(cart.total)}</button>
+      <button class="btn block" style="margin-top:8px" onclick="cart.clear();render()">清空购物车</button>` : ''}`;
+  $('#app').innerHTML = shellWrap('cart', inner, '#mall');
+  $$('[data-m]').forEach(b => b.onclick = () => { const it = cart.list.find(x => x.id === Number(b.dataset.m)); it && cart.setQty(it.id, it.qty - 1); render(); });
+  $$('[data-p]').forEach(b => b.onclick = () => { const it = cart.list.find(x => x.id === Number(b.dataset.p)); it && cart.setQty(it.id, it.qty + 1); render(); });
+  $('#cartGo') && ($('#cartGo').onclick = () => checkoutSheet());
+}
+
+/* 结算弹窗：自提 / 配送（选地址） */
+async function checkoutSheet() {
+  const [addrs, settings] = await Promise.all([api('/addresses'), api('/mall/settings')]);
+  const canDelivery = Number(settings.serving) === 1;
+  const mask = document.createElement('div');
+  mask.className = 'mask';
+  mask.innerHTML = `<div class="sheet">
+    <h3>🧾 确认订单（${cart.count} 件 · ${money(cart.total)}）</h3>
+    <div class="fld"><label>取货方式</label>
+      <div class="tabs" style="margin:0">
+        <button class="on" data-mode="自提">🏪 到店自提</button>
+        ${canDelivery ? '<button data-mode="配送">🚚 配送到家</button>' : ''}</div></div>
+    <div id="ckAddr" style="display:none">
+      <div class="fld"><label>收货地址（满 ${money(settings.freeAbove)} 免配送费，否则 +${money(settings.fee)}）</label>
+        <div id="ckAddrList"></div>
+        <button class="btn sm" style="margin-top:6px" onclick="nav('#address-form');this.closest('.mask').remove()">＋ 新增地址</button></div></div>
+    <div class="fld"><label>备注（选填）</label><input id="ckRemark" placeholder="如：晚上 7 点后送"></div>
+    <button class="btn pri block" id="ckGo">提交订单（余额自动付清）</button>
+    <button class="btn block" style="margin-top:8px" id="ckCancel">再想想</button>
+  </div>`;
+  document.body.appendChild(mask);
+  let mode = '自提', addressId = (addrs.items || []).find(a => a.is_default)?.id || null;
+  const renderAddr = () => {
+    $('#ckAddrList', mask).innerHTML = (addrs.items || []).map(a => `
+      <label class="row" style="padding:8px;border:1px solid ${addressId === a.id ? 'var(--pri-2)' : 'var(--line)'};border-radius:var(--r);margin-bottom:6px;cursor:pointer">
+        <input type="radio" name="ckaddr" style="width:auto" ${addressId === a.id ? 'checked' : ''} data-aid="${a.id}">
+        <span class="small">${esc(a.contact)} ${esc(a.phone)}<br>${esc(a.address)}${a.is_default ? ' <span class="tag g">默认</span>' : ''}</span></label>`).join('')
+      || '<div class="empty small">还没有收货地址</div>';
+    $$('input[name=ckaddr]', mask).forEach(r => r.onchange = () => { addressId = Number(r.dataset.aid); renderAddr(); });
+  };
+  $$('[data-mode]', mask).forEach(b => b.onclick = () => {
+    mode = b.dataset.mode;
+    $$('[data-mode]', mask).forEach(x => x.classList.toggle('on', x === b));
+    $('#ckAddr', mask).style.display = mode === '自提' ? 'none' : '';
+    renderAddr();
+  });
+  $('#ckCancel', mask).onclick = () => mask.remove();
+  $('#ckGo', mask).onclick = async () => {
+    try {
+      if (mode !== '自提' && !addressId) return toast('请选择收货地址', false);
+      const r = await api('/orders', { method: 'POST', body: {
+        items: cart.list.map(x => ({ productId: x.id, qty: x.qty })),
+        pickupMode: mode, addressId: mode === '自提' ? undefined : addressId,
+        remark: $('#ckRemark', mask).value.trim() || undefined } });
+      cart.clear(); mask.remove();
+      $('#app').innerHTML = shellWrap('cart', `
+        <div class="card" style="text-align:center">
+          <div style="font-size:40px">🎉</div><h3 style="justify-content:center">下单成功</h3>
+          <div class="muted small" style="margin:6px 0">${esc(r.orderNo)} · ${mode} · 实付 ${money(r.payable)}${r.deliveryFee ? '（含配送费 ' + money(r.deliveryFee) + '）' : ''}</div>
+          <div class="code-box"><div class="small muted" style="margin-bottom:8px">${mode === '自提' ? '到店出示自提码取货' : '收货时向配送员出示核销码'}</div>
+            <div class="code">${esc(r.pickupCode)}</div></div>
+          <div class="small muted">当前状态：${esc(r.statusText)}</div>
+          <button class="btn pri block" style="margin-top:12px" onclick="nav('#orders')">查看我的订单</button>
+          <button class="btn block" style="margin-top:8px" onclick="nav('#mall')">继续购物</button>
+        </div>`, '#orders');
+    } catch (e) { toast(e.message, false); }
+  };
+}
+
+/* ═══════════ 我的订单 ═══════════ */
+async function viewOrders() {
+  const r = await api('/orders');
+  const items = (r.items || []).map(o => `
+    <div class="li" style="cursor:pointer" data-oid="${o.id}">
+      <div><div class="t">${esc(o.order_no)} <span class="tag ${o.cancelled_at ? 'r' : 'g'}">${esc(o.statusText)}</span></div>
+        <div class="s">${dt(o.created_at)} · ${esc(o.pickup_mode || o.channel)} · ${o.item_count} 件</div></div>
+      <div class="amt">${money(o.payableAmount)}${o.deliveryFee ? `<div class="s">含配送 ${money(o.deliveryFee)}</div>` : ''}</div></div>`).join('');
+  $('#app').innerHTML = shellWrap('orders', `
+    <div class="card"><h3>在线订单（商城/外卖，最近 30 单）</h3>${items || '<div class="empty">还没有在线订单，去商城逛逛吧</div>'}</div>`);
+  $$('[data-oid]').forEach(b => b.onclick = () => nav('#order/' + b.dataset.oid));
+}
+
+async function viewOrderDetail(id) {
+  const { order, items } = await api('/orders/' + id);
+  const canCancel = !order.cancelled_at && order.status === '已完成' && order.picking_status === '待拣货';
+  $('#app').innerHTML = shellWrap('order', `
+    <div class="card">
+      <div class="row between"><h3 style="margin:0">${esc(order.order_no)}</h3><span class="tag ${order.cancelled_at ? 'r' : 'g'}">${esc(order.statusText)}</span></div>
+      <div class="small muted" style="margin-top:6px">下单 ${dt(order.created_at)} · ${esc(order.pickup_mode || order.channel)} · ${esc(order.member_name || '')}</div>
+      ${order.delivery_code && !order.cancelled_at ? `<div class="code-box"><div class="small muted" style="margin-bottom:6px">${esc(order.pickup_mode) === '自提' ? '到店出示自提码' : '收货核销码'}</div><div class="code">${esc(order.delivery_code)}</div></div>` : ''}
+      ${order.cancelled_at ? `<div class="small" style="color:var(--red);margin-top:8px">已于 ${dt(order.cancelled_at)} 取消（${esc(order.cancel_reason || '')}）</div>` : ''}
+    </div>
+    <div class="card"><h3>商品明细</h3>
+      ${items.map(i => `<div class="li"><div class="t">${esc(i.name)}${i.spec ? ' <span class="small muted">' + esc(i.spec) + '</span>' : ''}</div>
+        <div class="small">×${Number(i.qty)} · ${money(i.unit_price)} = <b>${money(i.line_amount)}</b></div></div>`).join('')}
+      <div class="row between" style="margin-top:10px"><span class="muted small">商品合计</span><b>${money(order.payableAmount - order.deliveryFee)}</b></div>
+      ${order.deliveryFee ? `<div class="row between" style="margin-top:4px"><span class="muted small">配送费</span><b>${money(order.deliveryFee)}</b></div>` : ''}
+      <div class="row between" style="margin-top:6px"><span>实付（余额自动付清）</span><b class="big" style="font-size:17px;color:var(--pri-d)">${money(order.payableAmount)}</b></div>
+    </div>
+    ${canCancel ? `<button class="btn danger block" id="odCancel">取消订单（未拣货可退，余额原路退回）</button>` : ''}`);
+  $('#odCancel') && ($('#odCancel').onclick = async () => {
+    if (!confirm('确认取消该订单？货款将原路退回会员余额。')) return;
+    try { await api(`/orders/${id}/cancel`, { method: 'POST' }); toast('订单已取消，货款已退回余额'); viewOrders(); }
+    catch (e) { toast(e.message, false); }
+  });
+}
+
+/* ═══════════ 我的 / 密码 / 地址 ═══════════ */
+async function viewMe() {
+  const { member, assets } = await ensureMe();
+  const inner = `
+    <div class="mcard"><div class="lv">${esc(member.level)}</div>
+      <div style="font-size:18px;font-weight:700">${esc(member.name || '会员')}</div>
+      <div class="small" style="opacity:.8;margin-top:4px">${esc(member.phone)} · ${esc(member.cardNo)}</div>
+      <div class="small" style="opacity:.8;margin-top:2px">余额 ${money(assets.balance)} · 积分 ${assets.points} · 分红 ${money(assets.dividendBalance)}</div></div>
+    <div class="card" style="padding:0 16px">
+      ${[['#orders', '📋', '我的订单'], ['#sales', '🧾', '消费记录'], ['#flows/balance', '📒', '我的流水'],
+         ['#recharge', '💰', '余额充值'], ['#addresses', '📮', '收货地址'], ['#password', '🔒', '修改密码'],
+         ['#scan', '📷', '扫码自助'], ['EXIT', '🚪', '退出登录']]
+        .map(([h, ic, t]) => `<div class="li" style="cursor:pointer" data-go="${h}">
+          <span class="t">${ic} ${t}</span><span class="muted">›</span></div>`).join('')}
+    </div>
+    <div class="muted small" style="text-align:center;margin-top:10px">绿源社区超市 · 掌上会员 V4.14.5</div>`;
+  $('#app').innerHTML = shellWrap('me', inner);
+  $$('[data-go]').forEach(b => b.onclick = () => {
+    if (b.dataset.go === 'EXIT') { setToken(''); MB.me = null; toast('已退出登录'); nav('#login'); }
+    else nav(b.dataset.go);
+  });
+}
+
+function viewPassword() {
+  $('#app').innerHTML = shellWrap('password', `
+    <div class="card"><h3>🔒 修改登录密码</h3>
+      <div class="fld"><label>原密码</label><input id="pOld" type="password"></div>
+      <div class="fld"><label>新密码（≥6 位）</label><input id="pNew" type="password"></div>
+      <div class="fld"><label>确认新密码</label><input id="pNew2" type="password"></div>
+      <button class="btn pri block" id="pGo">确认修改</button></div>`, '#me');
+  $('#pGo').onclick = async () => {
+    if ($('#pNew').value !== $('#pNew2').value) return toast('两次输入的新密码不一致', false);
+    try { await api('/password', { method: 'POST', body: { old: $('#pOld').value, new: $('#pNew').value } });
+      toast('密码已修改'); nav('#me'); } catch (e) { toast(e.message, false); }
+  };
+}
+
+async function viewAddresses() {
+  const r = await api('/addresses');
+  const items = (r.items || []).map(a => `
+    <div class="li"><div><div class="t">${esc(a.contact)} · ${esc(a.phone)} ${a.is_default ? '<span class="tag g">默认</span>' : ''}</div>
+      <div class="s">${esc(a.address)}</div></div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <button class="btn sm" data-edit="${a.id}">编辑</button>
+        ${!a.is_default ? `<button class="btn sm" data-def="${a.id}">设默认</button>` : ''}
+        <button class="btn sm danger" data-del="${a.id}">删除</button></div></div>`).join('');
+  $('#app').innerHTML = shellWrap('addresses', `
+    <div class="card">${items || '<div class="empty">还没有收货地址</div>'}</div>
+    <button class="btn pri block" onclick="nav('#address-form')">＋ 新增收货地址</button>`, '#me');
+  $$('[data-edit]').forEach(b => b.onclick = () => nav('#address-form/' + b.dataset.edit));
+  $$('[data-def]').forEach(b => b.onclick = async () => {
+    const a = (r.items || []).find(x => String(x.id) === b.dataset.def);
+    try { await api('/addresses/' + b.dataset.def, { method: 'PUT', body: { isDefault: true,
+      contact: a.contact, phone: a.phone, address: a.address } }); toast('已设为默认'); viewAddresses(); }
+    catch (e) { toast(e.message, false); }
+  });
+  $$('[data-del]').forEach(b => b.onclick = async () => {
+    if (!confirm('删除该地址？')) return;
+    try { await api('/addresses/' + b.dataset.del, { method: 'DELETE' }); toast('已删除'); viewAddresses(); }
+    catch (e) { toast(e.message, false); }
+  });
+}
+
+function viewAddressForm(id) {
+  $('#app').innerHTML = shellWrap('address-form', `
+    <div class="card">
+      <div class="fld"><label class="req">联系人</label><input id="aContact"></div>
+      <div class="fld"><label class="req">手机号</label><input id="aPhone" type="tel" maxlength="11"></div>
+      <div class="fld"><label class="req">详细地址（≥5 字）</label><textarea id="aAddr" rows="3" placeholder="小区 / 楼栋 / 门牌号"></textarea></div>
+      <div class="fld"><label class="row" style="gap:6px"><input type="checkbox" id="aDef" style="width:auto">设为默认地址</label></div>
+      <button class="btn pri block" id="aGo">保存</button></div>`, '#addresses');
+  (async () => {
+    if (!id) return;
+    const a = (await api('/addresses')).items.find(x => x.id === id);
+    if (a) { $('#aContact').value = a.contact; $('#aPhone').value = a.phone; $('#aAddr').value = a.address;
+      $('#aDef').checked = !!a.is_default; }
+  })();
+  $('#aGo').onclick = async () => {
+    const body = { contact: $('#aContact').value.trim(), phone: $('#aPhone').value.trim(),
+      address: $('#aAddr').value.trim(), isDefault: $('#aDef').checked };
+    try {
+      if (id) await api('/addresses/' + id, { method: 'PUT', body });
+      else await api('/addresses', { method: 'POST', body });
+      toast('已保存'); nav('#addresses');
+    } catch (e) { toast(e.message, false); }
+  };
+}
+
+render();
+</script>
+</body>
+</html>

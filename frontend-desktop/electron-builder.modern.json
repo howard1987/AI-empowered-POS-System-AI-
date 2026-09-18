@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json.schemastore.org/electron-builder",
+  "appId": "cn.community.cashier",
+  "productName": "超市收银系统",
+  "directories": { "output": "dist-modern" },
+  "files": ["src/**/*", "renderer/**/*", "package.json"],
+  "asar": true,
+  "electronVersion": "44.3.0",
+  "win": {
+    "target": [
+      { "target": "portable", "arch": ["x64"] },
+      { "target": "nsis", "arch": ["x64"] }
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "artifactName": "超市收银系统-${version}-win-x64-setup.exe"
+  },
+  "portable": { "artifactName": "超市收银系统-${version}-x64-portable.exe" }
+}
