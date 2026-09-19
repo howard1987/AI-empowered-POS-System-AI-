@@ -568,6 +568,10 @@ export class MemberAppController {
     }
     const mode = ['自提', '配送', '外卖'].includes(b.pickupMode || '') ? b.pickupMode! : '自提';
     const svc = new SettingsService();
+    // VQA-D4：sales.scanpay_enabled 真实生效——后台承诺「开=会员可自助扫码购」，此前仅管理端展示、无服务端消费
+    const spv = String(await svc.getVal('sales.scanpay_enabled') ?? '开').replace(/"/g, '');
+    if (spv === '关' || spv === 'false' || spv === 'off')
+      throw new BizException(40003, '扫码购暂未开放，请到门店收银台结算');
     if (mode !== '自提' && await svc.getNum('delivery.serving', 1) !== 1) {
       throw new BizException(40003, '门店暂未开通在线配送，请选择到店自提');
     }

@@ -1,6 +1,6 @@
 {
   "name": "cashier-backend",
-  "version": "0.1.0",
+  "version": "5.0.0",
   "private": true,
   "description": "社区超市收银系统后端（NestJS + PostgreSQL）初版",
   "scripts": {

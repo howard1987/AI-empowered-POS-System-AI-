@@ -41,7 +41,7 @@ const CLEAR_ALWAYS: Record<string, string[]> = {
   ],
   '会员与分红': [
     'members', 'member_accounts', 'member_profiles', 'member_activity_windows',
-    'member_addresses', 'member_coupons', 'member_level_log', 'member_pref_stats',
+    'member_addresses', 'member_coupons', 'member_level_log',
     'points_flows', 'balance_flows', 'dividend_periods', 'dividend_records',
     'big_customer_payments', 'coupons', 'promotions', 'marketing_rules', 'marketing_touches',
   ],
@@ -55,7 +55,7 @@ const CLEAR_ALWAYS: Record<string, string[]> = {
 
 /** 基础档案（full 模式清空；keep-master 模式保留——开业前已建好真实档案时勾它） */
 const MASTER_DATA = [
-  'categories', 'products', 'product_barcodes', 'product_units', 'product_photos',
+  'categories', 'products', 'product_barcodes', 'product_units',
   'product_bundles', 'product_bundle_items', 'product_aliases',
   'suppliers', 'supplier_product_prices', 'supplier_fee_agreements', 'supplier_fee_types',
   'member_levels', 'big_customers', 'big_customer_prices', 'promotion_templates',

@@ -223,6 +223,13 @@ foreach ($f in @('env.example', 'start-server.bat', 'stop-server.bat', 'README-S
 }
 Ok '部署文件就绪'
 
+# VQA-E5：产品版本注入发布包（health 接口以 version.txt 为准）
+try {
+  $fdPkg = (Get-Content (Join-Path $CODE 'frontend-desktop/package.json') -Raw | ConvertFrom-Json)
+  Set-Content -Path (Join-Path $SRV 'version.txt') -Value $fdPkg.version -NoNewline -Encoding ascii
+  Ok "version.txt = $($fdPkg.version)"
+} catch { Warn "version.txt 写入失败（health 回落 0.1.0）：$($_.Exception.Message)" }
+
 # ── 7. 运维入口页 ──
 Step 7 '生成服务端入口页 public/index.html'
 $portal = @'

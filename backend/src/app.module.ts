@@ -63,7 +63,7 @@ class HealthController {
     } catch (e) {
       db = 'down';
     }
-    return { status: 'ok', service: 'cashier-backend', version: '0.1.0', db, time: new Date().toISOString() };
+    return { status: 'ok', service: 'cashier-backend', version: process.env.APP_VERSION || (() => { try { return require('fs').readFileSync(require('path').join(__dirname, '..', 'version.txt'), 'utf8').trim(); } catch { return '0.1.0'; } })(), db, time: new Date().toISOString() };
   }
 }
 
