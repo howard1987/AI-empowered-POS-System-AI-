@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Module } from '@nestjs/common';
 import { pool, q, q1, tx, cx, audit, r2 } from '../common/db';
 import { SettingsService } from './settings.module';
+import { notifyStaff } from '../common/notices';
 import { sumHardCostMonthly } from './dividend.module';
 
 /**
@@ -24,18 +25,18 @@ export class SalesJobsService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     this.timer = setInterval(() => {
-      this.runCloseOrders().catch(e => console.error('[关单job] 执行失败:', e.message));
-      this.maybeDailySettle().catch(e => console.error('[日结job] 执行失败:', e.message));
+      this.runCloseOrders().catch(e => { console.error('[关单job] 执行失败:', e.message); try { notifyStaff(1, 'job_error', `[关单job] ${String(e.message).slice(0, 140)}`, {}, 'sys.settings', 'job:关单').catch(() => { }); } catch { } });
+      this.maybeDailySettle().catch(e => { console.error('[日结job] 执行失败:', e.message); try { notifyStaff(1, 'job_error', `[日结job] ${String(e.message).slice(0, 140)}`, {}, 'sys.settings', 'job:日结').catch(() => { }); } catch { } });
     }, 60_000);
     // VQA-P0 补偿：服务（重）启动即补齐昨日快照——00:05 窗口错过也能追平，settle_date 唯一幂等
-    this.maybeDailySettle(true).catch(e => console.error('[日结job] 启动补偿失败:', e.message));
+    this.maybeDailySettle(true).catch(e => { console.error('[日结job] 启动补偿失败:', e.message); try { notifyStaff(1, 'job_error', `[日结job/启动补偿] ${String(e.message).slice(0, 140)}`, {}, 'sys.settings', 'job:日结boot').catch(() => { }); } catch { } });
     console.log('[销售jobs] 关单补偿 + 日结快照 定时器已启动（每分钟检查）');
   }
   onModuleDestroy() { clearInterval(this.timer); }
 
   /** ① 关单补偿 */
   private async runCloseOrders() {
-    const minutes = await this.settings.getNum('sales.close_order_minutes', 5);
+    const minutes = await SettingsService.cachedNum('sales.close_order_minutes', 5);
     if (!(minutes > 0)) return;   // 0 = 关闭该 job
     const minuteKey = new Date().toISOString().slice(0, 16);
     if (this.lastCloseRun === minuteKey) return;

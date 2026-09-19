@@ -38,6 +38,21 @@ export class SettingsService {
     const n = Number(v);
     return Number.isFinite(n) ? n : fallback;
   }
+
+  /** VQA-C4：定时器热路径专用低频缓存读（默认 5 分钟 TTL）。业务写后需立即生效的路径必须继续用 getVal/getNum */
+  static async cachedVal(key: string, ttlMs = 300_000): Promise<any> {
+    const now = Date.now();
+    const m: Map<string, { v: any; exp: number }> = (SettingsService as any)._cc || ((SettingsService as any)._cc = new Map());
+    const e = m.get(key);
+    if (e && e.exp > now) return e.v;
+    const v = await new SettingsService().getVal(key);
+    m.set(key, { v, exp: now + ttlMs });
+    return v;
+  }
+  static async cachedNum(key: string, fb = 0, ttlMs = 300_000): Promise<number> {
+    const n = Number(await SettingsService.cachedVal(key, ttlMs));
+    return Number.isFinite(n) ? n : fb;
+  }
   async getBool(key: string, fallback = false): Promise<boolean> {
     const v = await this.getVal(key);
     if (typeof v === 'boolean') return v;

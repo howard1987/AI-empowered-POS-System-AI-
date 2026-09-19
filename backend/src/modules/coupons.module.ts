@@ -157,12 +157,13 @@ export class CouponsController {
       const d = new Date();
       const exp = new Date(d.getFullYear(), d.getMonth(), d.getDate() + cp.valid_days);
       const expStr = `${exp.getFullYear()}-${String(exp.getMonth() + 1).padStart(2, '0')}-${String(exp.getDate()).padStart(2, '0')}`;
-      for (const mid of toIssue) {
-        const ins = await cx(c,
-          `INSERT INTO member_coupons (coupon_id, member_id, expire_at) VALUES ($1,$2,$3) RETURNING id`, [id, mid, expStr]);
-        // V4.19.0 券码手输：发券即生成券码（MC+8位序号，纸质券可印码，收银台手输核销）
-        await cx(c, `UPDATE member_coupons SET code='MC'||lpad(id::text,8,'0') WHERE id=$1 AND code IS NULL`, [ins[0].id]);
-      }
+      // VQA-C4：批量发券合并为 2 条 SQL（原每人 2 次往返）——多会员群发券不再线性放大事务时长
+      const insRows = await cx(c,
+        `INSERT INTO member_coupons (coupon_id, member_id, expire_at)
+             SELECT $1, unnest($2::bigint[]), $3 RETURNING id`, [id, toIssue, expStr]);
+      if (insRows.length)
+        await cx(c, `UPDATE member_coupons SET code='MC'||lpad(id::text,8,'0') WHERE id = ANY($1::bigint[]) AND code IS NULL`, [insRows.map(r => r.id)]);
+      
       await cx(c, `UPDATE coupons SET issued_qty = issued_qty + $2 WHERE id=$1`, [id, newCount]);
       return { issued: newCount, skipped: memberIds.length - newCount, expireAt: expStr };
     });

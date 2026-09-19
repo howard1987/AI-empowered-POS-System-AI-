@@ -13,6 +13,11 @@ import { ensureLanCert, MDNS_HOST } from './common/cert';
 import { startMdns } from './common/mdns';
 
 // ── 进程级兜底（收银系统=门店关键服务，进程退出=全店收银中断）──
+// VQA-C2：启动轮转——error.log 超 5MB 滚动为 .1（单代备份，防无限增长）
+try {
+  const __lf = join(__dirname, 'logs', 'error.log');
+  if (existsSync(__lf) && fs.statSync(__lf).size > 5 * 1024 * 1024) fs.renameSync(__lf, __lf + '.1');
+} catch { /* 轮转失败不影响启动 */ }
 // 背景：PG 瞬断 / 并发竞态等偶发未捕获异常会以 code=1 直接打崩整个后端，
 // 且崩溃时 stderr 无栈可查。策略：任何未捕获异常/拒绝 → 追加写 logs/error.log + 控制台，进程继续存活；
 // 坏掉的数据库连接由 pg-pool 自动丢弃重建，单个失败请求由业务层返回错误重试。

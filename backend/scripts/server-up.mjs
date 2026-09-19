@@ -157,6 +157,35 @@ async function pgStart() {
 function dbUrl() {
   return `postgres://postgres:${encodeURIComponent(PGPASSWORD_)}@127.0.0.1:${PORT}/postgres`;
 }
+/** VQA-B3：最小权限应用账号——DML/TRUNCATE/序列 USAGE，无 SUPERUSER/CREATEDB/登录库外权限与运行时 DDL 需求（dist 已核实零运行时 DDL） */
+async function ensureAppRole() {
+  const { Client } = createRequire(path.join(ROOT, 'package.json'))('pg');
+  const { randomBytes } = await import('crypto');
+  const alpha = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  const mkPw = () => Array.from(randomBytes(20)).map(b => alpha[b % alpha.length]).join('');
+  const pwFile = path.join(WORK, 'pgapp.txt');
+  const c = new Client({ connectionString: dbUrl() });
+  await c.connect();
+  let pw = fs.existsSync(pwFile) ? String(fs.readFileSync(pwFile, 'utf8')).trim() : '';
+  if (!pw || pw.length < 12) pw = mkPw();
+  const ex = await c.query(`SELECT 1 FROM pg_roles WHERE rolname='pos_app'`);
+  // PG DDL 不支持参数绑定；pw 为字母数字集，单引号内联安全
+  const lit = "'" + pw.replace(/'/g, "''") + "'";
+  if (!ex.rowCount) await c.query(`CREATE ROLE pos_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD ${lit}`);
+  else await c.query(`ALTER ROLE pos_app LOGIN PASSWORD ${lit}`);
+  fs.writeFileSync(pwFile, pw + '\n');
+  await c.query(`GRANT CONNECT ON DATABASE postgres TO pos_app`);
+  await c.query(`GRANT USAGE ON SCHEMA public TO pos_app`);
+  await c.query(`GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES ON ALL TABLES IN SCHEMA public TO pos_app`);
+  await c.query(`GRANT USAGE,SELECT,UPDATE ON ALL SEQUENCES IN SCHEMA public TO pos_app`);
+  await c.query(`ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES ON TABLES TO pos_app`);
+  await c.query(`ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT USAGE,SELECT,UPDATE ON SEQUENCES TO pos_app`);
+  await c.end();
+  return pw;
+}
+function appUrl(pw) {
+  return `postgres://pos_app:${encodeURIComponent(pw)}@127.0.0.1:${PORT}/postgres`;
+}
 
 // ────────────────────────── 主流程 ──────────────────────────
 function runMigrate(env) {
@@ -215,6 +244,21 @@ async function main() {
 
   if (!fs.existsSync(path.join(ROOT, 'dist', 'main.js'))) throw new Error('dist/main.js 缺失（发布包不完整）');
   runMigrate(env);
+  // VQA-B3：迁移完成后，业务进程切换最小权限账号 pos_app
+  //   embedded：恒幂等开通/同步（pgapp.txt 口令与 role 对齐），迁移仍走超户
+  //   external：若配置 APP_DATABASE_URL（如 pos_app 串），业务进程用它；迁移仍用 DATABASE_URL
+  if (embedded) {
+    try {
+      const appPw = await ensureAppRole();
+      env.DATABASE_URL = appUrl(appPw);
+      console.log('▶ 应用已切换最小权限账号 pos_app（超户仅用于迁移/引导）');
+    } catch (e) {
+      console.log('⚠ pos_app 开通失败，本进程回退超级用户连接：' + (e && e.message));
+    }
+  } else if (cfg.APP_DATABASE_URL) {
+    env.DATABASE_URL = String(cfg.APP_DATABASE_URL);
+    console.log('▶ 业务进程使用最小权限连接（APP_DATABASE_URL）；迁移沿用 DATABASE_URL');
+  }
 
   console.log('');
   console.log('════════════════════════════════════════════════');

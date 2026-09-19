@@ -138,7 +138,7 @@ export class AdminResetController {
     const grandTotal = Object.values(before).reduce((s, n) => s + n, 0);
 
     await tx(async c => {
-      await c.query(`TRUNCATE TABLE ${final.map(t => `"${t}"`).join(', ')} RESTART IDENTITY CASCADE`);
+      await c.query(`TRUNCATE TABLE ${final.map(t => `"${t}"`).join(', ')} CASCADE`);
     });
     // audit_logs 已被清空 → 事后补写本次初始化记录（永久留存的第一条日志）
     await audit(user.storeId, user.sub, '系统', '系统初始化', 'system', null, {

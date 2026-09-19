@@ -9,6 +9,7 @@ import { AuthUser, CurrentUser, JWT_SECRET, Public, clearAuthStateCache } from '
 import { lanIPv4, MDNS_HOST } from '../common/cert';
 import { q as qSetting } from '../common/db';
 import { allow, failAndLock, lockedFor, clearFailures, clientIp } from '../common/ratelimit';
+import { notifyStaff } from '../common/notices';
 import { checkPasswordPolicy } from '../common/password-policy';
 
 async function getSetting(key: string, fb: any = null): Promise<any> {
@@ -823,6 +824,7 @@ export class AuthModule {
       for (const r of rows) {
         if (r.password_hash && bcrypt.compareSync('admin123', r.password_hash)) {
           console.warn(`[安全] ⚠️ 管理员 ${r.emp_no} 仍在使用默认密码 admin123，请尽快登录后台「我的 → 修改密码」修改！`);
+          try { notifyStaff(Number((r as any).store_id || 1), 'sec_default_pwd', `⚠️ 管理员 ${r.emp_no} 仍在使用出厂默认密码，请立即修改`, {}, 'sys.settings', 'sec:defaultpwd:' + r.emp_no).catch(() => { }); } catch { /* 告警失败不阻断 */ }
         }
       }
     } catch { /* 基线未就绪（首次 init-db 前）忽略 */ }

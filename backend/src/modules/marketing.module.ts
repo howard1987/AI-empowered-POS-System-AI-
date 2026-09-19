@@ -10,6 +10,8 @@ import { Controller, Get, Injectable, Module, OnModuleInit, Param, Post, Put, Qu
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { BizException } from '../common/http';
 import { q, q1, r2, tx, cx, audit } from '../common/db';
+import { SettingsService } from './settings.module';
+import { notifyStaff } from '../common/notices';
 import { curStore, curEmp } from '../common/context';
 import { storePrice } from './store-price.service';   // V4.26.5 门店覆盖价
 
@@ -27,13 +29,12 @@ export class MarketingService implements OnModuleInit {
 
   onModuleInit() {
     // 每分钟检查一次（单条 SELECT，开销可忽略）；当日已跑则跳过
-    this.timer = setInterval(() => { this.maybeRun().catch(e => console.error('[营销引擎] 定时执行失败:', e.message)); }, 60_000);
-    this.maybeRun().catch(e => console.error('[营销引擎] 启动执行失败:', e.message));
+    this.timer = setInterval(() => { this.maybeRun().catch(e => { console.error('[营销引擎] 定时执行失败:', e.message); try { notifyStaff(1, 'job_error', `[营销引擎] 定时执行失败：${String(e.message).slice(0, 140)}`, {}, 'sys.settings', 'job:mkt').catch(() => { }); } catch { } }); }, 60_000);
+    this.maybeRun().catch(e => { console.error('[营销引擎] 启动执行失败:', e.message); try { notifyStaff(1, 'job_error', `[营销引擎] 启动执行失败：${String(e.message).slice(0, 140)}`, {}, 'sys.settings', 'job:mktboot').catch(() => { }); } catch { } });
   }
 
   private async maybeRun() {
-    const r = await q1<any>(`SELECT value FROM system_settings WHERE setting_key='marketing.run_time'`);
-    const t = String(r?.value ?? '08:30');
+    const t = String(await SettingsService.cachedVal('marketing.run_time') ?? '08:30');
     const [hh, mm] = t.split(':').map(Number);
     const now = new Date();
     if (now.getHours() * 60 + now.getMinutes() < (hh || 8) * 60 + (mm || 30)) return;

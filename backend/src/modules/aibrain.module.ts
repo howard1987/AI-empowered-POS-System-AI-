@@ -10,6 +10,8 @@ import { Controller, Get, Injectable, Module, OnModuleInit, Param, Post, Body, D
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { BizException } from '../common/http';
 import { q, q1, r2, tx, cx, audit } from '../common/db';
+import { SettingsService } from './settings.module';
+import { notifyStaff } from '../common/notices';
 import { curStore, curEmp } from '../common/context';
 import { AibrainEngine } from './aibrain.engine';
 import { getWeather } from './weather.service';
@@ -19,8 +21,8 @@ export class AibrainService implements OnModuleInit {
   private timer: NodeJS.Timeout | null = null;
 
   onModuleInit() {
-    this.timer = setInterval(() => { this.maybeRun().catch(e => console.error('[决策中心] 定时执行失败:', e.message)); }, 60_000);
-    this.maybeRun().catch(e => console.error('[决策中心] 启动执行失败:', e.message));
+    this.timer = setInterval(() => { this.maybeRun().catch(e => { console.error('[决策中心] 定时执行失败:', e.message); try { notifyStaff(1, 'job_error', `[决策中心] 定时执行失败：${String(e.message).slice(0, 140)}`, {}, 'sys.settings', 'job:brain').catch(() => { }); } catch { } }); }, 60_000);
+    this.maybeRun().catch(e => { console.error('[决策中心] 启动执行失败:', e.message); try { notifyStaff(1, 'job_error', `[决策中心] 启动执行失败：${String(e.message).slice(0, 140)}`, {}, 'sys.settings', 'job:brainboot').catch(() => { }); } catch { } });
   }
 
   async setting(key: string, fb: any = null): Promise<any> {

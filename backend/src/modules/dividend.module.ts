@@ -4,6 +4,7 @@ import { curStore, curEmp } from '../common/context';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { SettingsService } from './settings.module';
+import { notifyStaff } from '../common/notices';
 import { nodeIdentity } from '../common/outbox';
 
 /**
@@ -272,7 +273,7 @@ export class DividendAutoJob implements OnModuleInit, OnModuleDestroy {
   private timer: any;
   private lastRunDay = '';
   onModuleInit() {
-    this.timer = setInterval(() => this.maybeRun().catch(e => console.error('[分红job] 执行失败:', e?.message)), 60_000);
+    this.timer = setInterval(() => this.maybeRun().catch(e => { console.error('[分红job] 执行失败:', e?.message); try { notifyStaff(1, 'job_error', `[分红job] 执行失败：${String(e?.message).slice(0, 140)}`, {}, 'sys.settings', 'job:div').catch(() => { }); } catch { } }), 60_000);
     console.log('[分红job] 自动每日分红定时器已启动（每日 02:35 计提昨日净利）');
   }
   onModuleDestroy() { clearInterval(this.timer); }
