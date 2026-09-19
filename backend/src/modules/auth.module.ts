@@ -1,9 +1,9 @@
-import { Module, Controller, Post, Get, Body, HttpCode, Param, ParseIntPipe, Req } from '@nestjs/common';
+import { Module, Controller, Post, Get, Delete, Body, HttpCode, Param, ParseIntPipe, Req } from '@nestjs/common';
 import { RequirePerms } from '../common/auth';
 import * as bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
 import * as crypto from 'crypto';
-import { q, q1, audit } from '../common/db';
+import { q, q1, tx, audit } from '../common/db';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, JWT_SECRET, Public, clearAuthStateCache } from '../common/auth';
 import { lanIPv4, MDNS_HOST } from '../common/cert';
@@ -349,6 +349,44 @@ class AuthService {
 @Controller('auth')
 class AuthController {
   private svc = new AuthService();
+
+  /** VQA（需求3）：已停用员工允许删除——仅限「停用」且无任何业务记录的账号；有记录一律拒绝并建议保留停用 */
+  @RequirePerms('staff.manage')
+  @Delete('employees/:id')
+  async deleteEmployee(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
+    const eid = Number(id);
+    if (user && Number(user.sub) === eid) throw new BizException(40003, '不能删除当前登录账号');
+    const emp = await q1<any>(`SELECT id, emp_no, name, status FROM employees WHERE id=$1`, [eid]);
+    if (!emp) throw new BizException(40404, '员工不存在', 404);
+    if (String(emp.emp_no).toUpperCase() === 'ADMIN') throw new BizException(40003, '超级管理员账号不可删除');
+    if (emp.status !== '停用') throw new BizException(40003, '仅「停用」状态员工可删除，请先停用');
+    const refs: string[] = [];
+    const seen = new Set<string>();
+    const fks = await q<any>(`SELECT tc.table_name AS t, kcu.column_name AS c
+       FROM information_schema.table_constraints tc
+       JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name
+       JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name
+      WHERE tc.constraint_type='FOREIGN KEY' AND ccu.table_name='employees'`);
+    const probes = [...fks.map((x: any) => ({ t: x.t, c: x.c })),
+      { t: 'sales_orders', c: 'cashier_id' }, { t: 'shifts', c: 'cashier_id' }, { t: 'audit_logs', c: 'emp_id' },
+      { t: 'held_orders', c: 'employee_id' }, { t: 'price_changes', c: 'created_by' }];
+    for (const p of probes) {
+      const k = `${p.t}.${p.c}`;
+      if (seen.has(k) || p.t === 'employees' || p.t === 'employee_roles' || !/^[a-z_]+$/.test(p.t) || !/^[a-z_]+$/.test(p.c)) continue;
+      seen.add(k);
+      try {
+        const n: any = await q1(`SELECT count(*)::int AS n FROM ${p.t} WHERE ${p.c}=$1`, [eid]);
+        if (n && Number(n.n) > 0) refs.push(`${p.t}(${n.n})`);
+      } catch { /* 列不存在等非致命 */ }
+    }
+    if (refs.length) throw new BizException(40003, `该员工存在业务记录（${refs.slice(0, 3).join('、')}${refs.length > 3 ? ' 等' : ''}），禁止物理删除；建议保留「停用」状态以满足审计追溯`, 400);
+    await tx(async c => {
+      await c.query(`DELETE FROM employee_roles WHERE employee_id=$1`, [eid]);
+      await c.query(`DELETE FROM employees WHERE id=$1`, [eid]);
+    });
+    await audit(user.storeId, user.sub, '员工', 'employee.delete', 'employee', eid, { empNo: emp.emp_no, name: emp.name });
+    return { deleted: true, empNo: emp.emp_no, name: emp.name };
+  }
 
   @Public()
   @HttpCode(200)

@@ -315,11 +315,25 @@ class ChainStoreController {
     const sid = Number(id);
     assertStoreAllowed(sid, '该门店的店长账号');
     const empNo = String(b?.empNo || '').trim();
-    const nm = String(b?.name || '').trim();
-    const pw = String(b?.password || '');
-    if (!empNo || !nm || !pw) throw new BizException(40003, '工号、姓名、密码均为必填');
-    await checkPasswordPolicy(pw);
-    const hash = bcrypt.hashSync(pw, 10);
+    let nm = String(b?.name || '').trim();
+    const pw = String(b?.password ?? '').trim();
+    // VQA（需求4）：密码留空——已存在工号=不改密码；新工号=自动生成初始密码（响应回显给管理员）
+    if (!empNo) throw new BizException(40003, '工号必填');
+    const exPre = await q1<any>(`SELECT id, store_id, name FROM employees WHERE emp_no=$1`, [empNo]);
+    if (!exPre && !nm) throw new BizException(40003, '新员工姓名为必填');
+    if (exPre) nm = nm || String(exPre.name || '');
+    let genPw: string | null = null;
+    let hash: string | null = null;
+    if (pw) {
+      await checkPasswordPolicy(pw);
+      hash = bcrypt.hashSync(pw, 10);
+    } else if (!exPre) {
+      const alpha = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz';
+      const digit = '23456789';
+      const pick = (n: number, src: string) => Array.from<number>(require('crypto').randomBytes(n)).map(x => src[x % src.length]).join('');
+      genPw = pick(5, alpha) + pick(4, digit) + pick(1, alpha);
+      hash = bcrypt.hashSync(genPw, 10);
+    }
 
     const out = await tx(async c => {
       // ① 管理员角色（该店的「店长」）
@@ -343,10 +357,16 @@ class ChainStoreController {
           throw new BizException(40003, `工号 ${empNo} 已被其他门店/总部占用`);
         }
         empId = Number(row.id);
-        await c.query(
-          `UPDATE employees SET name=$2, phone=COALESCE($3, phone), password_hash=$4, status='在职',
+        if (hash) {
+          await c.query(
+            `UPDATE employees SET name=$2, phone=COALESCE($3, phone), password_hash=$4, status='在职',
                                 token_version = COALESCE(token_version,0) + 1, updated_at=now()
             WHERE id=$1`, [empId, nm, b?.phone || null, hash]);
+        } else {
+          await c.query(
+            `UPDATE employees SET name=$2, phone=COALESCE($3, phone), status='在职', updated_at=now()
+            WHERE id=$1`, [empId, nm, b?.phone || null]);
+        }
       } else {
         const ins = await c.query(
           `INSERT INTO employees (store_id, emp_no, name, phone, password_hash, status, token_version)
@@ -364,7 +384,7 @@ class ChainStoreController {
         [sid, empId]);
       await audit(sid, user.sub, '总部', created ? 'store.manager.create' : 'store.manager.reset',
         'employee', empId, { empNo, name: nm, storeId: sid });
-      return { empId, empNo, created, storeId: sid };
+      return { empId, empNo, created, storeId: sid, genPw };
     });
     return out;
   }

@@ -277,38 +277,65 @@ export async function render(view) {
     } catch { /* must 已提示 */ }
   };
 
-  // ── 店长账号 ──
-  function openMgr(id) {
+  // ── 店长账号（VQA 需求4：可选已有员工/新建员工，信息自动带出，密码留空=不变/自动生成）──
+  async function openMgr(id) {
     const r = rows.find(x => Number(x.id) === id);
+    let empList = [];
+    try { const d = await must(get('/auth/employees')); empList = Array.isArray(d) ? d : (d.items || []); } catch { empList = []; }
+    const empOf = no => empList.find(e => String(e.empNo || '') === no);
     const mask = document.createElement('div');
     mask.className = 'modal-mask';
     mask.innerHTML = `<div class="modal" style="width:min(460px,94vw)">
       <h3>👤 门店店长账号 · ${esc(r?.name || '')}</h3>
       <div class="muted" style="font-size:12px;margin:6px 0 10px">
-        为该门店创建（或重置）一个绑定「店长」角色的登录账号。工号全局唯一，不会重复建号。
+        为门店绑定「店长」角色登录账号：工号下拉选择<b>已有员工</b>（姓名/手机号自动带出），或直接输入<b>新工号</b>创建。工号全局唯一。
       </div>
-      <div class="fld"><label>工号 <span style="color:#c0392b">*</span></label><input id="hgNo" maxlength="32" placeholder="如 S001-01"></div>
-      <div class="fld"><label>姓名 <span style="color:#c0392b">*</span></label><input id="hgName" maxlength="32"></div>
-      <div class="fld"><label>手机号</label><input id="hgPhone" maxlength="20"></div>
-      <div class="fld"><label>登录密码 <span style="color:#c0392b">*</span></label><input id="hgPw" type="password" autocomplete="new-password" placeholder="至少 8 位，含字母与数字"></div>
+      <div class="fld"><label>工号 <span style="color:#c0392b">*</span></label>
+        <input id="hgNo" maxlength="32" list="hgNoList" placeholder="选择或输入工号" autocomplete="off" style="width:100%">
+        <datalist id="hgNoList">${empList.map(e => `<option value="${esc(e.empNo)}">${esc(e.name)}${e.phone ? ' · ' + esc(e.phone) : ''}${e.status && e.status !== '在职' ? '（' + esc(e.status) + '）' : ''}</option>`).join('')}</datalist>
+      </div>
+      <div class="fld"><label>姓名 <span class="muted" id="hgNameHint" style="font-weight:400"></span></label><input id="hgName" maxlength="32" style="width:100%"></div>
+      <div class="fld"><label>手机号</label><input id="hgPhone" maxlength="20" style="width:100%"></div>
+      <div class="fld"><label>登录密码</label><input id="hgPw" type="password" autocomplete="new-password" style="width:100%">
+        <div class="muted" id="hgPwHint" style="font-size:11.5px;margin-top:4px"></div></div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
         <button class="btn" id="hgCancel">取消</button>
         <button class="btn pri" id="hgSave">💾 保存</button>
       </div></div>`;
     document.body.appendChild(mask);
+    const q = s => mask.querySelector(s);
+    const syncMode = () => {
+      const no = q('#hgNo').value.trim();
+      const ex = empOf(no);
+      if (ex) {
+        q('#hgName').value = ex.name || ''; q('#hgPhone').value = ex.phone || '';
+        q('#hgNameHint').textContent = '（已有员工，自动带出）';
+        q('#hgPw').placeholder = '留空表示不变；输入即修改密码';
+        q('#hgPwHint').textContent = '已有员工：密码留空=不修改；填写=重置为新密码（账号将恢复在职）。';
+      } else {
+        q('#hgName').value = q('#hgName').value; q('#hgPhone').value = q('#hgPhone').value;
+        q('#hgNameHint').textContent = no ? '（新员工，姓名必填）' : '';
+        q('#hgPw').placeholder = '留空自动生成，也可自行填写';
+        q('#hgPwHint').textContent = '新员工：密码留空将自动生成合规初始密码，保存后弹窗回显一次，请妥善转交。';
+      }
+    };
+    q('#hgNo').oninput = syncMode; q('#hgNo').onchange = syncMode; syncMode();
     mask.onclick = e => { if (e.target === mask) mask.remove(); };
-    mask.querySelector('#hgCancel').onclick = () => mask.remove();
-    mask.querySelector('#hgSave').onclick = async () => {
-      const b = {
-        empNo: mask.querySelector('#hgNo').value.trim(),
-        name: mask.querySelector('#hgName').value.trim(),
-        phone: mask.querySelector('#hgPhone').value.trim(),
-        password: mask.querySelector('#hgPw').value,
-      };
-      if (!b.empNo || !b.name || !b.password) return toast('工号、姓名、密码均为必填', false);
+    q('#hgCancel').onclick = () => mask.remove();
+    q('#hgSave').onclick = async () => {
+      const body = { empNo: q('#hgNo').value.trim(), name: q('#hgName').value.trim(), phone: q('#hgPhone').value.trim(), password: q('#hgPw').value };
+      if (!body.empNo) return toast('工号必填', false);
       try {
-        const r2 = await must(post(`/hq/stores/${id}/manager`, b));
-        toast(r2.created ? `✅ 店长账号 ${r2.empNo} 已创建` : `✅ 店长账号 ${r2.empNo} 已重置`);
+        const r2 = await must(post(`/hq/stores/${id}/manager`, body));
+        if (r2.created && r2.genPw) {
+          await confirmBox({ title: '✅ 店长账号已创建', okText: '我已记录',
+            html: `工号 <b>${esc(r2.empNo)}</b> 已创建并绑定店长角色。<br>初始密码：<b style="font-family:Consolas,monospace;font-size:14px">${esc(r2.genPw)}</b><br>
+              <span class="muted">请私密转交本人，并提醒首次登录后到「我的 → 修改密码」自行更换。</span>` });
+        } else if (r2.created) {
+          toast(`✅ 店长账号 ${r2.empNo} 已创建`);
+        } else {
+          toast(`✅ 店长账号 ${r2.empNo} 已更新${body.password ? '（含密码重置）' : '（密码保持不变）'}`);
+        }
         mask.remove();
         await load();
       } catch { /* must 已提示 */ }

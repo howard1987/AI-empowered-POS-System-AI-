@@ -1,4 +1,4 @@
-import { get, post, must, esc, dt, toast } from '../api.js';
+import { get, post, must, esc, dt, toast, del } from '../api.js';
 import { confirmBox, promptBox } from '../ui.js';
 import { openCollectPad } from './signpad.js';
 
@@ -189,7 +189,7 @@ export async function render(view) {
         <td>${e.empNo !== 'ADMIN' ? `<button class="btn sm ${e.status === '在职' ? 'warn' : 'pri'}" data-t="${e.id}" data-s="${e.status === '在职' ? '停用' : '在职'}">${e.status === '在职' ? '停用' : '复职'}</button>` : ''}
             <button class="btn sm" data-rp="${e.id}" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}">重置密码</button>
             <button class="btn sm" data-ac="${e.id}" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}" data-set="${e.authCodeSet ? 1 : 0}" title="店长授权码：收银员改价/打折时的现场授权凭据（独立于登录密码，4~8 位数字）">授权码</button>
-            <button class="btn sm" data-sig="${e.id}" data-nm="${esc(e.name)}" title="采集该员工电子签名，存入签字样本（对账/单据确认可自动带出）">✍️ 签名</button></td>
+            <button class="btn sm" data-sig="${e.id}" data-nm="${esc(e.name)}" title="采集该员工电子签名，存入签字样本（对账/单据确认可自动带出）">✍️ 签名</button>${e.status !== '在职' && e.empNo !== 'ADMIN' ? `<button class="btn sm" data-del="${e.id}" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}" style="color:#c0392b;border-color:#e6b0aa" title="仅可删除无任何业务记录的停用账号；有流水的员工请保留停用">删除</button>` : ''}</td>
       </tr>`).join('')}</tbody></table>` : '<div class="empty">暂无员工</div>'}`;
     // V4.14.9 批量停用/复职
     const syncBat = () => {
@@ -259,6 +259,15 @@ export async function render(view) {
         html: `即将重置 <b>${esc(b.dataset.nm)}（${esc(b.dataset.no)}）</b> 的<b>登录密码</b>，重置后原密码立即失效。<br><span class="muted">请通知员工尽快在移动端「我的 → 修改密码」改掉临时密码。</span>` });
       if (!ok) return;
       await must(post(`/auth/employees/${b.dataset.rp}/reset-password`, { newPassword: pwd }), '密码已重置');
+    });
+    // VQA（需求3）：删除已停用员工——服务端强校验「停用 + 无任何业务记录」，有记录会拒绝并提示保留停用
+    view.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+      const ok = await confirmBox({ title: '删除停用员工', okText: '确认删除', okClass: 'danger',
+        html: `将物理删除 <b>${esc(b.dataset.nm)}（${esc(b.dataset.no)}）</b>。<br>
+          <span class="muted">仅「停用」且无任何业务记录（订单/班次/审批/日志等）的账号可删除；有记录会被服务端拒绝并提示保留停用，以满足审计追溯。</span>` });
+      if (!ok) return;
+      await must(del(`/auth/employees/${b.dataset.del}`), `已删除员工 ${b.dataset.no}`);
+      await emps();
     });
     // V4.25.7 店长授权码（收银员改价/打折现场授权；统一在后台员工管理设置/修改/清除）
     view.querySelectorAll('[data-ac]').forEach(b => b.onclick = async () => {
