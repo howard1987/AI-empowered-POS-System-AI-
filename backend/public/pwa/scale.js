@@ -22,9 +22,16 @@ const Scale = {
     try {
       const st = unwrap(await call('GET', '/settings'));
       const list = Array.isArray(st) ? st : (st.items || []);
+      // VQA-D3：scale.enabled 自动读重总开关（此前死键；关=秤连接入口禁用，手输/扫秤码不受影响）
+      const en = list.find(s => s.setting_key === 'scale.enabled');
+      if (en && (en.value === false || String(en.value).replace(/"/g, '') === 'false' || String(en.value) === '关'))
+        throw new Error('电子秤自动读重已在后台关闭（通用设置 → 电子秤自动读重），可手动输入重量或扫秤码');
       const row = list.find(s => s.setting_key === 'scale.baud');
       if (row && Number(row.value) > 0) baud = Number(row.value);
-    } catch { /* 离线用默认 9600 */ }
+    } catch (e) {
+      if (e && /后台关闭/.test(String(e.message || ''))) throw e; // 总开关拒绝直传
+      /* 离线用默认 9600 */
+    }
     this.port = await navigator.serial.requestPort();
     await this.port.open({ baudRate: baud, dataBits: 8, stopBits: 1, parity: 'none' });
     this._closed = false;

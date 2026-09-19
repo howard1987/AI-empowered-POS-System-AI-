@@ -3,6 +3,7 @@ import { pool, q, q1, tx, cx, audit, r2 } from '../common/db';
 import { SettingsService } from './settings.module';
 import { notifyStaff } from '../common/notices';
 import { sumHardCostMonthly } from './dividend.module';
+import { cleanupAuditLogs, runOpeningNotice } from './d3.care'; // VQA-D3：审计保留期清理 + 开业日广播
 
 /**
  * 销售侧定时任务（V4.14.2，零依赖 setInterval，模式同 marketing/aibrain）：
@@ -22,17 +23,32 @@ export class SalesJobsService implements OnModuleInit, OnModuleDestroy {
   private timer: any;
   private lastCloseRun = '';   // 关单去重（每分钟一次即可，按 minute key）
   private lastSettleRun = '';  // 日结去重（按日期）
+  private lastCareRun = '';      // VQA-D3 每日治理去重（按日期）
 
   onModuleInit() {
     this.timer = setInterval(() => {
       this.runCloseOrders().catch(e => { console.error('[关单job] 执行失败:', e.message); try { notifyStaff(1, 'job_error', `[关单job] ${String(e.message).slice(0, 140)}`, {}, 'sys.settings', 'job:关单').catch(() => { }); } catch { } });
       this.maybeDailySettle().catch(e => { console.error('[日结job] 执行失败:', e.message); try { notifyStaff(1, 'job_error', `[日结job] ${String(e.message).slice(0, 140)}`, {}, 'sys.settings', 'job:日结').catch(() => { }); } catch { } });
+      this.maybeDailyCare().catch(e => { console.error('[D3治理job] 执行失败:', e.message); try { notifyStaff(1, 'job_error', `[D3治理job] ${String(e.message).slice(0, 140)}`, {}, 'sys.settings', 'job:D3治理').catch(() => { }); } catch { } });
     }, 60_000);
     // VQA-P0 补偿：服务（重）启动即补齐昨日快照——00:05 窗口错过也能追平，settle_date 唯一幂等
     this.maybeDailySettle(true).catch(e => { console.error('[日结job] 启动补偿失败:', e.message); try { notifyStaff(1, 'job_error', `[日结job/启动补偿] ${String(e.message).slice(0, 140)}`, {}, 'sys.settings', 'job:日结boot').catch(() => { }); } catch { } });
-    console.log('[销售jobs] 关单补偿 + 日结快照 定时器已启动（每分钟检查）');
+    // VQA-D3：开业日广播补跑（batch_key 幂等，重复启动不重发）
+    runOpeningNotice().catch(e => { console.error('[开业广播] 失败:', e.message); });
+    console.log('[销售jobs] 关单补偿 + 日结快照 + D3治理 定时器已启动（每分钟检查）');
   }
   onModuleDestroy() { clearInterval(this.timer); }
+
+  /** ③ VQA-D3 每日治理窗口（00:10 后首个 tick）：审计日志超期归档清理 */
+  private async maybeDailyCare() {
+    const now = new Date();
+    if (now.getHours() !== 0 || now.getMinutes() < 10) return;
+    const dayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    if (this.lastCareRun === dayKey) return;
+    this.lastCareRun = dayKey;
+    const r = await cleanupAuditLogs();
+    if (!r.skipped && r.moved) console.log(`[D3治理] 审计日志归档清理 ${r.moved} 行`);
+  }
 
   /** ① 关单补偿 */
   private async runCloseOrders() {

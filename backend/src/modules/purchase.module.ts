@@ -260,6 +260,8 @@ class PurchaseController {
       throw new BizException(40003, 'feeTypeId 或 feeName 必填');
     }
     const direction = b.direction === '付' ? '付' : b.direction === '收' ? '收' : typeDir;
+    // VQA-D3：recon.fee_to_dividend——收取方向费用落库即打计入分红池标记（to_dividend_pool 列自 001 设计起闲置，现接通）
+    const fee2pool = direction === '收' && await this.settings.getBool('recon.fee_to_dividend', false);
     return tx(async c => {
       const d = new Date();
       const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
@@ -268,11 +270,11 @@ class PurchaseController {
       const rows = await cx(c,
         `INSERT INTO supplier_fees (store_id, fee_no, supplier_id, fee_type_id, period_start, period_end,
                                     amount, direction, to_dividend_pool, status, employee_id, remark)
-         VALUES (${curStore()},$1,$2,$3,$4,$5,$6,$7,false,'已审核',$8,$9) RETURNING *`,
-        [feeNo, sid, typeId, b.periodStart ?? null, b.periodEnd ?? null, Number(b.amount), direction, user.sub,
+         VALUES (${curStore()},$1,$2,$3,$4,$5,$6,$7,$8,'已审核',$9,$10) RETURNING *`,
+        [feeNo, sid, typeId, b.periodStart ?? null, b.periodEnd ?? null, Number(b.amount), direction, fee2pool, user.sub,
          b.remark ? `人工录入：${b.remark}` : '人工录入']);
       await audit(curStore(), user.sub, '财务', 'fee.create', 'supplier_fee', Number(rows[0].id),
-        { feeNo, supplierId: sid, feeTypeId: typeId, amount: Number(b.amount), direction });
+        { feeNo, supplierId: sid, feeTypeId: typeId, amount: Number(b.amount), direction, toPool: fee2pool });
       return rows[0];
     });
   }
@@ -1522,11 +1524,12 @@ class PurchaseController {
         const feeNo = `FY-${m.replace('-', '')}-${String(seq[0].n).padStart(3, '0')}`;
         const t = await cx(c, `SELECT direction FROM supplier_fee_types WHERE id=$1`, [ag.fee_type_id]);
         const agDir = ag.direction ? String(ag.direction) : (t[0]?.direction ?? '收');   // V4.13.9 协议行级方向优先
+        const ag2pool = agDir === '收' && await this.settings.getBool('recon.fee_to_dividend', false); // VQA-D3 费用入分红池
         const fee = await cx(c,
           `INSERT INTO supplier_fees (store_id, fee_no, supplier_id, fee_type_id, agreement_id, period_start, period_end,
                                       amount, direction, to_dividend_pool, status, employee_id, remark)
-           VALUES (${curStore()},$1,$2,$3,$4,$5,$6,$7,$8,false,'已审核',$9,$10) RETURNING id`,
-          [feeNo, supplierId, ag.fee_type_id, ag.id, start, end, ag.amount, agDir, userId,
+           VALUES (${curStore()},$1,$2,$3,$4,$5,$6,$7,$8,$9,'已审核',$10,$11) RETURNING id`,
+          [feeNo, supplierId, ag.fee_type_id, ag.id, start, end, ag.amount, agDir, ag2pool, userId,
            `协议自动补齐（${ag.cycle}期 ${start}~${end}）`]);
         created.push({ feeId: fee[0].id, feeNo, amount: Number(ag.amount), direction: agDir });
       }
@@ -1921,11 +1924,19 @@ class PurchaseController {
   @RequirePerms('recon.settle.audit')
   @Post('settlements/:id/audit')
   async auditSettlement(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
+    const flowOn = await this.settings.getBool('recon.settle_pay_flow', false);
     return tx(async c => {
       const ss = await cx(c, `SELECT * FROM settlements WHERE id=$1 FOR UPDATE`, [id]);
       const st = ss[0];
       if (!st) throw new BizException(40404, '结算单不存在', 404);
       if (st.status !== '待审核') throw new BizException(50021, `结算单状态(${st.status})不允许审核`);
+      // VQA-D3：recon.settle_pay_flow 开=审核→「付款中」（枚举 5.6.5 原生态），由 paySettlement 完成终结；关=旧口径审核即终结
+      if (flowOn) {
+        await cx(c, `UPDATE settlements SET status='付款中', audited_by=$2 WHERE id=$1`, [id, user.sub]);
+        await audit(curStore(), user.sub, '财务', 'settlement.audit', 'settlement', id,
+          { no: st.settle_no, amount: Number(st.amount), step: '付款中（已审核，待出纳付款）' });
+        return { id, status: '付款中' };
+      }
 
       const docDate = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
       await writeLedger(c, 1, st.supplier_id, 'settlement', st.id, st.settle_no, 0, Number(st.amount), docDate);
@@ -1941,6 +1952,29 @@ class PurchaseController {
       await audit(curStore(), user.sub, '财务', 'settlement.audit', 'settlement', id,
         { no: st.settle_no, amount: Number(st.amount) });
       return { id, status: '已审核', paidAt: new Date().toISOString() };
+    });
+  }
+
+  /** VQA-D3 recon.settle_pay_flow=开 的第二步：确认已付款 → 完成原审核终结动作 */
+  @RequirePerms('recon.settle.audit')
+  @Post('settlements/:id/pay')
+  async paySettlement(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
+    return tx(async c => {
+      const ss = await cx(c, `SELECT * FROM settlements WHERE id=$1 FOR UPDATE`, [id]);
+      const st = ss[0];
+      if (!st) throw new BizException(40404, '结算单不存在', 404);
+      if (st.status !== '付款中') throw new BizException(50021, `结算单状态(${st.status})不允许确认付款（仅「付款中」可操作）`);
+      const docDate = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+      await writeLedger(c, 1, st.supplier_id, 'settlement', st.id, st.settle_no, 0, Number(st.amount), docDate);
+      await cx(c, `UPDATE settlements SET status='已付款', paid_at=now() WHERE id=$1`, [id]);
+      await cx(c, `UPDATE reconciliations SET status='已结算' WHERE id=$1`, [st.recon_id]);
+      await cx(c,
+        `UPDATE cost_variance_sheets
+            SET settled_in_recon_id=$2, status='carried', closed_at=now()
+          WHERE action='pickup' AND carry_to_recon_id=$1 AND settled_in_recon_id IS NULL`,
+        [st.recon_id, st.recon_id]);
+      await audit(curStore(), user.sub, '财务', 'settlement.pay', 'settlement', id, { no: st.settle_no, amount: Number(st.amount) });
+      return { id, status: '已付款', paidAt: new Date().toISOString() };
     });
   }
 

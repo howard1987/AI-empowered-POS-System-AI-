@@ -714,16 +714,22 @@ export async function render(view) {
         <td class="muted" style="font-family:var(--mono)">${esc(r.recon_no || '')}</td>
         <td class="num">${money(r.amount ?? r.settle_amount ?? 0)}</td>
         <td class="muted">${esc(r.pay_mode || '—')}</td>
-        <td><span class="tag ${r.status === '已审核' || r.status === '已付款' ? 'g' : 'y'}">${esc(r.status)}</span></td>
+        <td><span class="tag ${r.status === '已审核' || r.status === '已付款' ? 'g' : r.status === '付款中' ? 'b' : 'y'}">${esc(r.status)}</span></td>
         <td>${dt(r.created_at || r.createdAt)}</td>
         <td style="white-space:nowrap">
           ${r.status === '待审核' ? `<button class="btn sm pri" data-s="${r.id}">✓ 审核</button>` : ''}
+          ${r.status === '付款中' ? `<button class="btn sm pri" data-sp="${r.id}">💰 确认已付款</button>` : ''}
           <button class="btn sm" data-sprint="${r.id}">🖨 打印</button>
         </td>
       </tr>`).join('')}</tbody></table>${pg.bar}` : '<div class="empty">暂无结算单（对账确认后生成；0元应付可直结算）</div>';
     bindPager(view.querySelector('#sList'), p => { stPage = p; loadSettlements(); });
     view.querySelectorAll('[data-s]').forEach(b => b.onclick = async () => {
       await must(post(`/purchase/settlements/${b.dataset.s}/audit`), '结算单审核完成');
+      await loadSettlements(); await lists();
+    });
+    // VQA-D3：recon.settle_pay_flow 开启后审核→待付款，付款动作在此完成终结
+    view.querySelectorAll('[data-sp]').forEach(b => b.onclick = async () => {
+      await must(post(`/purchase/settlements/${b.dataset.sp}/pay`), '已确认付款：结算终结（往来账/对账核销已落）');
       await loadSettlements(); await lists();
     });
     view.querySelectorAll('[data-sprint]').forEach(b => b.onclick = () => printSettlement(b.dataset.sprint));

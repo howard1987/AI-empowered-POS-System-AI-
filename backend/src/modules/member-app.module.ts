@@ -34,6 +34,24 @@ function memberToken(m: any): string {
     JWT_SECRET, { expiresIn: '12h' });
 }
 
+/** VQA-D3：H5/会员端设置键服务端门控（此前一批 h5 与 member.h5 系列键登记了但代码零消费，本轮接线；
+ *  前端只做展示控制，服务端逐入口判闸——防绕过页面直连接口） */
+async function sGet(k: string): Promise<any> {
+  const r = await q1<{ value: any }>(`SELECT value FROM system_settings WHERE setting_key=$1`, [k]);
+  return r?.value;
+}
+async function sOn(k: string, dflt = true): Promise<boolean> {
+  const v = await sGet(k);
+  if (v === null || v === undefined || v === '') return dflt;
+  const s = String(v).replace(/"/g, '').trim();
+  return !(s === 'false' || s === 'off' || s === '关' || s === '0');
+}
+async function sNum(k: string, d: number): Promise<number> {
+  const v = Number(String(await sGet(k) ?? '').replace(/^"|"$/g, ''));
+  return Number.isFinite(v) && v > 0 ? v : d;
+}
+const PORTAL_OFF = new BizException(40301, '会员门户维护中（该开关可在后台「营销与线上 → 会员 H5 门户开关」调整），请联系门店员工协助', 403);
+
 @Controller('m')
 @Public()               // 绕过全局员工 AuthGuard（会员端独立鉴权）
 @UseGuards(MemberGuard) // 会员端守卫：校验 kind='member' 的 JWT；@MemberPublic 端点免登录
@@ -46,11 +64,30 @@ export class MemberAppController {
     return { label: await passwordPolicyLabel() };
   }
 
+  /** VQA-D3：会员端门控配置（公开只读，UI 据此收敛入口；服务端各接口另有逐口判闸，此处仅为展示层） */
+  @MemberPublic()
+  @Get('config')
+  async getGateConfig() {
+    const portal = await sOn('member.h5.enabled');
+    return {
+      portalEnabled: portal,
+      allowRegister: portal && await sOn('member.h5.allow_register'),
+      passwordLogin: portal && await sOn('member.login.password_h5'),
+      mallEnabled: await sOn('h5.enabled'),
+      directPay: await sOn('h5.direct_pay', false),
+      scanGoLimit: await sNum('h5.scan_go_limit', 0),
+    };
+  }
+
   /** 注册（H5 渠道建档，自动生成卡号与账户） */
   @MemberPublic()
   @Post('register')
   async register(@Body() b: { phone?: string; password?: string; name?: string; privacyAgreed?: boolean;
                               birthday?: string; securityQuestions?: { question: string; answer: string }[] }) {
+    // VQA-D3：门户总闸 + 自助注册开关（member.h5.enabled / member.h5.allow_register 此前为死键，现服务端消费）
+    if (!(await sOn('member.h5.enabled'))) throw PORTAL_OFF;
+    if (!(await sOn('member.h5.allow_register')))
+      throw new BizException(40301, '暂未开放自助注册，请到门店由员工建档（后台「营销与线上 → H5 允许自助注册」可开启）', 403);
     if (!b.phone || !/^1\d{10}$/.test(b.phone)) throw new BizException(40003, '手机号格式错误');
     await checkPasswordPolicy(String(b.password || '')); // V4.14.6 R8：与员工端同策略
     if (!b.privacyAgreed) throw new BizException(40003, '需勾选隐私协议（个保法）');
@@ -108,6 +145,10 @@ export class MemberAppController {
   @MemberPublic()
   @Post('login')
   async login(@Body() b: { phone?: string; password?: string }) {
+    // VQA-D3：门户总闸 + 密码登录开关（member.login.password_h5：关=暂停密码登录；验证码登录待短信服务商接入后另行开启）
+    if (!(await sOn('member.h5.enabled'))) throw PORTAL_OFF;
+    if (!(await sOn('member.login.password_h5')))
+      throw new BizException(40301, '密码登录暂停中，请联系门店员工协助（或在后台重新开启）', 403);
     if (!b.phone || !b.password) throw new BizException(40003, '手机号与密码必填');
     const m = await q1<any>(
       `SELECT m.*, a.balance FROM members m JOIN member_accounts a ON a.member_id=m.id
@@ -135,6 +176,7 @@ export class MemberAppController {
   @MemberPublic()
   @Post('password/init')
   async initPassword(@Body() b: { phone?: string; idCardTail?: string; password?: string }, @Req() req: any) {
+    if (!(await sOn('member.h5.enabled'))) throw PORTAL_OFF; // VQA-D3 门户总闸
     if (!b.phone || !b.idCardTail || !b.password) throw new BizException(40003, '手机号/身份证后6位/新密码必填');
     if (b.password.length < 6) throw new BizException(42014, '密码至少 6 位');
     const phone = String(b.phone).trim();
@@ -323,6 +365,7 @@ export class MemberAppController {
   @MemberPublic()
   @Post('password/forgot')
   async forgotPassword(@Body() b: { phone?: string; answers?: { question: string; answer: string }[]; newPassword?: string }) {
+    if (!(await sOn('member.h5.enabled'))) throw PORTAL_OFF; // VQA-D3 门户总闸
     if (!b.phone || !b.newPassword) throw new BizException(40003, '手机号与新密码必填');
     await checkPasswordPolicy(String(b.newPassword || '')); // V4.14.6 R8
     const m = await q1<any>(`SELECT * FROM members WHERE phone=$1 AND deleted_at IS NULL`, [b.phone]);
@@ -425,6 +468,8 @@ export class MemberAppController {
   /** 商城分类（含可售商品数；称重/未上架不计） */
   @Get('mall/categories')
   async mallCategories(@CurrentMember() u: MemberUser) {
+    if (!(await sOn('h5.enabled'))) // VQA-D3：h5.enabled=线上商城总闸（此前死键，现服务端消费）
+      throw new BizException(40301, '线上商城暂停营业（后台「H5移动端开关」），到店购物不受影响', 403);
     const rows = await q(
       `SELECT c.id, c.name, c.parent_id, c.sort_no,
               (SELECT count(*) FROM products p WHERE p.category_id=c.id AND p.deleted_at IS NULL
@@ -465,6 +510,8 @@ export class MemberAppController {
     @Query('cat') cat?: string, @Query('kw') kw?: string,
     @Query('page') page = '1', @Query('size') size = '20',
   ) {
+    if (!(await sOn('h5.enabled'))) // VQA-D3：商城总闸（与分类一致）
+      throw new BizException(40301, '线上商城暂停营业（后台「H5移动端开关」），到店购物不受影响', 403);
     const pn = Math.max(1, Number(page) || 1);
     const sz = Math.min(50, Math.max(1, Number(size) || 20));
     const k = (kw || '').trim();
@@ -560,6 +607,7 @@ export class MemberAppController {
     addressId?: number;
     remark?: string;
     couponId?: number;
+    payChannel?: string;        // VQA-D3：微信/支付宝直付（h5.direct_pay 开时有效；缺省=余额付清）
     lat?: number; lng?: number; // 配送围栏校验（radius_km>0 时按门店坐标校验）
   }) {
     if (!Array.isArray(b.items) || !b.items.length) throw new BizException(40003, '购物清单不能为空');
@@ -572,6 +620,12 @@ export class MemberAppController {
     const spv = String(await svc.getVal('sales.scanpay_enabled') ?? '开').replace(/"/g, '');
     if (spv === '关' || spv === 'false' || spv === 'off')
       throw new BizException(40003, '扫码购暂未开放，请到门店收银台结算');
+    // VQA-D3：h5.enabled 线上下单总闸 + direct_pay 直付通道（模拟记账；关=仅余额付清）
+    if (!(await sOn('h5.enabled')))
+      throw new BizException(40301, '线上下单暂停营业（后台「H5移动端开关」），请到门店收银台结算', 403);
+    const payChannel = ['微信', '支付宝'].includes(String(b.payChannel || '')) ? String(b.payChannel) : '余额';
+    if (payChannel !== '余额' && !(await sOn('h5.direct_pay', false)))
+      throw new BizException(40003, '微信/支付宝直付未开启（后台「营销与线上 → H5微信支付宝直付」），请使用会员余额支付');
     if (mode !== '自提' && await svc.getNum('delivery.serving', 1) !== 1) {
       throw new BizException(40003, '门店暂未开通在线配送，请选择到店自提');
     }
@@ -611,13 +665,17 @@ export class MemberAppController {
       const freeAbove = await svc.getNum('delivery.free_above', 50);
       deliveryFee = estGoods >= freeAbove ? 0 : fee;
     }
+    // VQA-D3：h5.scan_go_limit 单笔限额（此前死键，现服务端消费；0=不设限）
+    const goLimit = await sNum('h5.scan_go_limit', 0);
+    if (goLimit > 0 && estGoods + deliveryFee > goLimit)
+      throw new BizException(40003, `本单合计 ${(estGoods + deliveryFee).toFixed(2)} 元，超扫码购单笔限额 ${goLimit} 元——请店员在收银台协助下单`);
     // 复用收银核心结账（余额自动付清）
     const res = await new SalesService().checkout(this.agentUser(u), {
       items: b.items.map(i => ({ productId: Number(i.productId), qty: Number(i.qty) })),
       memberId: Number(u.sub),
       channel: mode === '外卖' ? '外卖' : '小程序',
       selfCheckout: true,
-      payments: [{ channel: '余额', auto: true, amount: 0 }],
+      payments: [{ channel: payChannel, auto: true, amount: 0 }],
       couponId: b.couponId ? Number(b.couponId) : undefined,
       deliveryFee,
     });

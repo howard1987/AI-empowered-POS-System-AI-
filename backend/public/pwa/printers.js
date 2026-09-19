@@ -336,10 +336,20 @@
     return true;
   }
   /** USB 自动重连：本源已授权设备刷新后仍可静默恢复（getDevices），自动打印无需再次手势 */
+  let _reconGate = null; // VQA-D3：ops.printer_reconnect 全局总闸缓存（读失败按「开」处理）
+  async function reconnectGloballyAllowed() {
+    if (_reconGate != null) return _reconGate;
+    try {
+      const v = (await call('GET', '/settings/key/' + encodeURIComponent('ops.printer_reconnect')))?.value;
+      _reconGate = !(v === false || String(v).replace(/"/g, '') === 'false' || String(v) === '关');
+    } catch { _reconGate = true; }
+    return _reconGate;
+  }
   async function usbResume() {
     if (usbDev && usbDev.opened) return true;
     usbDev = null;
     if (!navigator.usb || !localStorage.getItem(USB_KEY)) return false;
+    if (!(await reconnectGloballyAllowed())) return false; // VQA-D3：后台关了自动重连
     try {
       const key = localStorage.getItem(USB_KEY);
       const dev = (await navigator.usb.getDevices()).find(d => (d.vendorId + ':' + d.productId) === key);

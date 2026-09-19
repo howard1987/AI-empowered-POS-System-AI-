@@ -590,8 +590,8 @@ export class SalesService {
       let chainCardNo: string | null = null;
       for (const pay of (dto.payments ?? [])) {
         let amountCents = toCents(pay.amount);
-        // 扫码购自助结算（6.4.2）：余额通道自动按应收付清（会员余额支付）
-        if (pay.auto && pay.channel === '余额') {
+        // 扫码购自助结算（6.4.2）：auto 通道自动按应收付清（余额/微信/支付宝直付 VQA-D3 泛化）
+        if (pay.auto) {
           amountCents = payableCents - paidCents;
           if (!(amountCents > 0)) continue;
         }

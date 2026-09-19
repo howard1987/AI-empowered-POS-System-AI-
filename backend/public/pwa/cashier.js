@@ -336,6 +336,10 @@ window.CashierShell = (function () {
   let idleTimer = 0;
   const lastScan = { id: 0, t: 0 };
   let quickIds = null;
+  let quickMax = 8;               // VQA-D3：pos.cashier.quick_count 快捷格上限/默认数（8~12）
+  let productVoiceOn = true;      // VQA-D3：voice.product.enabled 加购商品名播报子开关（tts 总开关之下）
+  let hbTimeoutSec = 10;          // VQA-D3：pos.heartbeat_timeout 服务器不可达判阈（秒）
+  let serverDown = false, hbDownSince = 0, hbTimer = 0;
   let quickEdit = false;
   let payInFlight = false;
   // V4.21.0 P16 批2：快捷键映射（pos.cashier.hotkey_map 可自定义）/ 客显推送 / 堂食台位
@@ -471,6 +475,14 @@ window.CashierShell = (function () {
       lockTimeoutMin = num(get('pos.cashier.lock_timeout'), 15);
       // V4.22.0：卡片数改本机设置（LC.gridCols 优先），后台 pos.cashier.grid_cols 仅作新机初始默认
       gridCols = Math.min(8, Math.max(4, num(LC.gridCols || get('pos.cashier.grid_cols'), 5) || 5));
+      // VQA-D3：pos.cashier.quick_count 快捷格上限（8~12；本机 LC 覆盖同 gridCols 惯例）
+      quickMax = Math.min(12, Math.max(4, num(LC.quickCount || get('pos.cashier.quick_count'), 8) || 8));
+      try {
+        const pv = await call('GET', '/settings/key/' + encodeURIComponent('voice.product.enabled')).then(r => r?.value).catch(() => null);
+        productVoiceOn = pv == null || pv === true || String(pv).replace(/"/g, '') === 'true' || String(pv) === '1' || String(pv) === '开';
+        const hb = await call('GET', '/settings/key/' + encodeURIComponent('pos.heartbeat_timeout')).then(r => r?.value).catch(() => null);
+        hbTimeoutSec = Math.max(5, num(hb, 10) || 10);
+      } catch { /* 读不到按默认（开/10秒） */ }
       const hk = get('pos.cashier.hotkeys'); hotkeysOn = hk == null || hk === true || String(hk) === 'true' || String(hk) === '1';
       // V4.21.0 P16 批2：快捷键映射 + 客显推送开关
       try {
@@ -650,7 +662,7 @@ window.CashierShell = (function () {
     if (!neg) toast(`已加车：${p.name}`);
     // V4.18.5 加车即报价；V4.25.7：只播「名称+价格」——库存信息留给「问价」（老板反馈加车报库存太吵）
     try {
-      if (ttsOn && window.PwaTTS && src !== 'combo') {
+      if (ttsOn && productVoiceOn && window.PwaTTS && src !== 'combo') { // VQA-D3：voice.product.enabled 子开关
         const price = member && Number(p.memberPrice) > 0 ? Number(p.memberPrice) : Number(p.sellPrice) || 0;
         window.PwaTTS.say(`${p.name}，${price}元`, { rate: 1.08 });
       }
@@ -1005,7 +1017,7 @@ window.CashierShell = (function () {
       const id = Number(b.dataset.q);
       quickIds = quickIds || [];
       const i = quickIds.indexOf(id);
-      if (i >= 0) quickIds.splice(i, 1); else { if (quickIds.length >= 12) { toast('快捷格最多 12 格'); return; } quickIds.push(id); }
+      if (i >= 0) quickIds.splice(i, 1); else { if (quickIds.length >= quickMax) { toast('快捷格最多 ' + quickMax + ' 格（后台「设备管理 → 快捷格数量」可调 8~12）'); return; } quickIds.push(id); }
       localStorage.setItem('pwa_cashier_quick', JSON.stringify(quickIds));
       renderGrid(); renderQuick();
     });
@@ -1017,9 +1029,9 @@ window.CashierShell = (function () {
     const box = $('#csQuick'); if (!box) return;
     if (!quickIds) {
       quickIds = JSON.parse(localStorage.getItem('pwa_cashier_quick') || 'null');
-      if (!Array.isArray(quickIds)) quickIds = (Pricebook.items || []).slice(0, 8).map(p => Number(p.id));
+      if (!Array.isArray(quickIds)) quickIds = (Pricebook.items || []).slice(0, quickMax).map(p => Number(p.id));
     }
-    const list = quickIds.map(id => (Pricebook.items || []).find(p => Number(p.id) === id)).filter(Boolean);
+    const list = quickIds.slice(0, quickMax).map(id => (Pricebook.items || []).find(p => Number(p.id) === id)).filter(Boolean); // VQA-D3：quick_count 上限
     box.innerHTML = list.length ? list.map(p => `
       <div class="cs-qitem" data-id="${p.id}"><div class="cs-qn">${esc(String(p.name).replace(/\s+/g, ''))}</div>
       <div class="cs-qp">¥${money(member && Number(p.memberPrice) > 0 ? p.memberPrice : p.sellPrice)}</div></div>`).join('')
@@ -3622,9 +3634,48 @@ window.CashierShell = (function () {
     const el = $('#csStaged');
     if (el) { const q = queueList(); el.textContent = `待补传 ${q.length} 笔`; }
     const ob = $('#csOffline');
-    if (ob) ob.style.display = navigator.onLine ? 'none' : 'flex';
-    stockOnline = navigator.onLine;
+    const netOk = navigator.onLine && !serverDown;
+    if (ob) {
+      ob.style.display = netOk ? 'none' : 'flex';
+      const b = ob.querySelector('b');
+      if (b) b.textContent = serverDown && navigator.onLine ? '服务器不可达（应急收银）' : '离线收银模式';
+    }
+    stockOnline = netOk;
   }
+  /** VQA-D3：pos.heartbeat_timeout——收银端与服务器断联超过该时长弹窗引导应急收银。
+   *  专治「WiFi 已连但路由器断/服务挂」：navigator.onLine 在此场景恒真，只有主动 ping 能发现 */
+  async function hbProbe() {
+    if (!active) { hbDownSince = 0; serverDown = false; return; }
+    let ok = false;
+    try {
+      ok = await Promise.race([
+        call('GET', '/health').then(() => true).catch(() => false),
+        new Promise(r => setTimeout(() => r(false), 4000)),
+      ]);
+    } catch { ok = false; }
+    if (ok) {
+      if (serverDown) { serverDown = false; toast('服务器恢复：可正常收银，暂存单将自动补传'); flushQueue().catch(() => { }); }
+      hbDownSince = 0;
+    } else {
+      if (!hbDownSince) hbDownSince = Date.now();
+      else if (!serverDown && Date.now() - hbDownSince >= hbTimeoutSec * 1000) {
+        serverDown = true;
+        try {
+          const m = document.createElement('div'); m.className = 'modal';
+          m.innerHTML = `<div class="sheet"><h3>⚠️ 服务器不可达</h3>
+            <div class="hint">已连店内网络，但连续 ${hbTimeoutSec} 秒无法连接收银服务器（常见原因：路由器断、服务未运行、网线松）。
+            现金收款可先走「应急收银」：本单记账 + 自动暂存，恢复后补传；电子通道（扫码/券/余额）需服务器在线。</div>
+            <button class="btn ok" id="csHbOk" style="width:100%;margin-top:10px">知道了，先按应急处理</button>
+            <button class="cs-link" id="csHbRetry" style="width:100%;margin-top:8px;background:none;border:0;color:var(--ink-3);font-size:12px;cursor:pointer">立即重试连接</button></div>`;
+          document.body.appendChild(m);
+          m.querySelector('#csHbOk').onclick = () => m.remove();
+          m.querySelector('#csHbRetry').onclick = () => { m.remove(); hbDownSince = 0; hbProbe(); };
+        } catch { toast('服务器不可达：现金单可暂存补传（应急收银）'); }
+      }
+    }
+    refreshStagedBadge();
+  }
+  setInterval(hbProbe, 5000); // 5s 一探测，阈值判定用 hbTimeoutSec（阈值到→弹窗一次，恢复→自动收起）
   window.addEventListener('online', () => { if (active) { refreshStagedBadge(); flushQueue(); toast('网络恢复：暂存单自动补传'); } });
   window.addEventListener('offline', () => { if (active) { refreshStagedBadge(); toast('网络断开：进入离线收银模式（现金记账）'); } });
   window.addEventListener('resize', () => { if (active) applyCompact(); });   // V4.22.0：视口变化重判紧凑模式

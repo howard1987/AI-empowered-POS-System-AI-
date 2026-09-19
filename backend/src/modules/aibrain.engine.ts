@@ -8,7 +8,7 @@
 import { q, q1, r2, tx, cx, audit, seqLock } from '../common/db';
 import { BizException } from '../common/http';
 import { getWeather, factorsOf } from './weather.service';
-import { PRODUCT_VISIBLE } from '../common/sql';   // V5.0.0 商品可售可见性（连锁：门店只看已下发）
+import { PRODUCT_VISIBLE, COST_REF } from '../common/sql';   // V5.0.0 商品可售可见性（连锁：门店只看已下发）；VQA-D3 预算成本口径复用 COST_REF
 
 const SQL_ORDER_DONE = `status IN ('已完成','部分退款')`;
 const fmtD = (v: any): string => {
@@ -21,6 +21,14 @@ export class AibrainEngine {
   private static async setting(key: string, fb: any = null): Promise<any> {
     const r = await q1<{ value: any }>(`SELECT value FROM system_settings WHERE setting_key=$1`, [key]);
     return r ? r.value : fb;
+  }
+
+  /** VQA-D3：布尔设置（开/true/1 视为开；缺失回退默认） */
+  static async isOn(key: string, dflt = true): Promise<boolean> {
+    const v = await this.setting(key);
+    if (v === null || v === undefined || v === '') return dflt;
+    const s = String(v).replace(/"/g, '').trim();
+    return !(s === 'false' || s === 'off' || s === '关' || s === '0');
   }
 
   /** 当天该域是否已有一批「待处理」建议（当日去重，避免重复堆积） */
@@ -105,13 +113,26 @@ export class AibrainEngine {
         bizRefType = 'purchase_order';
         bizRefId = Number(po[0].id);
         rollbackJson = { poId: bizRefId, poNo };
+        // VQA-D3：po.suggest_budget 预算控制——开启时把「预计采购成本」快照写入单据 budget_amount（001 设计列，此前闲置）
+        let budgetNote = '';
+        if (await AibrainEngine.isOn('po.suggest_budget', false)) {
+          let estCost = 0;
+          for (const it of items) {
+            const qn = Number(it.actualQty ?? it.suggestQty ?? 0);
+            if (!(qn > 0)) continue;
+            const pc = await cx(c, `SELECT COALESCE(${COST_REF('p')}, p.sell_price * 0.8) AS cost FROM products p WHERE p.id=$1`, [Number(it.productId)]);
+            estCost += Number(pc[0]?.cost ?? 0) * qn;
+          }
+          await cx(c, `UPDATE purchase_orders SET budget_amount=$2 WHERE id=$1`, [bizRefId, r2(estCost)]);
+          budgetNote = `；预计采购成本 ¥${r2(estCost)}（预算口径=成本价快照，无成本档案按售价8折估）`;
+        }
         for (const it of items) {
           await cx(c,
             `INSERT INTO purchase_order_items (po_id, product_id, order_qty, price, suggest_factor)
              SELECT $1,$2,$3,p.sell_price,jsonb_build_object('suggestId',$4::int) FROM products p WHERE p.id=$2`,
             [bizRefId, Number(it.productId), Number(it.actualQty ?? it.suggestQty ?? 0), s.id]);
         }
-        execNote = `已生成采购单 ${poNo}（${items.length} 项 / ${totalQty} 件）`;
+        execNote = `已生成采购单 ${poNo}（${items.length} 项 / ${totalQty} 件）` + budgetNote;
       } else if (s.domain === '定价') {
         const items: any[] = ov?.items ?? s.payload?.items ?? [];
         let changed = 0; const skip: string[] = []; const rollbackItems: any[] = [];
@@ -1056,6 +1077,9 @@ export class AibrainEngine {
 
   /* ═══ V4.16.1 天气因素备货（P10）：雨天客流↓·高温冷饮↑·骤冷速冻火锅↑ → 分品类增量建议 ═══ */
   static async weatherStock(storeId: number): Promise<{ count: number; days?: any[]; categories?: any[]; note?: string }> {
+    // VQA-D3：ai.weather.auto_factor 自动备货建议门控（此前死键；ai.weather.enabled 只管数据源，本键管出不出建议）
+    if (!(await AibrainEngine.isOn('ai.weather.auto_factor')))
+      return { count: 0, note: '天气自动备货建议已在后台关闭（AI赋能 → 天气自动备货建议）' };
     // 当日去重：同规则已有待处理建议则不重复生成（与节假日备货共用「备货」域，按 rule 区分）
     const dup = await q1(`SELECT 1 FROM ai_suggestions
       WHERE store_id=$1 AND domain='备货' AND payload->>'rule'='天气因素备货'

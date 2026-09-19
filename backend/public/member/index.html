@@ -161,6 +161,9 @@ const MB = { token: localStorage.getItem('mb_token') || '', me: null };
 /* V4.14.6 R8：密码强度策略文案（公开端点，注册/设密/找回/改密页动态提示，与员工端同策略） */
 MB.policyLabel = localStorage.getItem('mb_policy') || '';
 loadPolicy();
+/* VQA-D3：后台开关门控（/m/config 公开只读；服务端各接口逐口判闸，本对象只驱动入口展示） */
+const MCFG = { portalEnabled: true, allowRegister: true, passwordLogin: true, mallEnabled: true, directPay: false, scanGoLimit: 0 };
+(async () => { try { const c = await api('/config'); if (c && typeof c === 'object') Object.assign(MCFG, c); } catch { /* 拉不到按默认（可用），服务端仍会拒 */ } })();
 async function loadPolicy() {
   try {
     const r = await api('/password-policy');
@@ -254,8 +257,12 @@ function authShell(mode) {
     ? `<div class="row between" style="margin-top:10px">
          <button class="btn sm" onclick="nav('#init')">首次设密</button>
          <button class="btn sm" onclick="nav('#forgot')">忘记密码</button>
-         <button class="btn sm" onclick="nav('#register')">注册会员</button></div>`
+         ${MCFG.allowRegister ? '<button class="btn sm" onclick="nav(\'#register\')">注册会员</button>' : ''}</div>` /* VQA-D3：自助注册开关 */
     : `<div style="margin-top:10px;text-align:center"><button class="btn sm" onclick="nav('#login')">返回登录</button></div>`;
+  const gateNote = mode === 'login' ? [
+    !MCFG.portalEnabled ? '<div class="banner" style="margin-bottom:10px">⚠️ 会员门户维护中，暂无法登录——请联系门店员工协助</div>' : '',
+    MCFG.portalEnabled && !MCFG.passwordLogin ? '<div class="banner" style="margin-bottom:10px">ℹ️ 密码登录暂停中，可到门店由员工协助</div>' : '',
+  ].join('') : '';
   return `<div class="page" style="padding-top:6vh">
     <div style="text-align:center;margin-bottom:20px">
       <div style="font-size:44px">🛒</div>
@@ -263,7 +270,7 @@ function authShell(mode) {
       <div class="muted small" style="margin-top:4px">${map.sub}</div></div>
     <div class="card">
       <h3>${map.tt}</h3>
-      <div id="f_${mode}"></div>${links}
+      ${gateNote}<div id="f_${mode}"></div>${links}
     </div>
     <div class="muted small" style="text-align:center;line-height:1.7">会员余额每日参与分红（不可提现·有封顶）<br>门店现场消费请出示会员卡号或手机号</div>
   </div>`;
@@ -628,6 +635,7 @@ async function viewMall(cat) {
           <button class="btn sm pri" ${p.stock <= 0 ? 'disabled' : ''} data-add='${esc(JSON.stringify(p))}'>＋ 加购</button></div></div>
     </div>`).join('');
   const inner = `
+    ${MCFG.mallEnabled ? '' : '<div class="banner">🈲 线上商城暂停营业（后台「H5移动端开关」已关闭），到店购物不受影响</div>'}
     ${Number(settings.serving) === 1 ? `<div class="banner">🚚 支持在线配送：满 ${money(settings.freeAbove)} 免配送费（否则 ${money(settings.fee)}）；也可到店自提</div>` : '<div class="banner">🏪 门店暂未开通在线配送，下单请选到店自提</div>'}
     <div class="row" style="margin-bottom:10px">
       <input id="mallKw" placeholder="搜索商城商品" value="${esc(mallState.kw)}" style="flex:1;border:1px solid var(--line-2);border-radius:999px;padding:10px 14px">
@@ -670,24 +678,35 @@ function viewCart() {
 async function checkoutSheet() {
   const [addrs, settings] = await Promise.all([api('/addresses'), api('/mall/settings')]);
   const canDelivery = Number(settings.serving) === 1;
+  // VQA-D3：h5.direct_pay 开=可选微信/支付宝（模拟通道记账，真通道需备案域名+商户号）；限额提示与后端同源
+  const payBlock = MCFG.directPay ? `<div class="fld"><label>支付方式</label>
+      <div class="tabs" style="margin:0">
+        <button class="on" data-pay="余额">💰 会员余额</button><button data-pay="微信">微信支付</button><button data-pay="支付宝">支付宝</button></div></div>` : '';
   const mask = document.createElement('div');
   mask.className = 'mask';
   mask.innerHTML = `<div class="sheet">
     <h3>🧾 确认订单（${cart.count} 件 · ${money(cart.total)}）</h3>
+    ${MCFG.scanGoLimit > 0 ? `<div class="banner">单笔限额 ¥${MCFG.scanGoLimit}，超出请到店由店员协助结算</div>` : ''}
     <div class="fld"><label>取货方式</label>
       <div class="tabs" style="margin:0">
         <button class="on" data-mode="自提">🏪 到店自提</button>
         ${canDelivery ? '<button data-mode="配送">🚚 配送到家</button>' : ''}</div></div>
+    ${payBlock}
     <div id="ckAddr" style="display:none">
       <div class="fld"><label>收货地址（满 ${money(settings.freeAbove)} 免配送费，否则 +${money(settings.fee)}）</label>
         <div id="ckAddrList"></div>
         <button class="btn sm" style="margin-top:6px" onclick="nav('#address-form');this.closest('.mask').remove()">＋ 新增地址</button></div></div>
     <div class="fld"><label>备注（选填）</label><input id="ckRemark" placeholder="如：晚上 7 点后送"></div>
-    <button class="btn pri block" id="ckGo">提交订单（余额自动付清）</button>
+    <button class="btn pri block" id="ckGo">提交订单${MCFG.directPay ? '' : '（余额自动付清）'}</button>
     <button class="btn block" style="margin-top:8px" id="ckCancel">再想想</button>
   </div>`;
   document.body.appendChild(mask);
-  let mode = '自提', addressId = (addrs.items || []).find(a => a.is_default)?.id || null;
+  let mode = '自提', addressId = (addrs.items || []).find(a => a.is_default)?.id || null, payChannel = '余额';
+  $$('[data-pay]', mask).forEach(b => b.onclick = () => {
+    payChannel = b.dataset.pay;
+    $$('[data-pay]', mask).forEach(x => x.classList.toggle('on', x === b));
+    $('#ckGo', mask).textContent = `提交订单（${payChannel === '余额' ? '余额自动付清' : payChannel + '支付'}）`;
+  });
   const renderAddr = () => {
     $('#ckAddrList', mask).innerHTML = (addrs.items || []).map(a => `
       <label class="row" style="padding:8px;border:1px solid ${addressId === a.id ? 'var(--pri-2)' : 'var(--line)'};border-radius:var(--r);margin-bottom:6px;cursor:pointer">
@@ -709,6 +728,7 @@ async function checkoutSheet() {
       const r = await api('/orders', { method: 'POST', body: {
         items: cart.list.map(x => ({ productId: x.id, qty: x.qty })),
         pickupMode: mode, addressId: mode === '自提' ? undefined : addressId,
+        payChannel: payChannel === '余额' ? undefined : payChannel, // VQA-D3：微信/支付宝直付（模拟记账）
         remark: $('#ckRemark', mask).value.trim() || undefined } });
       cart.clear(); mask.remove();
       $('#app').innerHTML = shellWrap('cart', `

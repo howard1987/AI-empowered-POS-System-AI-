@@ -52,7 +52,8 @@ export interface DailyProfit {
   hardCost: number;    // 硬消耗日摊
   net: number;         // 净利 = 毛利 − 硬消耗
   days: number;        // 当月天数（日摊分母）
-  source: string;      // daily_settlement / sales_live / hq_sales_live
+  source: string;      // daily_settlement / sales_live / hq_sales_live（VQA-D3 含 +fee 后缀）
+  feeIncome?: number;  // VQA-D3 recon.fee_to_dividend：当日计入分红池的收取方向费用收入
 }
 
 /**
@@ -63,6 +64,15 @@ export interface DailyProfit {
 export async function resolveDailyProfit(settleDate: string): Promise<DailyProfit> {
   const { chainEnabled } = await import('../common/scope');
   const chain = await chainEnabled();
+  // VQA-D3：recon.fee_to_dividend——开启时当日「收取方向」费用单（已审核+入池标记）并入分红净利口径
+  const fp = await q1<{ value: any }>(`SELECT value FROM system_settings WHERE setting_key='recon.fee_to_dividend'`);
+  const feeOn = (() => { const s = String(fp?.value ?? '').replace(/"/g, ''); return s === 'true' || s === '开' || s === '1'; })();
+  const fee = feeOn
+    ? Number((await q1<{ v: any }>(`SELECT COALESCE(SUM(f.amount),0) AS v FROM supplier_fees f
+         LEFT JOIN supplier_fee_types t ON t.id=f.fee_type_id
+        WHERE f.to_dividend_pool AND COALESCE(f.direction,t.direction)='收'
+          AND f.status='已审核' AND f.created_at::date=$1::date`, [settleDate]))?.v ?? 0)
+    : 0;
   if (!chain) {
     const st = await q1<any>(
       `SELECT profit_total, hard_cost_daily FROM daily_settlement WHERE settle_date=$1::date ORDER BY store_id LIMIT 1`,
@@ -70,7 +80,8 @@ export async function resolveDailyProfit(settleDate: string): Promise<DailyProfi
     if (st) {
       const hard = Number(st.hard_cost_daily ?? 0);
       return { date: settleDate, gross: Number(st.profit_total), hardCost: r2(hard),
-               net: r2(Number(st.profit_total) - hard), days: daysInMonth(settleDate), source: 'daily_settlement' };
+               net: r2(Number(st.profit_total) - hard + fee), days: daysInMonth(settleDate),
+               feeIncome: fee, source: fee ? 'daily_settlement+fee' : 'daily_settlement' };
     }
   }
   const g = await q1<any>(
@@ -80,8 +91,8 @@ export async function resolveDailyProfit(settleDate: string): Promise<DailyProfi
   const monthly = await sumHardCostMonthly();
   const days = daysInMonth(settleDate);
   const hard = r2(monthly / days);
-  return { date: settleDate, gross: r2(gross), hardCost: hard, net: r2(gross - hard), days,
-           source: chain ? 'hq_sales_live' : 'sales_live' };
+  return { date: settleDate, gross: r2(gross), hardCost: hard, net: r2(gross - hard + fee), days,
+           feeIncome: fee, source: (chain ? 'hq_sales_live' : 'sales_live') + (fee ? '+fee' : '') };
 }
 class DividendEngine {
   private settings = new SettingsService();
