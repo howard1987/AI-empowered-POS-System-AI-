@@ -219,8 +219,8 @@ export class AiOcrController {
     if (!writable.length) throw new BizException(50010, '全部明细被低价保护拦截（可在识别结果中勾选强制通过）');
     return tx(async c => {
       const cx = (sql: string, p: any[] = []) => c.query(sql, p).then((x: any) => x.rows);
-      const seq = await cx(`SELECT count(*)+1 AS n FROM inbound_orders WHERE inbound_no LIKE $1`, [`RK-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-%`]);
-      const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const seq = await cx(`SELECT count(*)+1 AS n FROM inbound_orders WHERE inbound_no LIKE $1`, [`RK-${new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '')}-%`]);
+      const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '');
       const no = `RK-${today}-${String(seq[0].n).padStart(3, '0')}`;
       const ord = await cx(
          `INSERT INTO inbound_orders (store_id, inbound_no, supplier_id, status, employee_id, remark)

@@ -1,5 +1,5 @@
 import { Module, Controller, Get, Post, Put, Body, Param, Query, ParseIntPipe } from '@nestjs/common';
-import { q, q1, tx, cx, r2, r3, r4, audit } from '../common/db';
+import { q, q1, tx, cx, r2, r3, r4, audit, seqLock } from '../common/db';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { saveBase64Image } from './sign';
@@ -468,6 +468,7 @@ class BigCustomerController {
       // 单号 + 主单
       const d = new Date();
       const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+      await seqLock(c, 'sales_orders', 'order_no', `TD-${ymd}-%`);
       const seq = await cx(c, `SELECT count(*)+1 AS n FROM sales_orders WHERE order_no LIKE $1`, [`TD-${ymd}-%`]);
       const orderNo = `TD-${ymd}-${String(seq[0].n).padStart(4, '0')}`;
       const order = await cx(c,

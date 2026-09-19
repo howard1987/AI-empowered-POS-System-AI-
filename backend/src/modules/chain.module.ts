@@ -16,7 +16,7 @@
 import { Module, Controller, Get, Post, Put, Body, Param, Query } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
-import { q, q1, tx, cx, audit } from '../common/db';
+import { q, q1, tx, cx, audit, seqLock } from '../common/db';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { storeFilter, assertStoreAllowed, chainEnabled, resetChainCache, hqStoreId } from '../common/scope';
@@ -1492,6 +1492,7 @@ class BcPriceRequestController {
       if (dup) throw new BizException(40003, '该客户此商品已有待审批的价申请，请勿重复提交');
       const d = new Date();
       const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+      await seqLock(c, 'bc_price_requests', 'req_no', `SQ-${ymd}-%`);
       const seq = (await c.query(`SELECT count(*)+1 AS n FROM bc_price_requests WHERE req_no LIKE $1`, [`SQ-${ymd}-%`])).rows[0];
       const reqNo = `SQ-${ymd}-${String(seq.n).padStart(4, '0')}`;
       const ins = (await c.query(
@@ -1637,6 +1638,7 @@ class HqReconController {
     return tx(async c => {
       const d = new Date();
       const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+      await seqLock(c, 'hq_recon_settlements', 'settle_no', `HX-${ymd}-%`);
       const seq = (await c.query(`SELECT count(*)+1 AS n FROM hq_recon_settlements WHERE settle_no LIKE $1`, [`HX-${ymd}-%`])).rows[0];
       const settleNo = `HX-${ymd}-${String(seq.n).padStart(4, '0')}`;
       const ins = (await c.query(

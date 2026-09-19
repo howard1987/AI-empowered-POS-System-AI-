@@ -45,7 +45,7 @@ async function bootstrap() {
         const u = new URL(origin);
         const host = u.hostname;
         const loopback = /^(localhost|127\.0\.0\.1|\[::1\]|::1)$/i.test(host);
-        const privateIp = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
+        const privateIp = /^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})$/.test(host);
         const mdns = /\.local$/i.test(host);
         const sameHost = !!req.headers.host && (host + (u.port ? ':' + u.port : '')) === String(req.headers.host);
         ok = loopback || privateIp || mdns || sameHost;

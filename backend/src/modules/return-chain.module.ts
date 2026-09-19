@@ -87,7 +87,7 @@ class CrossReturnService {
       amount = r2(amount);
       if (amount <= 0) throw new BizException(40003, '退货金额计算为 0');
 
-      const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const ymd = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '');
       const seq = await seqLock(c, 'sale_refunds', 'refund_no', `TK-${ymd}-%`);
       const refundNo = `TK-${ymd}-${String(seq[0].n).padStart(4, '0')}`;
       const ins = await cx(c,

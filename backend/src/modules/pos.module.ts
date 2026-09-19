@@ -601,7 +601,7 @@ class PosController {
   @RequirePerms('pos.sell')
   @Get('daily')
   async daily(@Query('date') date: string, @CurrentUser() user: AuthUser) {
-    const d = /^\d{4}-\d{2}-\d{2}$/.test(date || '') ? date : new Date(Date.now() - 8 * 3600e3).toISOString().slice(0, 10);
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(date || '') ? date : new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     const chans = await q<any>(
       `SELECT p.channel, COUNT(DISTINCT o.id)::int AS orders, COALESCE(SUM(p.amount),0)::float8 AS amount
          FROM sale_payments p JOIN sales_orders o ON o.id = p.order_id

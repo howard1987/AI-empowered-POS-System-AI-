@@ -251,7 +251,7 @@ export async function autoDividendRun(date?: string): Promise<any> {
   if (id && id.role === 'store') return { skipped: '门店节点不自动计提（分红只在总部）' };
   const autoEnabled = await autoEngine.svcBool('dividend.auto.enabled', true);
   if (!autoEnabled) return { skipped: 'dividend.auto.enabled=false（自动分红已关闭）' };
-  const bizDate = (date || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  const bizDate = (date || new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)).slice(0, 10);
   const settle = addDaysStr(bizDate, -1);
   const exist = await q1(`SELECT id FROM dividend_periods WHERE biz_date=$1`, [bizDate]);
   if (exist) return { skipped: `该日期(${bizDate})分红已计提（幂等拦截）`, date: bizDate };
@@ -310,7 +310,7 @@ class DividendController {
     if (await chainEnabled() && !(await isHqStore(user.storeId))) {
       throw new BizException(40302, '分红计提只在总部执行（门店节点禁止，防止同一会员重复计提）', 403);
     }
-    const date = b.date || new Date().toISOString().slice(0, 10);
+    const date = b.date || new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     const settleDate = addDaysStr(date, -1);
     const prof = await resolveDailyProfit(settleDate);
     let np: number;
@@ -337,7 +337,7 @@ class DividendController {
   /** P3-2：每日利润明细（毛利/硬消耗日摊/净利/分红开关），供分红页与对账展示 */
   @Get('profit-breakdown')
   async breakdown(@Query('date') date?: string) {
-    const d = (date || addDaysStr(new Date().toISOString().slice(0, 10), -1)).slice(0, 10);
+    const d = (date || addDaysStr(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10), -1)).slice(0, 10);
     const prof = await resolveDailyProfit(d);
     const autoEnabled = await this.engine.svcBool('dividend.auto.enabled', true);
     const last = await q1<any>(`SELECT * FROM dividend_periods ORDER BY biz_date DESC LIMIT 1`);

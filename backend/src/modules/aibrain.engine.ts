@@ -5,7 +5,7 @@
  *   - 建议一律"辅助决策"：下单权/定价权/发送权在人（5.2.8 边界）；否决也是训练信号（reject_reason 留痕）
  *   - 去重：同域每天只产出一批「待处理」建议（当日循环），执行/否决后次日可再生成
  */
-import { q, q1, r2, tx, cx, audit } from '../common/db';
+import { q, q1, r2, tx, cx, audit, seqLock } from '../common/db';
 import { BizException } from '../common/http';
 import { getWeather, factorsOf } from './weather.service';
 import { PRODUCT_VISIBLE } from '../common/sql';   // V5.0.0 商品可售可见性（连锁：门店只看已下发）
@@ -93,6 +93,7 @@ export class AibrainEngine {
         const sup = await cx(c, `SELECT id FROM suppliers WHERE store_id=$1 ORDER BY id LIMIT 1`, [storeId]);
         if (!sup.length) throw new BizException(40404, '尚未建档供应商，请先在采购模块添加', 404);
         const day = fmtD(new Date()).replace(/-/g, '');
+        await seqLock(c, 'purchase_orders', 'po_no', `CG-${day}-%`);
         const seq = await cx(c, `SELECT count(*)+1 AS n FROM purchase_orders WHERE po_no LIKE $1`, [`CG-${day}-%`]);
         const poNo = `CG-${day}-${String(Number(seq[0].n)).padStart(3, '0')}`;
         const totalQty = r2(items.reduce((a, i) => a + Number(i.actualQty ?? i.suggestQty ?? 0), 0));
@@ -1320,7 +1321,7 @@ export class AibrainEngine {
       hot: bucket(r => isHot(r) && !isR(r)), cold: bucket(r => isCold(r) && !isR(r) && !isHot(r)),
       clear: bucket(r => !isR(r) && !isHot(r) && !isCold(r)),
     };
-    const cal = { ...buckets, days: valid.length, calibratedAt: new Date().toISOString().slice(0, 10) };
+    const cal = { ...buckets, days: valid.length, calibratedAt: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10) };
     await q(
       `INSERT INTO system_settings (group_name, setting_key, display_name, value, default_value, value_type, remark)
        VALUES ('AI赋能','ai.weather.calibration','天气客流系数回归校准',$1::jsonb,'null'::jsonb,'json','本地天气-销量历史对齐回归结果：rain/snow/hot/cold/clear 各桶销售比率；≥30 天自动校准')

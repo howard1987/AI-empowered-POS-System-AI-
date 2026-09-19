@@ -50,14 +50,28 @@ function toast(msg) {
 // ── Tab 路由 + V4.9.8 子页面返回栈 ──
 let CURRENT_TAB = 'overview';
 const stack = [];                       // [{title, fn, args}]
-const TAB_TITLE = { overview: '👔 老板看板', approve: '✅ 审批', reports: '📈 报表', settings: '⚙️ 设置' };
-const TAB_FN = { overview: () => View.overview, approve: () => View.approve, reports: () => View.reports, settings: () => View.settings };
+const TAB_TITLE = { overview: '👔 老板看板', approve: '✅ 审批', reports: '📈 报表', settings: '⚙️ 设置', notices: '🔔 消息' };
+const TAB_FN = { overview: () => View.overview, approve: () => View.approve, reports: () => View.reports, settings: () => View.settings, notices: () => View.notices };
 
 function openTab(tabId) {
   CURRENT_TAB = tabId;
   stack.length = 0;
   document.querySelectorAll('#tabbar .tab').forEach(b => b.classList.toggle('on', b.dataset.tab === tabId));
   renderStack();
+}
+// ── VQA 体检项：老板端消息中心（缺纸/秤离线/对账差异等服务端告警的触达出口）──
+async function refreshNoticesBadge() {
+  try {
+    if (!TOKEN) return;
+    const d = await call('GET', '/finance/notices/unread');
+    setNoticesBadge(Number(d.n || d.count || 0));
+  } catch { /* 未登录/无权限静默 */ }
+}
+function setNoticesBadge(n) {
+  const b = $('#tabNoticesN');
+  if (!b) return;
+  b.textContent = String(n);
+  b.classList.toggle('hidden', !n);
 }
 /** 进子页面（报表明细 / 单据详情）：压栈 + 压 history，手机返回键可直接回退 */
 function push(title, fn, args) {
@@ -1272,3 +1286,24 @@ View.sysReset = async function (v) {
     catch { logout(); }
   }
 })();
+
+// ── VQA 体检项：老板端消息中心视图（View 声明后挂载）──
+View.notices = async function (v) {
+  const items = await call('GET', '/finance/notices');
+  const list = Array.isArray(items) ? items : (items.items || items.list || []);
+  if (!list.length) { v.innerHTML = '<div class="empty">暂无消息；设备缺纸、秤离线、对账差异等告警会出现在这里</div>'; return; }
+  v.innerHTML = list.map(n => {
+    const unread = !(n.read_by || []).length;
+    const when = String(n.created_at || '').replace('T', ' ').slice(5, 16);
+    return `<div class="card" style="margin-bottom:10px;${unread ? 'border-left:3px solid var(--red);' : 'opacity:.62;'}">
+      <div style="font-weight:700;font-size:13.5px">${esc(n.text || n.title || n.kind)}${unread ? ' <span style="color:var(--red);font-size:11px">未读</span>' : ''}</div>
+      <div style="color:var(--ink-2);font-size:11.5px;margin-top:2px">${esc(when)} · ${esc(n.kind || '')}
+        ${unread ? `<button class="btn ghost" style="width:auto;padding:3px 12px;font-size:11.5px;float:right" data-nid="${n.id}">标记已读</button>` : ''}
+      </div></div>`;
+  }).join('');
+  v.querySelectorAll('[data-nid]').forEach(btn => btn.onclick = async () => {
+    try { await call('POST', `/finance/notices/${btn.dataset.nid}/read`, {}); renderTab(); refreshNoticesBadge(); }
+    catch (e) { toast(e.message); }
+  });
+};
+setInterval(refreshNoticesBadge, 60000);

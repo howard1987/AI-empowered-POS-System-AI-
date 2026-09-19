@@ -316,10 +316,10 @@ if (-not $SkipSmoke) {
   $pass    = $false
   $outLog  = $null
   $errLog  = $null
-  $attempt = 0
 
-  while ($true) {
-  $attempt++
+  # VQA：冒烟抽成函数——失败可整体重跑（PS 的 for+catch+continue 在部分版本行为不可靠）
+  function Invoke-Smoke {
+  $pass = $false
   try {
     New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
     $env:POS_DATA_DIR = $dataDir
@@ -349,7 +349,16 @@ if (-not $SkipSmoke) {
     if ($health -notmatch 'ok') { throw "/health 返回异常: $health" }
     Ok '/health 正常'
 
-    $loginRaw = HttpPostJson "http://127.0.0.1:$port/auth/login" '{"empNo":"ADMIN","password":"admin123"}'
+    # VQA：V4.24.0 起新库走引导制——先探测是否已有管理员，再决定登录或引导创建（HttpGet 对 2xx 不抛，避免 401 异常绕过逻辑）
+    $bootRaw = HttpGet "http://127.0.0.1:$port/auth/bootstrap"
+    $boot = $bootRaw | ConvertFrom-Json
+    $loginPwd = 'admin123'
+    if ($boot.data -and -not $boot.data.hasAdmin) {
+      $createRaw = HttpPostJson "http://127.0.0.1:$port/auth/bootstrap-admin" '{"empNo":"ADMIN","name":"超级管理员","password":"Adm@2026"}'
+      Ok '已通过引导创建首个管理员（ADMIN）'
+      $loginPwd = 'Adm@2026'
+    }
+    $loginRaw = HttpPostJson "http://127.0.0.1:$port/auth/login" ('{"empNo":"ADMIN","password":"' + $loginPwd + '"}')
     $login = $loginRaw | ConvertFrom-Json
     $token = $null
     if ($login.data -and $login.data.token) { $token = $login.data.token }
@@ -368,7 +377,7 @@ if (-not $SkipSmoke) {
     $pass = $true
   } catch {
     $script:SmokeError = $_.Exception.Message
-    Warn ("冒烟第 $attempt 次未通过：" + (($_.Exception.Message) -split "`n")[0])
+    Warn ("冒烟未通过：" + (($_.Exception.Message) -split "`n")[0])
     if ($errLog -and (Test-Path $errLog)) {
       $t1 = (Get-Content $errLog -Tail 20 -ErrorAction SilentlyContinue) -join "`n"
       if ($t1) { Info "stderr: $t1" }
@@ -377,10 +386,6 @@ if (-not $SkipSmoke) {
       $t2 = (Get-Content $outLog -Tail 20 -ErrorAction SilentlyContinue) -join "`n"
       if ($t2) { Info "stdout: $t2" }
     }
-    if ($attempt -ge 2) { break }
-    Warn '偶发失败常见于杀软首扫拦截 initdb——5 秒后自动重试一次'
-    Start-Sleep 5
-    continue
   } finally {
     foreach ($n in @('POS_DATA_DIR', 'PORT', 'PG_PORT', 'PG_MODE', 'JWT_SECRET')) {
       [Environment]::SetEnvironmentVariable($n, $null)
@@ -403,8 +408,16 @@ if (-not $SkipSmoke) {
     DelDir $dataDir
     $global:LASTEXITCODE = 0
   }
-  } # while 重试
-  if ($pass) { Ok '冒烟全部通过' }
+    return $pass
+  } # function Invoke-Smoke
+
+  if (Invoke-Smoke) { Ok '冒烟全部通过' }
+  else {
+    Warn '偶发失败常见于杀软首扫拦截 initdb——8 秒后自动重试一次'
+    Start-Sleep 8
+    if (Invoke-Smoke) { Ok '冒烟重试通过' }
+    else { Warn "冒烟仍未通过（已重试）：$script:SmokeError" }
+  }
 } else {
   Step 9 '冒烟已跳过（-SkipSmoke）'
 }

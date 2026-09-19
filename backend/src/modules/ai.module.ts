@@ -10,7 +10,7 @@
 import { Body, Controller, Get, Module, Param, Post, Query } from '@nestjs/common';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { BizException } from '../common/http';
-import { q, q1, r2, tx, audit } from '../common/db';
+import { q, q1, r2, tx, audit, seqLock } from '../common/db';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join, basename } from 'path';
 import { runDetection, clearSessionCache } from './ai.detect';
@@ -454,7 +454,8 @@ export class AiController {
     const scope = productIds.length ? { ...(b.scope || {}), productIds } : b.scope;
     const targetCount = productIds.length ? productIds.length : (b.targetCount ?? null);
     return tx(async c => {
-      const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const ymd = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '');
+      await seqLock(c, 'ai_tasks', 'task_no', `${prefix}${ymd}-%`);
       const seq = await cx(c, `SELECT count(*)+1 AS n FROM ai_tasks WHERE task_no LIKE $1`, [`${prefix}${ymd}-%`]);
       const taskNo = `${prefix}${ymd}-${String(seq[0].n).padStart(4, '0')}`;
       const rows = await cx(c,

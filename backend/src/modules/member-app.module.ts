@@ -1,7 +1,7 @@
 import { Module, Controller, Post, Get, Put, Delete, Body, Param, Query, ParseIntPipe, UseGuards, Req } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
-import { q, q1, tx, cx, audit } from '../common/db';
+import { q, q1, tx, cx, audit, seqLock } from '../common/db';
 import { curStore, curEmp } from '../common/context';
 import { allow, failAndLock, lockedFor, clearFailures, clientIp } from '../common/ratelimit';
 import { BizException } from '../common/http';
@@ -385,6 +385,7 @@ export class MemberAppController {
     const r = await tx(async c => {
       const d = new Date();
       const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+      await seqLock(c, 'recharge_orders', 'order_no', `RC-${ymd}-%`);
       const seq = await cx(c, `SELECT count(*)+1 AS n FROM recharge_orders WHERE order_no LIKE $1`, [`RC-${ymd}-%`]);
       const orderNo = `RC-${ymd}-${String(seq[0].n).padStart(4, '0')}`;
       const rows = await cx(c,

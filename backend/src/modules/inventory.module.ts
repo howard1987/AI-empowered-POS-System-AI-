@@ -1,5 +1,5 @@
 import { Module, Controller, Get, Post, Body, Param, Query, ParseIntPipe } from '@nestjs/common';
-import { q, q1, tx, cx, r2, r3, audit } from '../common/db';
+import { q, q1, tx, cx, r2, r3, audit, seqLock } from '../common/db';
 import { curStore, curEmp } from '../common/context';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
@@ -215,6 +215,7 @@ class InventoryController {
     if (items.some(it => !(it.actualQty >= 0))) throw new BizException(40003, '实盘数量不能为负数');
 
     return tx(async c => {
+      await seqLock(c, 'inventory_counts', 'count_no', `PD-${today()}-%`);
       const seq = await cx(c, `SELECT count(*)+1 AS n FROM inventory_counts WHERE count_no LIKE $1`, [`PD-${today()}-%`]);
       const no = `PD-${today()}-${String(seq[0].n).padStart(3, '0')}`;
       const rows = await cx(c,
@@ -337,6 +338,7 @@ class InventoryController {
       throw new BizException(40003, '按供应商盘点请选择供应商');
 
     return tx(async c => {
+      await seqLock(c, 'stocktake_tasks', 'task_no', `ST-${today()}-%`);
       const seq = await cx(c, `SELECT count(*)+1 AS n FROM stocktake_tasks WHERE task_no LIKE $1`, [`ST-${today()}-%`]);
       const no = `ST-${today()}-${String(seq[0].n).padStart(3, '0')}`;
       let catNames = '';
@@ -460,6 +462,7 @@ class InventoryController {
       if (t.count_id) throw new BizException(50016, '该任务已生成盘点单');
 
       // 生成盘点单（账实分离：先建单再差异生效）
+      await seqLock(c, 'inventory_counts', 'count_no', `PD-${today()}-%`);
       const seq = await cx(c, `SELECT count(*)+1 AS n FROM inventory_counts WHERE count_no LIKE $1`, [`PD-${today()}-%`]);
       const no = `PD-${today()}-${String(seq[0].n).padStart(3, '0')}`;
       const scope = t.scope_type === '全仓' ? '全仓' : `任务盘点·${t.category_names || t.scope_type}`;
@@ -520,6 +523,7 @@ class InventoryController {
     const reason = ['损耗', '过期', '破损', '质量问题'].includes(b.reasonType || '') ? b.reasonType! : '损耗';
 
     return tx(async c => {
+      await seqLock(c, 'loss_records', 'loss_no', `BS-${today()}-%`);
       const seq = await cx(c, `SELECT count(*)+1 AS n FROM loss_records WHERE loss_no LIKE $1`, [`BS-${today()}-%`]);
       const no = `BS-${today()}-${String(seq[0].n).padStart(3, '0')}`;
       const rows = await cx(c,
@@ -725,6 +729,7 @@ class InventoryController {
     const bizScope = !crossStoreMove ? 'store2store' : (fromIsHq ? 'hq2store' : 'store2store');
 
     return tx(async c => {
+      await seqLock(c, 'stock_transfers', 'transfer_no', `DB-${today()}-%`);
       const seq = await cx(c, `SELECT count(*)+1 AS n FROM stock_transfers WHERE transfer_no LIKE $1`, [`DB-${today()}-%`]);
       const no = `DB-${today()}-${String(seq[0].n).padStart(3, '0')}`;
       const rows = await cx(c,
@@ -939,6 +944,7 @@ class InventoryController {
       // V21-②：缺口自动生成采购需求（集采口径，草稿态由总部采购确认下单）
       let demandPoId: number | null = null;
       if (shortfalls.length) {
+        await seqLock(c, 'purchase_orders', 'po_no', `XQ-${today()}-%`);
         const seq = await cx(c, `SELECT count(*)+1 AS n FROM purchase_orders WHERE po_no LIKE $1`, [`XQ-${today()}-%`]);
         const poNo = `XQ-${today()}-${String(seq[0].n).padStart(3, '0')}`;
         // 供应商：取源批次供应商；缺失则取该商品最近一次入库供应商；再缺省取任一在合作供应商

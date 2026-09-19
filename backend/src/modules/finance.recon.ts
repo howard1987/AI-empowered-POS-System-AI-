@@ -214,7 +214,7 @@ export class FinanceReconController {
       `SELECT count(*) AS n FROM payment_bills WHERE store_id=$1 AND channel=$2 AND external_no = ANY($3::text[])`,
       [u.storeId, channel, parsed.rows.map(r => r.externalNo)]);
     if (Number(dup?.n ?? 0) > 0) throw new BizException(40003, `该渠道已有 ${dup!.n} 行相同交易单号的账单（疑似重复导入）`);
-    const day = b.billDate || new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const day = b.billDate || new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '');
     const batchNo = `ZD-${channel === '微信' ? 'WX' : 'ZFB'}-${day}-${String(Date.now()).slice(-4)}`;
     let n = 0;
     for (const r of parsed.rows) {

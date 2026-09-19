@@ -150,8 +150,8 @@ class PurchaseController {
     if (items.length > 200) throw new BizException(40003, '变更明细过多（上限 200 行）');
     return tx(async c => {
       const cxq = (sql: string, p: any[] = []) => c.query(sql, p).then((x: any) => x.rows);
-      const seq = await seqLock(c, 'supplier_changes', 'change_no', `GYSBG-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-%`);
-      const changeNo = `GYSBG-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(seq[0].n).padStart(3, '0')}`;
+      const seq = await seqLock(c, 'supplier_changes', 'change_no', `GYSBG-${new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '')}-%`);
+      const changeNo = `GYSBG-${new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '')}-${String(seq[0].n).padStart(3, '0')}`;
       const enriched: any[] = [];
       for (const it of items) {
         const pid = Number(it.productId);
@@ -852,6 +852,7 @@ class PurchaseController {
       // 保证总部汇总库存看得见货的去向（不凭空消失），不动任何库存数字。
       if (String((ord as any).source_type ?? 'self') === 'direct') {
         const hqId = await hqStoreId();
+        await seqLock(c, 'stock_transfers', 'transfer_no', `ZS-${today()}-%`);
         const zseq = await cx(c, `SELECT count(*)+1 AS n FROM stock_transfers WHERE transfer_no LIKE $1`, [`ZS-${today()}-%`]);
         const zno = `ZS-${today()}-${String(zseq[0].n).padStart(3, '0')}`;
         const trRows = await cx(c,
@@ -1721,7 +1722,7 @@ class PurchaseController {
              VALUES ($1,'variance_pickup',$2,$3,$4,$5,$5,$6,'hq_purchase')`,
             [rid, Number(cs.id), String(cs.cvd_no), b.to, Number(cs.variance_amount),
              `上期进价差异补差 ${cs.cvd_no}`]);
-          const docDate = new Date().toISOString().slice(0, 10);
+          const docDate = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
           await writeLedger(c, 1, b.supplierId, 'fee_variance', Number(cs.id), String(cs.cvd_no),
             Number(cs.variance_amount), 0, docDate);
         }
@@ -1900,7 +1901,7 @@ class PurchaseController {
         [no, rec.supplier_id, b.reconId, rec.payable_total, zero ? '已审核' : '待审核',
          b.payMode ?? '转账', user.sub, b.remark ?? null, ...(zero ? [user.sub] : [])]);
       if (zero) {
-        const docDate = new Date().toISOString().slice(0, 10);
+        const docDate = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
         await writeLedger(c, 1, rec.supplier_id, 'settlement', st[0].id, no, 0, 0, docDate);
         await cx(c, `UPDATE reconciliations SET status='已结算' WHERE id=$1`, [b.reconId]);
       } else {
@@ -1926,7 +1927,7 @@ class PurchaseController {
       if (!st) throw new BizException(40404, '结算单不存在', 404);
       if (st.status !== '待审核') throw new BizException(50021, `结算单状态(${st.status})不允许审核`);
 
-      const docDate = new Date().toISOString().slice(0, 10);
+      const docDate = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
       await writeLedger(c, 1, st.supplier_id, 'settlement', st.id, st.settle_no, 0, Number(st.amount), docDate);
       await cx(c, `UPDATE settlements SET status='已审核', audited_by=$2, paid_at=now() WHERE id=$1`, [id, user.sub]);
       await cx(c, `UPDATE reconciliations SET status='已结算' WHERE id=$1`, [st.recon_id]);

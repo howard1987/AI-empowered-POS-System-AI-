@@ -51,7 +51,7 @@ export async function syncMemberLevel(
     if (!rows[0].level_below_since) {
       await cx(c,
         `UPDATE members SET level_below_since=$2, level_synced_at=now(), updated_at=now() WHERE id=$1`,
-        [memberId, new Date().toISOString().slice(0, 10)]);
+        [memberId, new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)]);
       return { changed: false, graceStarted: true };
     }
     const bs: any = rows[0].level_below_since;

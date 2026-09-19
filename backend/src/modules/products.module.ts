@@ -1,6 +1,6 @@
 import { Module, Controller, Get, Post, Put, Delete, Body, Param, Query, ParseIntPipe } from '@nestjs/common';
 import * as XLSX from 'xlsx';
-import { q, q1, tx, cx, audit } from '../common/db';
+import { q, q1, tx, cx, audit, seqLock } from '../common/db';
 import { curStore, curEmp } from '../common/context';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
@@ -106,7 +106,7 @@ let _lastCrawlAt = 0;
 const _crawlCount = { date: '', n: 0 };
 
 function crawlAllowed(limitCfg: any): boolean {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   if (_crawlCount.date !== today) { _crawlCount.date = today; _crawlCount.n = 0; }
   const limit = Number(limitCfg ?? 50) || 0;
   return limit > 0 && _crawlCount.n < limit;
@@ -1490,6 +1490,7 @@ class PriceChangeController {
         }
       }
       const ym = new Date().toISOString().slice(0, 7).replace('-', '');
+      await seqLock(c, 'price_changes', 'pc_no', `${prefix}-${ym}-%`);
       const seq = await c.query(`SELECT count(*)+1 AS n FROM price_changes WHERE pc_no LIKE $1`, [`${prefix}-${ym}-%`]);
       const no = `${prefix}-${ym}-${String(seq.rows[0].n).padStart(3, '0')}`;
       const head = await c.query(
@@ -1858,6 +1859,7 @@ class BundleController {
           WHERE i.bundle_id=$1 ORDER BY i.id FOR UPDATE`, [bd.id])).rows;
       if (!items.length) throw new BizException(40003, '组合明细为空，不能组装');
       const ym = new Date().toISOString().slice(0, 7).replace('-', '');
+      await seqLock(c, 'bundle_ops', 'op_no', `ZZ-${ym}-%`);
       const seq = (await c.query(`SELECT count(*)+1 AS n FROM bundle_ops WHERE op_no LIKE $1`, [`ZZ-${ym}-%`])).rows[0];
       const no = `ZZ-${ym}-${String(seq.n).padStart(3, '0')}`;
 
@@ -1908,6 +1910,7 @@ class BundleController {
       if (!items.length) throw new BizException(40003, '组合明细为空，不能拆分');
       const sumQty = items.reduce((a, it) => a + Number(it.qty), 0);
       const ym = new Date().toISOString().slice(0, 7).replace('-', '');
+      await seqLock(c, 'bundle_ops', 'op_no', `CF-${ym}-%`);
       const seq = (await c.query(`SELECT count(*)+1 AS n FROM bundle_ops WHERE op_no LIKE $1`, [`CF-${ym}-%`])).rows[0];
       const no = `CF-${ym}-${String(seq.n).padStart(3, '0')}`;
 
