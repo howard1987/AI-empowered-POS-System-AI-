@@ -274,6 +274,55 @@ async function applyUpstream(c: any, storeId: number, nodeCode: string, ch: any)
       return;
     }
 
+    /* ── V4.28.2 P0-5：进销存单据上行补齐（报损 / 盘点 / 调拨）——总部台账合并 ── */
+
+    case 'loss': {
+      // 门店报损单上行：loss_no 幂等。明细 batch_id 为门店本地批次（跨库不可复刻）→ 总部只落单头，
+      // 总额/单号权威；逐件明细随 payload 留痕（sync_changes/sync_inbox 可查）
+      const dup = await cx(c, `SELECT id FROM loss_records WHERE loss_no=$1`, [String(p.lossNo ?? '')]);
+      if (dup[0]) return;
+      await cx(c,
+        `INSERT INTO loss_records (store_id, loss_no, reason_type, total_cost, status)
+         VALUES ($1,$2,$3,$4,'已审核')`,
+        [storeId, String(p.lossNo ?? '').slice(0, 32), String(p.reasonType ?? '损耗').slice(0, 16),
+         Number(p.totalCost ?? 0)]);
+      return;
+    }
+
+    case 'stock_count': {
+      // 门店盘点单上行：count_no 幂等。明细商品按总部主档存在性过滤（门店自建品未收编则跳过该行）
+      const dup = await cx(c, `SELECT id FROM inventory_counts WHERE count_no=$1`, [String(p.countNo ?? '')]);
+      if (dup[0]) return;
+      const ins = await cx(c,
+        `INSERT INTO inventory_counts (store_id, count_no, scope, status)
+         VALUES ($1,$2,$3,'已审核') RETURNING id`,
+        [storeId, String(p.countNo ?? '').slice(0, 32), String(p.scope ?? '全仓').slice(0, 64)]);
+      const cid = Number(ins[0].id);
+      for (const it of (p.items ?? [])) {
+        const prod = await cx(c, `SELECT id FROM products WHERE id=$1`, [Number(it.productId)]);
+        if (!prod[0]) continue;
+        await cx(c,
+          `INSERT INTO inventory_count_items (count_id, product_id, book_qty, actual_qty) VALUES ($1,$2,$3,$4)`,
+          [cid, Number(it.productId), Number(it.bookQty ?? 0), Number(it.actualQty ?? 0)]);
+      }
+      return;
+    }
+
+    case 'stock_transfer': {
+      // 门店调拨单上行：transfer_no 幂等。明细 batch_id 为门店本地批次不可复刻 → 总部只落单头
+      const dup = await cx(c, `SELECT id FROM stock_transfers WHERE transfer_no=$1`, [String(p.transferNo ?? '')]);
+      if (dup[0]) return;
+      const OK_STATUS = ['待确认', '待审核', '待发货', '在途', '已入库', '驳回', '已取消'];
+      const st = OK_STATUS.includes(String(p.status)) ? String(p.status) : '在途';
+      await cx(c,
+        `INSERT INTO stock_transfers (transfer_no, from_store_id, to_store_id, status, reason, total_cost)
+         VALUES ($1,$2,$3,$4::transfer_status_t,$5,$6)`,
+        [String(p.transferNo ?? '').slice(0, 32), Number(p.fromStoreId ?? storeId) || storeId,
+         p.toStoreId ? Number(p.toStoreId) : null, st,
+         String(p.reason ?? '').slice(0, 128) || null, Number(p.totalCost ?? 0)]);
+      return;
+    }
+
     default:
       throw new Error(`暂不支持的上行实体 ${ch.entity}（P2）`);
   }
@@ -429,11 +478,16 @@ export class SyncController {
       promotions:   { sql: `SELECT * FROM promotions WHERE id > $2 ORDER BY id LIMIT $3` },
       coupons:      { sql: `SELECT * FROM coupons WHERE id > $2 ORDER BY id LIMIT $3` },
       roles:        { sql: `SELECT * FROM roles WHERE id > $2 ORDER BY id LIMIT $3` },
-      employees:    { sql: `SELECT * FROM employees WHERE id > $2 ORDER BY id LIMIT $3` },
+      // V4.28.0 安全修复（审计 F-01）：员工只下发本店人员，且剥离全部凭证哈希/令牌版本——
+      //   防止任一门店节点离线爆破店长授权码后全链提权
+      employees:    { sql: `SELECT * FROM employees WHERE id > $2 AND (store_id=$1 OR store_id IS NULL) ORDER BY id LIMIT $3`,
+                      strip: ['password_hash', 'pin_hash', 'auth_code_hash',
+                              'sec_answer1_hash', 'sec_answer2_hash', 'sec_answer3_hash', 'token_version'] },
       // 门店维数据只给本店
       store_products: { sql: `SELECT * FROM store_products WHERE id > $2 AND store_id=$1 ORDER BY id LIMIT $3` },
       prices:         { sql: `SELECT * FROM product_store_prices WHERE id > $2 AND store_id=$1 ORDER BY id LIMIT $3` },
-      settings:       { sql: `SELECT id, setting_key, value, value_type, default_value FROM system_settings WHERE id > $2 AND scope='hq' ORDER BY id LIMIT $3` },
+      // V4.28.0：secret 类设置（加密落库的密文）绝不下发节点
+      settings:       { sql: `SELECT id, setting_key, value, value_type, default_value FROM system_settings WHERE id > $2 AND scope='hq' AND value_type<>'secret' ORDER BY id LIMIT $3` },
     };
     const def = defs[type];
     if (!def) throw new BizException(40404, `未知的引导类型 ${type}`);

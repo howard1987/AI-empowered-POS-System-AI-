@@ -187,6 +187,34 @@ export class HqMemberNodeController {
       const acc = rows[0];
       if (!acc) throw new BizException(50072, `会员卡号 ${cardNo} 不存在（请先建档或核对卡号）`);
       const memberId = Number(acc.member_id);
+
+      // ── V4.28.0 安全修复（审计 F-02）：防"凭空造币" ──
+      //  ① 退款增发（refund=true）必须对得上本会员的原「连锁消费」出向流水，且金额/积分 ≤ 原消费；
+      //  ② 单节点单日"入"向（退款/回补）总额受限（hq.member.cross_daily_limit，默认 20000 元）。
+      if (refund) {
+        const orig = await cx(c,
+          `SELECT amount, points FROM member_cross_store_flows
+            WHERE member_id=$1 AND ref_no=$2 AND asset=$3 AND direction='出' AND biz_type='连锁消费'
+            ORDER BY id DESC LIMIT 1`, [memberId, orderNo, asset]);
+        if (!orig.length) throw new BizException(40301, '无对应原「连锁消费」流水，禁止退款增发（须凭真实连锁消费单号）');
+        const origC = Math.round(Number(orig[0].amount) * 100);
+        if (asset !== 'points' && amountCents > origC) {
+          throw new BizException(40301, `退款金额 ${amountCents / 100} 超过原消费金额 ${orig[0].amount}，已拦截`);
+        }
+        if (asset === 'points' && points > Number(orig[0].points || 0)) {
+          throw new BizException(40301, `回补积分 ${points} 超过原消费积分 ${orig[0].points}，已拦截`);
+        }
+        const limRow = await cx(c,
+          `SELECT COALESCE((SELECT value#>>'{}' FROM system_settings WHERE setting_key='hq.member.cross_daily_limit'),'20000') AS v`);
+        const limC = Math.round(Number(limRow[0]?.v || 20000) * 100);
+        const todaySum = await cx(c,
+          `SELECT COALESCE(SUM(amount),0) AS s FROM member_cross_store_flows
+            WHERE node_code=$1 AND direction='入' AND created_at::date=CURRENT_DATE`, [String(nodeCode)]);
+        if (asset !== 'points' && Math.round(Number(todaySum[0].s) * 100) + amountCents > limC) {
+          throw new BizException(40301, `本节点当日退款/回补累计 ${todaySum[0].s} 元已超上限（${limC / 100} 元），请联系总部核查`);
+        }
+      }
+
       let principalPart = 0, giftPart = 0, balanceAfter = 0, dir: string, bizType: string;
 
       if (asset === 'balance') {
@@ -294,8 +322,11 @@ export class HqMemberNodeController {
           `SELECT amount, principal_part, gift_part FROM balance_flows
             WHERE member_id=$1 AND ref_no=$2 AND direction='出' AND biz_type='连锁消费'
             ORDER BY id LIMIT 1`, [memberId, orderNo]);
-        const amtC = fl[0] ? Math.round(Number(fl[0].amount) * 100) : 0;
-        const principalCents = fl[0] && amtC > 0 ? Math.round(amountCents * Math.round(Number(fl[0].principal_part) * 100) / amtC) : 0;
+        // V4.28.0 安全修复（F-02）：必须存在原「连锁消费」流水且回补金额 ≤ 原消费额
+        if (!fl.length) throw new BizException(40301, '无对应原「连锁消费」流水，禁止余额回补');
+        const amtC = Math.round(Number(fl[0].amount) * 100);
+        if (amountCents > amtC) throw new BizException(40301, `回补金额 ${amountCents / 100} 超过原消费金额 ${fl[0].amount}，已拦截`);
+        const principalCents = amtC > 0 ? Math.round(amountCents * Math.round(Number(fl[0].principal_part) * 100) / amtC) : 0;
         const giftCents = amountCents - principalCents;
         const totalBalC = Math.round(Number(acc.balance) * 100) + amountCents;
         balanceAfter = totalBalC / 100;
@@ -309,6 +340,15 @@ export class HqMemberNodeController {
                   principal_balance = principal_balance + $3, gift_balance = gift_balance + $4, updated_at=now()
             WHERE member_id=$1`, [memberId, amountCents / 100, principalCents / 100, giftCents / 100]);
       } else if (asset === 'dividend') {
+        // V4.28.0：分红回补同样必须有原「连锁消费」出向流水，且 ≤ 原抵扣额
+        const origD = await cx(c,
+          `SELECT amount FROM member_cross_store_flows
+            WHERE member_id=$1 AND ref_no=$2 AND asset='dividend' AND direction='出' AND biz_type='连锁消费'
+            ORDER BY id DESC LIMIT 1`, [memberId, orderNo]);
+        if (!origD.length) throw new BizException(40301, '无对应原「连锁消费」分红流水，禁止回补');
+        if (amountCents > Math.round(Number(origD[0].amount) * 100)) {
+          throw new BizException(40301, `回补金额 ${amountCents / 100} 超过原抵扣金额 ${origD[0].amount}，已拦截`);
+        }
         const afterCents = Math.round(Number(acc.dividend_balance) * 100) + amountCents;
         balanceAfter = afterCents / 100;
         await cx(c,
@@ -399,13 +439,16 @@ export class HqMemberNodeController {
     return { ticket: out.ticket, pointsAfter: out.pointsAfter };
   }
 
-  /** 实时查档（收银台余额展示校准；key = 卡号或手机号精确匹配） */
+  /** 实时查档（收银台余额展示校准；key = 卡号或手机号精确匹配）。
+   *  V4.28.0 安全修复（F-02）：手机号脱敏下发（支持按尾号核对，不再回传完整 PII） */
   @Get('lookup')
   async lookup(@Query('key') key: string) {
     const k = String(key ?? '').trim();
     if (!k) throw new BizException(40003, '缺少查询关键字');
     const m = await q1<any>(
-      `SELECT m.id, m.card_no, m.phone, m.name, m.level_id, m.points, m.status,
+      `SELECT m.id, m.card_no,
+              CASE WHEN m.phone IS NULL OR m.phone='' THEN '' ELSE LEFT(m.phone,3)||'****'||RIGHT(m.phone,4) END AS phone,
+              m.name, m.level_id, m.points, m.status,
               m.last_active_date, m.total_consume,
               a.balance, a.principal_balance, a.gift_balance, a.dividend_balance,
               COALESCE(l.name, '普通会员') AS level_name

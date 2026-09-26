@@ -29,3 +29,14 @@ runtime-watchdog*
 # ── 二进制运行资产 ──
 *.exe
 backend/tts/piper/
+
+# ── 运行期密钥、证书与调试临时件（勿上传公共仓库）──
+backend/certs/
+backend/.runtime/
+backend/probe-admin-tmp.cjs
+backend/.playwright-cli/
+backend/.tmpcrawl/
+
+# ── Python 缓存 ──
+__pycache__/
+*.pyc

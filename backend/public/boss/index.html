@@ -74,7 +74,7 @@
   }
   header .hd-t{display:flex; align-items:center; gap:8px; font-size:17px; font-weight:700;}
   header .hd-sub{font-size:11.5px; color:#cfe6cf; margin-top:3px; line-height:1.5;}
-  #view{flex:1; overflow-y:auto; padding:12px 12px 20px;}
+  #view{flex:1; overflow-y:auto; padding:12px 12px 20px; touch-action:pan-y; position:relative; will-change:transform;}
 
   /* ── 底部 Tab ── */
   nav{
@@ -207,6 +207,26 @@
   .sheet-back{background:none; font-size:12.5px; color:var(--ink-3); padding:0 0 8px;}
   .signwrap{border:1px dashed var(--line-2); border-radius:10px; background:#fff; margin-top:8px;}
   .signwrap canvas{width:100%; height:150px; display:block; touch-action:none;}
+
+  /* ── 本月营业热力格 ── */
+  .heat-cal{margin-top:4px;}
+  .heat-head{display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;}
+  .heat-head .t{font-size:13px; font-weight:600;}
+  .heat-metric{display:flex; gap:6px;}
+  .heat-metric button{font-size:11px; padding:4px 10px; border-radius:99px; border:1px solid var(--line); background:#fff; color:var(--ink-2);}
+  .heat-metric button.on{background:var(--pri); border-color:var(--pri); color:#fff; font-weight:600;}
+  .heat-wd{display:grid; grid-template-columns:repeat(7,1fr); gap:4px; text-align:center; font-size:10.5px; color:var(--ink-3); margin-bottom:4px;}
+  .heat-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:4px;}
+  .heat-cell{aspect-ratio:1; border-radius:8px; display:flex; flex-direction:column; align-items:center; justify-content:center; font-size:12px; font-weight:600; background:#f0f0ea; color:#999;}
+  .heat-cell.other{opacity:.35;}
+  .heat-cell .sub{font-size:9px; font-weight:400; opacity:.9; margin-top:1px;}
+  .heat-cell.l1{background:#e2f3e2; color:#2e7a4e;} .heat-cell.l2{background:#b8e6b8; color:#2e7a4e;}
+  .heat-cell.l3{background:#76c976; color:#fff;} .heat-cell.l4{background:#3a9e5c; color:#fff;}
+  .heat-cell.l5{background:#20663f; color:#fff;}
+  .heat-legend{display:flex; gap:6px; justify-content:flex-end; align-items:center; margin-top:8px; font-size:10px; color:var(--ink-3);}
+  .heat-legend i{width:10px; height:10px; border-radius:3px; background:#f0f0ea;}
+  .heat-legend i.l1{background:#e2f3e2;} .heat-legend i.l2{background:#b8e6b8;} .heat-legend i.l3{background:#76c976;} .heat-legend i.l4{background:#3a9e5c;} .heat-legend i.l5{background:#20663f;}
+  .sheet-day .kv{font-size:13px;}
 </style>
 </head>
 <body>

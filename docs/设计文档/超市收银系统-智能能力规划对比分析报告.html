@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="E8w3Sa7kqqnOnjV1EdHjaW">
+<head data-page-node-id="X30dIRbETXMHWAYrXuFgqK">
+<meta charset="UTF-8" data-page-node-id="TduGnwEzRyXJoxcrE5VRL1">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="jObeqF60v7bjBAx0PITRvm">
+<title>超市收银系统 · 智能能力规划对比分析报告</title>
+<style>
+  :root {
+    --ink: #1c2330;
+    --ink-2: #4a5568;
+    --ink-3: #8a94a6;
+    --bg: #f5f6f8;
+    --paper: #ffffff;
+    --line: #e4e7ee;
+    --blue: #2563eb;
+    --blue-bg: #eff6ff;
+    --green: #16a34a;
+    --green-bg: #f0fdf4;
+    --amber: #d97706;
+    --amber-bg: #fffbeb;
+    --red: #dc2626;
+    --red-bg: #fef2f2;
+    --gray-bg: #f1f3f7;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.75;
+    padding: 32px 16px 80px;
+  }
+  .paper {
+    max-width: 960px;
+    margin: 0 auto;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 48px 56px;
+    box-shadow: 0 2px 12px rgba(28,35,48,.06);
+  }
+  h1 {
+    font-size: 26px;
+    line-height: 1.4;
+    padding-bottom: 20px;
+    border-bottom: 3px solid var(--ink);
+    margin-bottom: 20px;
+  }
+  .meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--gray-bg);
+    border-radius: 8px;
+    padding: 14px 18px;
+    font-size: 13.5px;
+    color: var(--ink-2);
+    margin-bottom: 36px;
+  }
+  .meta b { color: var(--ink); }
+  h2 {
+    font-size: 20px;
+    margin: 44px 0 18px;
+    padding-left: 12px;
+    border-left: 5px solid var(--blue);
+  }
+  h3 {
+    font-size: 16.5px;
+    margin: 28px 0 10px;
+    color: var(--ink);
+  }
+  p { margin: 10px 0; font-size: 14.5px; color: var(--ink-2); }
+  p b, li b { color: var(--ink); }
+  ul, ol { padding-left: 24px; margin: 8px 0; }
+  li { font-size: 14.5px; color: var(--ink-2); margin: 6px 0; }
+  hr { border: none; border-top: 1px solid var(--line); margin: 36px 0; }
+  blockquote {
+    background: var(--blue-bg);
+    border-left: 4px solid var(--blue);
+    border-radius: 0 8px 8px 0;
+    padding: 16px 20px;
+    margin: 16px 0;
+  }
+  blockquote p { color: var(--ink); margin: 8px 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 13.5px;
+  }
+  th {
+    background: var(--gray-bg);
+    color: var(--ink);
+    font-weight: 600;
+    text-align: left;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  td {
+    padding: 9px 12px;
+    border: 1px solid var(--line);
+    color: var(--ink-2);
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: #fafbfc; }
+  .tag {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 99px;
+    white-space: nowrap;
+  }
+  .tag-done   { background: var(--green-bg); color: var(--green); border: 1px solid #bbf7d0; }
+  .tag-part   { background: var(--amber-bg); color: var(--amber); border: 1px solid #fde68a; }
+  .tag-hold   { background: var(--gray-bg);  color: var(--ink-3); border: 1px solid var(--line); }
+  .tag-do     { background: var(--red-bg);   color: var(--red);   border: 1px solid #fecaca; }
+  .item { margin: 20px 0; padding: 16px 20px; border: 1px solid var(--line); border-radius: 10px; }
+  .item h3 { margin: 0 0 8px; font-size: 15.5px; }
+  .item p, .item li { font-size: 14px; }
+  .concl { font-size: 13.5px; font-weight: 600; color: var(--ink); background: var(--gray-bg); border-radius: 6px; padding: 6px 12px; display: inline-block; margin-top: 6px; }
+  .final {
+    margin-top: 40px;
+    background: linear-gradient(135deg, #1d4ed8, #2563eb);
+    color: #fff;
+    border-radius: 10px;
+    padding: 20px 24px;
+  }
+  .final p { color: #eaf1ff; }
+  .final b { color: #fff; }
+  .toc {
+    background: var(--gray-bg);
+    border-radius: 8px;
+    padding: 16px 22px;
+    font-size: 13.5px;
+    color: var(--ink-2);
+    margin-bottom: 8px;
+  }
+  .toc a { color: var(--blue); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  @media (max-width: 720px) {
+    .paper { padding: 28px 20px; }
+    h1 { font-size: 21px; }
+    table { font-size: 12.5px; display: block; overflow-x: auto; }
+  }
+  @media print {
+    body { background: #fff; padding: 0; }
+    .paper { border: none; box-shadow: none; max-width: 100%; }
+  }
+</style>
+</head>
+<body data-page-node-id="TeIgg40IojPGUijOt3RGWF">
+<div class="paper" data-page-node-id="0pB3qjaE1UF3nFZOQDR5Pm">
+
+<h1 data-page-node-id="a8Q83klQTC1lPTCKtRdDYo">超市收银系统 · 智能能力规划对比分析报告</h1>
+
+<div class="meta" data-page-node-id="HRBbn0cVQLbBUG6KV6wfA8">
+  <div data-page-node-id="RYlrt04mhbVlpq3OLdaT7h"><b data-page-node-id="cEWD9z5cbrShqsgNfcGaYX">分析对象</b>：《AI 收银能力全景 · 技术拆解与实现方案》（capability-plan.html，2026-09）× 当前系统代码实况（V4.12 / V4.11.5）</div>
+  <div data-page-node-id="Z5iR3BBGPHaRUawh3jIuI4"><b data-page-node-id="5NcA37emGWPwsPOXasJKPu">分析方法</b>：方案 5 层 15 项能力逐条拆解 → 对照 backend/src/modules 实际模块与端点逐项核实 → 按"已实现 / 改进 / 可引进 / 扩展 / 没必要做"五档定性</div>
+  <div data-page-node-id="TzrMptvMhycTRA3uxC7xNS"><b data-page-node-id="gVLBhXfoxjo5eqbA96cZil">报告日期</b>：2026-09-08 ｜ <b data-page-node-id="OclFgjJh0JnbXiJhduCbRy">版本</b> V1.0</div>
+</div>
+
+<div class="toc" data-page-node-id="4MFR7aGLKFT4Me4DlzTnMp">
+  目录：<a href="#s0" data-page-node-id="peqCjOB5CUvxBxdCl17JsA">〇、总体结论</a> ｜ <a href="#s1" data-page-node-id="OT1sgA3hG3tL6e4XiWPdsD">一、逐项详细分析</a> ｜ <a href="#s2" data-page-node-id="Ia3Zcukb6ZZCMTLFbmZRTI">二、技术栈差异说明</a> ｜ <a href="#s3" data-page-node-id="w0sY65V5Dm8KMOOXnMmCXU">三、行动建议</a> ｜ <a href="#s4" data-page-node-id="DLxwKOZ9HKYoPIGFGKHXAU">四、与方案落地节奏的对齐</a>
+</div>
+
+<h2 id="s0" data-page-node-id="GP8DE6F6TGUmYUxLykZRRW">〇、总体结论（先说重点）</h2>
+
+<blockquote data-page-node-id="00zXA6qkBBvigTGo9R5fyJ">
+  <p data-page-node-id="DKxqwVEn5DHChuu2EQg9vx"><b data-page-node-id="20zMgYuFBG6JzlfWl5ps83">这份方案的主体能力，当前系统里大部分已经落地</b>——15 项能力中 <b data-page-node-id="Dn7cmj87LyDOzBFE9dFv8E">9 项已实现、4 项部分实现（MVP 级）</b>，真正未做的只有 <b data-page-node-id="crCBsU0hZGMKE5aUGDqig6">3 项</b>（漏扫检测、语音交互、智能客服），且方案自己把它们排在 Phase 2–3。</p>
+  <p data-page-node-id="ZF4wqqdKEIEYSADdPeyfOJ">两份方案的哲学高度一致："规则引擎 + 统计基线给建议，决策权在人，数据不出店"。现有系统的 <b data-page-node-id="P9xS1xPKUCLUJAoUEZ9FWP">aibrain.engine.ts（智能决策中心）</b> + <b data-page-node-id="Zxp986aAHbs5f80aosFbGU">ai.pricing / ai.market / coupons / promotions / marketing / inventory</b> 模块群，就是方案 03/04/05 章的实现载体。</p>
+  <p data-page-node-id="bddPyB2voBhy81d7VeZeGn"><b data-page-node-id="1fdEpc0qU0g7SIlCw1GfWz">下一步真正值得投入的只有 2 件事</b>：① 漏扫检测 MVP（支撑自助收银可信化）；② 支付平台账单导入对账（财务安全闭环）。其余按性价比见第三章。</p>
+</blockquote>
+
+<h3 data-page-node-id="hRA7rWgZkDRfx0kfCGrJQn">能力覆盖总览</h3>
+<table data-page-node-id="p96LdwZFHRDbBp1j8kaWS9">
+  <thead data-page-node-id="UlHut3AEdHUCQ9Osbfx05l">
+    <tr data-page-node-id="Xu0WG3rbqcEeIINRxgcQb5"><th data-page-node-id="D0CnYjBWFWPdXIPDdQQvlV">层</th><th data-page-node-id="W8JCenAupRvxc4sctf79Dv">方案能力</th><th data-page-node-id="tB4GYrcYRrRBIPofVd3rYb">现状</th><th data-page-node-id="WT4dr9pVK9qHvIWG3rNPFf">结论</th></tr>
+  </thead>
+  <tbody data-page-node-id="180K8XuBtaHKLxGhSDHQH2">
+    <tr data-page-node-id="uWZuaC8hjCfpgmHKyJUcIN"><td data-page-node-id="Ws8BErUUvFHTG5O5osuzBC">感知</td><td data-page-node-id="cW4IxPsweLMfaRS0JLcvTb">1.1 商品识别</td><td data-page-node-id="EjsgXOuHfOmIZJbTaZfIny">V4.10.1–V4.11.5 完整落地</td><td data-page-node-id="S3ox8QQXnEaff2Pd8B2u4t"><span class="tag tag-done" data-page-node-id="rMP2LwRuiaEYHqE9bFpYiE">✅ 已实现（超方案）</span></td></tr>
+    <tr data-page-node-id="2WkGNW7NGlgZoxL1gdJ249"><td data-page-node-id="EeG1jRviVtH5nbXbzWNpAL">感知</td><td data-page-node-id="HdLlqhMDxpyiLqNZIsnizj">1.2 防损/漏扫</td><td data-page-node-id="nk3Blz1gtMSFJtC7jcprU0">损耗预警已有；<b data-page-node-id="12m4axUMtUlMGxobZF68Em">漏扫检测无</b></td><td data-page-node-id="OEqSzJQuBSvlpUxPbw9a7S"><span class="tag tag-part" data-page-node-id="4uhFEEuDYTmkDOolpJW9um">🟡 损耗侧已实现，漏扫可引进</span></td></tr>
+    <tr data-page-node-id="fwR7cazKGWvkwb4BIctOVz"><td data-page-node-id="adECwtw8l7bt8KLvvITlAK">感知</td><td data-page-node-id="Fr75zzMvycRCmErfePyJp5">1.3 会员识别</td><td data-page-node-id="Roi0ABAFEqneXL44yd4uvU">会员码/手机号 + 会员自助端</td><td data-page-node-id="G8SxI5D1q9BYBCopEhsh7A"><span class="tag tag-done" data-page-node-id="OkMCu3qPvu6dtQ9engvfeh">✅ 已实现</span></td></tr>
+    <tr data-page-node-id="WgC1VgFh3FH4LkEo5LiQIV"><td data-page-node-id="b9kW3fvbzkVC3eHStcsZcU">感知</td><td data-page-node-id="pI7kh5IjcEbeFhFej7HtDd">1.4 货架巡店</td><td data-page-node-id="N9m0voAzLdKEDK2t8UgtTk">无</td><td data-page-node-id="88Pzhb1Sla5oZ09pYOXxCq"><span class="tag tag-hold" data-page-node-id="5wWEBxa8SfORIJW4TBIopd">⏸ 扩展（Phase 3）</span></td></tr>
+    <tr data-page-node-id="1p4Ry25igHZFFD9N5Oa43e"><td data-page-node-id="whTzQEqydABDOI4bvxpfBL">交互</td><td data-page-node-id="NKl0A35cZsvtt9NB85QQ74">2.1 语音收银</td><td data-page-node-id="RZRsDdGX3uL4AyrPr9zcWQ">无</td><td data-page-node-id="Lhc0YCEvbzq8oUlCpB0jvh"><span class="tag tag-hold" data-page-node-id="GuhYNyn0HTE99ELzYVVRlD">⏸ 扩展（低优先）</span></td></tr>
+    <tr data-page-node-id="bAjDocv7qpXGj4XpVAMPzO"><td data-page-node-id="xGNSURZP8g1SdzUdSj0aAD">交互</td><td data-page-node-id="JmzA2bZOUTuvQZBCpdQMb5">2.2 自然语言报表</td><td data-page-node-id="Wq4NTT0hjH5FCWuFXKmXFP">aibrain qa（关键词+日报检索+LLM 摘要）</td><td data-page-node-id="Tb9cOxlzritPkMrut5xJHg"><span class="tag tag-part" data-page-node-id="OC1YSiC6HapLZ6JkfbQPcM">🟡 MVP 已实现</span></td></tr>
+    <tr data-page-node-id="pGqeqPL1gfCoBhVdGksq7G"><td data-page-node-id="cMBEzNBZkdatPrTLyAo5BN">交互</td><td data-page-node-id="owxjozD02yeHqClfTBln4e">2.3 智能客服</td><td data-page-node-id="pidwwIG8jZzw5nXjzkCi8F">无</td><td data-page-node-id="koeYWD9LAj04HXZrnjTMcv"><span class="tag tag-hold" data-page-node-id="SRxkTc8sFqz3r7stMAZ5SZ">⏸ 扩展（最低优先）</span></td></tr>
+    <tr data-page-node-id="rDOEQh8YM97UkQ3nLglvik"><td data-page-node-id="FPgmvKte4PuDpFn34xkKMK">决策</td><td data-page-node-id="7mkUBsrGYbHNWuWrdPspfD">3.1 销量预测</td><td data-page-node-id="KdAHSeAEjyVjJwuif1XB0p">aibrain 统计基线版</td><td data-page-node-id="YMpWCt7iyAhlipwaBB6tzb"><span class="tag tag-part" data-page-node-id="P4vUfqS2yziNKvJcNdmNeL">🟡 已实现（规则级）</span></td></tr>
+    <tr data-page-node-id="GK5IYJfas3fxg3RLhFLv6T"><td data-page-node-id="X9g9Ca7cvCk8OTLmovBlMa">决策</td><td data-page-node-id="EgdBptvkUAHDvbeFpjz3H7">3.2 智能补货</td><td data-page-node-id="V5FOFzbfX8TbVpv62t84yE">aibrain restock（安全库存+在途扣减）</td><td data-page-node-id="h9EAmrO3GEkd344gZY39p4"><span class="tag tag-done" data-page-node-id="nfaSH87piPizR2jX1ENYm1">✅ 已实现</span></td></tr>
+    <tr data-page-node-id="2R7uUcDf2RGh0rlmGAcSA5"><td data-page-node-id="xXsfmCBm4Wj1XYcFQGcDVM">决策</td><td data-page-node-id="s4Xokbwg9BMvTBUjMu6LzL">3.3 AI 选品</td><td data-page-node-id="OQr8fbtHx4Fj44j5V6IBUm">购物篮关联 + ABC 报表</td><td data-page-node-id="lhScUN02Id7kCNp24zvozd"><span class="tag tag-part" data-page-node-id="KTz8lMVSTlJQtlxwFz95a3">🟡 部分实现</span></td></tr>
+    <tr data-page-node-id="IeJXtotYeMQxZoehUYngde"><td data-page-node-id="F1xvod8xwwBFNM5QWqwiaw">决策</td><td data-page-node-id="DxHLq3KdrwtkwGdm5nUjW3">3.4 临期动态定价</td><td data-page-node-id="54jWNXBM1k3fFCr9LWC9sj">ai.pricing（临期+滞销+成本底线）</td><td data-page-node-id="LWuhnmULVdsr5Y5UzZynbZ"><span class="tag tag-done" data-page-node-id="itSIzJFFoOvhG51gkZ8Epu">✅ 已实现（超方案）</span></td></tr>
+    <tr data-page-node-id="6fFO7uw4mBAFrUPGQh9WoZ"><td data-page-node-id="HEX1qCkRS9OP7Dv5Y0OmU0">决策</td><td data-page-node-id="HqZghmqyali7BABVoCgJm7">3.5 会员营销</td><td data-page-node-id="GnDTE6YOh7fbYHxE309oqY">ai.market + 券 + 促销 + 定时触达</td><td data-page-node-id="WgIC5xlTWgDFhV9eQgj5VI"><span class="tag tag-done" data-page-node-id="rrt1gsul8kHvbR9AXxFvps">✅ 已实现（超方案）</span></td></tr>
+    <tr data-page-node-id="8doDU4xwwOszC50PujmQ0I"><td data-page-node-id="tpnInSDzhsNWLAkHG8cW8T">运营</td><td data-page-node-id="b5JzGmFy9xUKkhNwv4wJRz">4.1 自助收银</td><td data-page-node-id="B7D9HJ61RR0Eq7mgSCChhi">member-app self-checkout 接口</td><td data-page-node-id="R0d5YAIJgzuaYZiHRC6Xpb"><span class="tag tag-part" data-page-node-id="Mdj248xcEGIj15HOZ9vtPN">🟡 雏形已实现</span></td></tr>
+    <tr data-page-node-id="UAv0MggcupTcUuDqeyl9kd"><td data-page-node-id="iEn3aGCbRvQJUpNEr93W8i">运营</td><td data-page-node-id="E0JUmCXKTbbrLHiRWBF9B6">4.2 自动对账</td><td data-page-node-id="T0Dq2RId7SwNSChBptIF8r">班次交接对账 + AI 日报；<b data-page-node-id="Y5bdV557ExVVmDfa2lVMQU">账单导入对账无</b></td><td data-page-node-id="7GTz6hilxylrlFHBdvgNuK"><span class="tag tag-part" data-page-node-id="Vnmnxlp4ebH1DLZH4wKduh">🟡 部分实现，账单对账可引进</span></td></tr>
+    <tr data-page-node-id="mgRMYBmHxcpuDmdL7sprjS"><td data-page-node-id="NiePOZzi7FRLLWlSbCBvCE">运营</td><td data-page-node-id="QXrWI0RpUigeJAdVuVI6ZR">4.3 自动报表</td><td data-page-node-id="39gHKOHunsBVkuJbkbUSpi">AI 日报 23:59 自动生成 + boss 报表矩阵</td><td data-page-node-id="IoOBCdSnWro0btBMsb5CWE"><span class="tag tag-done" data-page-node-id="PpHpMY6q2seVbg6c8HYDFj">✅ 已实现</span></td></tr>
+    <tr data-page-node-id="aM7wdsSBQvpTOQON9Id9H3"><td data-page-node-id="XZqNkX6AbyF1fOm0yT50dg">运营</td><td data-page-node-id="EgTQQ0Zz8XJpDaXoe1X5jG">4.4 效期管理</td><td data-page-node-id="c1NYHpjl7LwDWepO2XFgxZ">批次效期 + expiry-alerts + 报损处置</td><td data-page-node-id="9ux8xLTpwlBgnm0No0G4dK"><span class="tag tag-done" data-page-node-id="TOEJpCqTOJHK9AiavIAUre">✅ 已实现</span></td></tr>
+    <tr data-page-node-id="SectCJZtpwGiFXO9McnA2N"><td data-page-node-id="1ng1kHZJhpLEhXOqWr1ADJ">资产</td><td data-page-node-id="9NA35IbBtSh0NrzVeAxmXZ">5.1 顾客画像</td><td data-page-node-id="pvQT6BBYmpb67yuJTDyiAc">画像分层（沉睡/高价值/偏好品类）</td><td data-page-node-id="kL9nyDf6DzOdYWEunc06Pc"><span class="tag tag-done" data-page-node-id="UVZMNwGqUvne5cRfTk44WT">✅ 已实现</span></td></tr>
+    <tr data-page-node-id="E2pIlY7ElKqxpme2VVF4BB"><td data-page-node-id="al5s5KCWjifeyAu3KE7OFz">资产</td><td data-page-node-id="oSHRCewz3wEiEmCFTB3QA8">5.2 数据底座</td><td data-page-node-id="UD0GmG6VgElQiMeV24DGVq">PostgreSQL 统一库（比方案 SQLite 更强）</td><td data-page-node-id="wrUtQ728qDEgaszbeFFU8O"><span class="tag tag-done" data-page-node-id="wwR3wOuXELYTGGyrSO2lCj">✅ 已实现</span></td></tr>
+    <tr data-page-node-id="kR4C2MaobsbbzVXqKk0m4Z"><td data-page-node-id="fHsdyphd7EwdgevC3ILlr9">资产</td><td data-page-node-id="1ZEaxwLY7ct0wLaLZC6GFk">5.3 模型自进化</td><td data-page-node-id="f3BBzcNC3n1ajCEPp1mnPC">M4 纠正闭环 + 质量报表 + 一键重建索引</td><td data-page-node-id="qMRP57Bs30SUbsPj3OMTR3"><span class="tag tag-done" data-page-node-id="XQG9EGX74ITi5R6xVOEgyv">✅ 已实现（识别侧）</span></td></tr>
+  </tbody>
+</table>
+
+<hr data-page-node-id="U9hWICJmHhFRLFZ6TcZcOy">
+
+<h2 id="s1" data-page-node-id="Qg86WwSNr4h6GjJ0ggqsLC">一、逐项详细分析</h2>
+
+<h3 data-page-node-id="PCJLAXSZXgCdefzIehliPE">01 感知层</h3>
+
+<div class="item" data-page-node-id="wvZWnueqOYLNT8F7V07rwE">
+  <h3 data-page-node-id="JMooh381syFOHczb9UM7Ms">1.1 商品识别 —— ✅ 已实现，且实际架构优于方案稿</h3>
+  <ul data-page-node-id="BXlJcJoKGp18Htdl1WpaIM">
+    <li data-page-node-id="9925PQhbRo0DS4f4sWgKaA">方案稿写的是 YOLOv8s + CLIP ViT-B/32 + FAISS（早期口径）；现系统已迭代到 <b data-page-node-id="iWZKrAtsFyrkZa85gw8zNf">Chinese-CLIP ViT-B/16（量化 ONNX，进程内推理）+ JSONB 向量应用层余弦 + 中文商品名 rerank + 零训练轮廓分割多件识别 + 电子秤 + 别名表</b>（V4.10.1→V4.11.4）。</li>
+    <li data-page-node-id="pvQyFLYf5DaXJUuRMslI54">方案的"条码精确兜底优先于外观""VL 语义兜底（qwen2.5vl:3b）""规格 OCR"三设计全部与现系统一致（条码双引擎 BarcodeDetector+zxing-wasm / Ollama 兜底 / ai.ocr.ts）。</li>
+  </ul>
+  <span class="concl" data-page-node-id="mmXuyBAxP3ymj8m1koqqzC">结论：不需要动。方案文档技术栈表建议按 v3.2 口径更新（FAISS→JSONB 余弦足够、SQLite→PG 已更强）</span>
+</div>
+
+<div class="item" data-page-node-id="ObPZJlnANy8hSODQVtx7RO">
+  <h3 data-page-node-id="AweZKLYh8Dp3uN6Cq9OtFj">1.2 防损 / 漏扫检测 —— 🟡 拆两半看，漏扫检测是本次最值得引进项</h3>
+  <ul data-page-node-id="eBHwCFsreGIbRIigAt8UJv">
+    <li data-page-node-id="jP7NBJeIk9CXn947mp65q2"><b data-page-node-id="TCj2QjpLIGUMFZNjwNLKL4">损耗预警侧：已实现</b>。aibrain"防损基线"（批次剩余效期扫描 → 8 折去化/退供建议）、inventory <b data-page-node-id="kLvaF4IW3Wvm0BDwo6Tdcy">expiry-alerts</b> + 效期报损处置流程（expiry-disposals/:batchId/start|done）、ai.pricing 临期折价，三处已闭环。</li>
+    <li data-page-node-id="E3AbAFSB4463m9e1KwbINE"><b data-page-node-id="VMWU5rsaM25PucdkVcZZbl">漏扫检测侧：未实现</b>。方案 MVP（结算一致性校验：识别件数 vs 结算件数 + 理论重量 vs 实秤重量）<b data-page-node-id="Y4JBCyj0zf1M2BrduFCt2i">成本极低且数据条件已备齐</b>——识别管线返回逐件 count，电子秤读重已接入 checkout（V4.11.2）。自助收银（member-app self-checkout）没有这道校验等于裸奔。</li>
+    <li data-page-node-id="h9X6mmlgCdRIHLSkfZ1ne8">进阶行为识别（姿态/手部关键点）：<b data-page-node-id="tHuOwaVHozVdZzN1vUtyDP">缓做</b>，单店人力监控可比，标注成本高，方案也只给了 -50% 盗损的公开报道口径，先验证 MVP。</li>
+  </ul>
+  <span class="concl" data-page-node-id="vnd1EHUikGVmI4JqAmMMdz">结论：可引进，优先级最高（详见第三章）</span>
+</div>
+
+<div class="item" data-page-node-id="IxahEuVOK7RuvoEuDQBKBH">
+  <h3 data-page-node-id="CP2kjBBuBiuXNTAnNRnC2D">1.3 会员识别 —— ✅ 已实现</h3>
+  <p data-page-node-id="WQy143hnLYJ2f5OhJRFH7k">会员码/手机号 + member-app（注册/登录/流水/消费）+ 收银端挂接会员，与方案"推荐简版"完全一致；刷脸方案自己也标了"谨慎"，不做。</p>
+  <span class="concl" data-page-node-id="4biqdvG9A3Kmcmu3MR5i1N">结论：不需要动</span>
+</div>
+
+<div class="item" data-page-node-id="LYGw5sYV4yQ3srJrz8MHov">
+  <h3 data-page-node-id="OBx4N4o1femgzqI1McVsEN">1.4 货架 / 陈列感知 —— ⏸ 可扩展</h3>
+  <p data-page-node-id="eBXjUmpxRWEEkU4YhiTAIG">识别管线可 100% 复用（手机拍照 → CLIP → 商品），技术上是现成积木；但"缺货空位/错位"需要货架基准照比对逻辑，属新开发。建议排在自助收银防损之后，或先以"巡店拍照建档样本"的形式顺带积累素材。</p>
+  <span class="concl" data-page-node-id="CZRfYKHlULSK65F8BncRXC">结论：扩展项，Phase 3</span>
+</div>
+
+<h3 data-page-node-id="4Qh8JMajb6BpbjClzBOPmg">02 交互层</h3>
+
+<div class="item" data-page-node-id="o95Y7n91fsb7TtFQEUcpPz">
+  <h3 data-page-node-id="bzqB5WCzbzsEdfUk2nYlIB">2.1 语音收银 —— ⏸ 可扩展，建议只做单点</h3>
+  <p data-page-node-id="FECBsDFxwxLSKdJ32L9zUA">whisper.cpp + piper 全链路本地可商用，技术无障碍；但对<b data-page-node-id="jGqMNLulW1x5XqxWeVgJ2Q">店员收银</b>场景，扫码枪+触屏已比说话快且准，语音价值在"口头查价/双手占用时"。建议 Phase 3 先做「语音查价」单点（ASR→意图[查价]→报价 TTS），验证店员是否真用，再谈语音下单。</p>
+  <span class="concl" data-page-node-id="7knUW4DPT4qAF3TeNAl2JY">结论：扩展项，先做语音查价单点验证</span>
+</div>
+
+<div class="item" data-page-node-id="fYT1hzZ7DySLl5z4f5f7w4">
+  <h3 data-page-node-id="27qFnClkVQ1XJyZGri5m0l">2.2 自然语言报表 —— 🟡 MVP 已实现</h3>
+  <p data-page-node-id="snOTYlNKGG23EFQaiJl5Oi">aibrain <b data-page-node-id="4qHqvR4w2R86AKesydxoAN">qa</b> 端点已有：日报全文检索 + 关键词匹配降级 + ai.llm.enabled 可选 LLM 底座 + 日报摘要（"老板能看懂的话"）。方案 MVP 路线（SQL 查数 + LLM 组织语言）与现状同构。<b data-page-node-id="nZAKqbwMSBcBCIcUWf3XKb">改进项</b>：把"今日毛利/畅销榜/损耗榜/库存预警"等高频问题做成预置问题按钮（一天工作量）；<b data-page-node-id="Uco3BIRTcRlhKstwifhZoP">NL2SQL 缓行</b>——幻觉与注入风险对财务数据不值当，方案的约束清单（白名单+只读+上限）真要做也别早于 Phase 3。</p>
+  <span class="concl" data-page-node-id="MxaiKDgFb3lNUYMNZdxsxU">结论：MVP 已实现；改进 = 预置问题按钮</span>
+</div>
+
+<div class="item" data-page-node-id="AWlxR2mlraXWsewUX9UnJd">
+  <h3 data-page-node-id="eX0XrPzNgvk5hmn4PwwTy4">2.3 智能客服 —— ⏸ 扩展，最低优先</h3>
+  <p data-page-node-id="xnTiSKryCnsH3ytkrBGTXT">会员 H5 已有自助查询（订单/流水/价格），售后问题在小店场景用"老板微信"解决效率更高。若做，FAQ 向量检索可复用现有文本嵌入能力（ai_name_embs 同款 Chinese-CLIP 文本塔），开发量不大但<b data-page-node-id="hIlni5lcrMDIKIqPEP4I7W">价值密度低</b>，放最后。</p>
+  <span class="concl" data-page-node-id="olLqmLd0S3YGouUQrjSCf7">结论：扩展项，最低优先</span>
+</div>
+
+<h3 data-page-node-id="y7HWaKeKGXWT3xJM3kJEdT">03 决策层（方案要求数据门槛：≥8–12 周真实流水）</h3>
+
+<div class="item" data-page-node-id="sB4vcvGpjxweOikVs4XlNK">
+  <h3 data-page-node-id="n78Wj9ovwkUMuEWOz9zZYs">3.1 销量预测 —— 🟡 规则级已实现，模型升级看数据</h3>
+  <p data-page-node-id="W1wpYN9DsVb0Lr2a2Etz0z">aibrain 已有"销售预测"应用（统计基线）。方案的 Prophet+LightGBM 混合是<b data-page-node-id="2tqce0H3kpNGOpXeZLWjan">数据攒够后的自然升级</b>，不是现在欠的账：单店日几百单，8–12 周前上 LightGBM 是过拟合机器。<b data-page-node-id="QVdZaEcZa96DzEOnaEwURF">结论：保留现状，开业满一季度后用真实流水回测基线准确率，再决定是否引入 LightGBM</b>（现栈 Node 侧可走 onnx/PMML 或独立 Python 服务，届时再评估）。</p>
+  <span class="concl" data-page-node-id="zjUR43SelIcKxPeqkQ50kJ">结论：保留现状，数据门槛未到不升级</span>
+</div>
+
+<div class="item" data-page-node-id="MHAH5mmFFwnprKH96PuHjn">
+  <h3 data-page-node-id="4YeaqgssaVvvOUllhFOiS7">3.2 智能补货 —— ✅ 已实现</h3>
+  <p data-page-node-id="nsX0iZAEBXjjnZHK4AL8DQ">aibrain <b data-page-node-id="yrCUu9gMLAKX47AuPaFbag">restock</b>：安全库存法 + 在途扣减（order_qty − arrived_qty）+ 覆盖天数/安全天数设置键（ai.restock.coverage_days / safety_days），与方案公式同源（补货点=日均×提前期+安全库存）。建议一律"待处理→人工执行/否决"，否决留痕作训练信号。<b data-page-node-id="u9l2RbUawSjmZMsZAWhmZ6">不需要动</b>；开业后可加"供应商维度合并建议单"作为增强。</p>
+  <span class="concl" data-page-node-id="qZoQPu4KC8SH2ynEXTvsFB">结论：不需要动</span>
+</div>
+
+<div class="item" data-page-node-id="8JgTuI5AuY1o87e0JJAd8T">
+  <h3 data-page-node-id="vBpFturVR1P9ekmAaiD3nN">3.3 AI 选品 —— 🟡 部分实现</h3>
+  <p data-page-node-id="OccUulyxb1Y5Gl3yStZp2T">已有：购物篮关联分析（aibrain）、ABC 分类报表（boss repAbc）、动销数据。<b data-page-node-id="6TRJjrJvwq0YuH6yNvBZDC">缺口</b>：方案口径的"淘汰/上架建议"输出（动销率&lt;阈值且周转慢→建议淘汰清单）。这是在现有数据上加一个 aibrain domain + 一张建议卡片的量。<b data-page-node-id="IQlMJy0OSbZymcWqTWrUTb">结论：改进项，可做</b>。</p>
+  <span class="concl" data-page-node-id="xGM0CqflbOaWnFbxsc7V16">结论：改进项，可做（小工作量）</span>
+</div>
+
+<div class="item" data-page-node-id="35LTOM2kQvQjMbFPsMEy5K">
+  <h3 data-page-node-id="WvP3JSu2i6wCq6FhOgsEHJ">3.4 临期动态定价 —— ✅ 已实现，且比方案细</h3>
+  <p data-page-node-id="0NDtLvmuMqri2BjbfYpZeX">ai.pricing：临期（≤7 天 5 折 / ≤15 天 7 折 / 其余 8.5 折）+ <b data-page-node-id="103xq57VvXice8K0cFP2pP">滞销（60 天无销售且库 ≥30 件）</b> + <b data-page-node-id="GmXO5j6jJzNOLARBPSjvQk">成本底线（建议价 ≥ 进价 ×1.05）</b>——方案只有临期档位，现系统多了滞销与保本约束，且与调价单流程打通。<b data-page-node-id="6DkP2haOzKQ4VPtS96ZFt3">不需要动</b>。</p>
+  <span class="concl" data-page-node-id="kILUu3nMxWlkw8XhT7fxUe">结论：不需要动（比方案更细）</span>
+</div>
+
+<div class="item" data-page-node-id="DSIc7CbzwzrmIOhkZOOhqT">
+  <h3 data-page-node-id="ELUvaa3I3TsqpwrbixdK1s">3.5 会员个性化营销 —— ✅ 已实现，超方案</h3>
+  <ul data-page-node-id="OydSlebUYWiCKote9wYPgC">
+    <li data-page-node-id="SADoGGL0CPDNNNsOY764EH">ai.market：按画像生成定向方案（沉睡唤醒/高价值回馈/偏好品类满减）→ 执行写 marketing_touches → <b data-page-node-id="MXj5lEvytCLN4c6Vb3dCIi">效果回测</b>（触达前后消费对比）；</li>
+    <li data-page-node-id="Iat4SaeftMH8duhkQq2IXd">coupons：满减/折扣/兑换/次卡四类券，核销留痕进订单记账口径；</li>
+    <li data-page-node-id="ybck2rtJPIE4VWeGG5PD4J">promotions：商品级/分类级/整单级三层促销引擎（同层取优、跨层叠加可配）；</li>
+    <li data-page-node-id="Wrq1DvPdJpBfEv3oQ01SXh">marketing.module：定时引擎（生日触达/临期折扣/分红到期提醒，每分钟检查+补跑）。</li>
+  </ul>
+  <span class="concl" data-page-node-id="MYV8Um9e51QRWpmINfC6et">结论：方案这一节基本是给现有系统做注脚，不需要动；RFM 显式三字段可作为画像表小增强</span>
+</div>
+
+<h3 data-page-node-id="yt6m9dBRcTpFGxbHNtH4kH">04 运营层</h3>
+
+<div class="item" data-page-node-id="DqeWNGBLUCWDAEpwD9ZDTy">
+  <h3 data-page-node-id="an5iXu4WGH3UcKBVTcXf8P">4.1 自助收银 —— 🟡 雏形已有，补防损即可转正</h3>
+  <p data-page-node-id="fURcXmcCtb3SQfVimEmgif">member-app <b data-page-node-id="yBqKZ2TNcBcyGOIcfE9tJa">self-checkout</b> 接口存在。要达到方案"高峰辅助/低峰无人值守"的可用状态，缺的是 1.2 的漏扫校验 + 异常告警（差异即暂停待店员复核）。<b data-page-node-id="t9TkwJep5BpD1EKRlsVvHA">结论：改进项，与漏扫检测打包做</b>。</p>
+  <span class="concl" data-page-node-id="lFWDr4nQhLMkYGMCiZ0V6h">结论：改进项，与漏扫检测打包做</span>
+</div>
+
+<div class="item" data-page-node-id="2uF0Vn3DJKxzeP9iXHhMaW">
+  <h3 data-page-node-id="jlGBKUBI8OleBFsxAPtF3R">4.2 自动对账 / 日结 —— 🟡 半实现，账单导入对账可引进</h3>
+  <ul data-page-node-id="RgqMAAk91d5QEgg3c7w7kD">
+    <li data-page-node-id="aHnJNCw3l4bcDjnoIev8mY">已有：班次交接对账（移动收银自动挂班次、recon 补签场景）、AI 日报 23:59 自动生成含对账要素。</li>
+    <li data-page-node-id="plM4mmqXIwdr9hcuHszb9K"><b data-page-node-id="EJKsBkqLf3fLfBbaGBRvoZ">缺口</b>：支付平台账单（微信/支付宝导出 CSV）与本地流水的自动对齐。这是财务安全的最后一块，纯规则解析无需 AI。<b data-page-node-id="INWSB69bQ8dfiSRhdAMwRH">结论：可引进，开业后第一优先</b>（真实收款渠道确定后做，避免空转）。</li>
+  </ul>
+  <span class="concl" data-page-node-id="oKY1r5o8VBzulGddV9c6dW">结论：可引进，开业后第一优先</span>
+</div>
+
+<div class="item" data-page-node-id="diFwEpNnva9BWIH1YOqJFF">
+  <h3 data-page-node-id="mV8pF9sFpHovciQD9GE2gL">4.3 自动报表 —— ✅ 已实现</h3>
+  <p data-page-node-id="Z4PycZTjXOyO9Fk4MBCaHm">AI 日报（当日全指标+异常事件+知识库归档，23:59 自动）+ boss 端营业日报/ABC/商品明细/会员榜/进销存/员工业绩/AI 识别质量七类报表，手机 H5 直达。方案"识别质量报告驱动补拍照片"也已在 M4 闭环中。<b data-page-node-id="QoEolHyIVAFZr1Vg4yvM49">不需要动</b>；可加日报定时推送（微信/邮件）作为增强。</p>
+  <span class="concl" data-page-node-id="zRxtPZeRKbXQZ3Jy6pr7tK">结论：不需要动</span>
+</div>
+
+<div class="item" data-page-node-id="BiXGAtnI1yKyH5Ekh0Z2uL">
+  <h3 data-page-node-id="iKQIEiChAQ8DqHXzWbxDYk">4.4 效期管理 —— ✅ 已实现</h3>
+  <p data-page-node-id="SCsncrGOaBZ9AbaZ4npveV">建档录保质期 → 批次 expiry_date → expiry-alerts 临期预警 → 效期报损处置流程 → ai.pricing 临期折价联动，与方案 4.4+3.4 联动设计一致。<b data-page-node-id="yXjVOmwqWVvqI0Ix6Yel1v">不需要动</b>。</p>
+  <span class="concl" data-page-node-id="TKMAEV3PajMBjCy5Owem92">结论：不需要动</span>
+</div>
+
+<h3 data-page-node-id="xihlk3kkGCh4jmvrMh0EGz">05 资产层</h3>
+
+<div class="item" data-page-node-id="yLhnUCWwtHOQd83hPCq8Ri">
+  <h3 data-page-node-id="qkWykjz3DsywfSAULlziyI">5.1 顾客画像 —— ✅ 已实现（够用）</h3>
+  <p data-page-node-id="lVaYpN6jCXhyrlmCvUe5rH">画像分层已在 ai.market 中驱动营销（沉睡/高价值/偏好品类）。方案的"≥12 维标签实时优惠"对小店是过度工程，方案自己在风险清单里也承认数据量天花板。<b data-page-node-id="uaB5FOjLYApniFxopdXaCk">不需要动</b>；R/F/M 显式三字段可作为小增强。</p>
+  <span class="concl" data-page-node-id="cw0eBLK566lgsiblDAoWJW">结论：不需要动</span>
+</div>
+
+<div class="item" data-page-node-id="wrg27iczaiQhMfWTcIEYhZ">
+  <h3 data-page-node-id="AMTVEsJRSfQZ2GcIGkzL07">5.2 统一数据底座 —— ✅ 已实现，且强于方案</h3>
+  <p data-page-node-id="ui2xU7f3monkPFqKd6sdtq">方案核心表清单（products / stock_movements / orders / recognize_logs / members / price_rules / forecast_results）在现系统全部有对应物且更完整（FIFO 批次表、batches、ai_suggestions、marketing_touches、ai_recognition_logs 含 layer/corrected）。PostgreSQL + 流水累计可对账 + 单据经手人可审计，方案的两条铁律本就是现系统的设计底线。<b data-page-node-id="iFFlBHrFfAqudY2ZGQHRQr">不需要动</b>。</p>
+  <span class="concl" data-page-node-id="vKRKPnfFinUgN9CSRnOrzs">结论：不需要动</span>
+</div>
+
+<div class="item" data-page-node-id="9RGQIziy4e3oCG7JyACj0T">
+  <h3 data-page-node-id="7rdJyxCj8EzXufedJENC07">5.3 模型自进化 —— ✅ 识别侧已完整实现</h3>
+  <p data-page-node-id="xN05gaDTzAEyZoKAZiAbpN">识别侧：人工修正写回识别日志 → 纠正帧进样本库 → 审核通过自动重建向量 → 质量报表驱动补拍闭环（V4.11.3–V4.11.5 刚补完三缺口）。预测侧：规则引擎天然"每次重算"，无需 MLflow。<b data-page-node-id="d6yCrLW3i4hdpGmByjWQyx">已达标</b>；若未来引入 LightGBM 再考虑实验跟踪。</p>
+  <span class="concl" data-page-node-id="3sw8AHmln70xZbGvtHrL9S">结论：已达标</span>
+</div>
+
+<hr data-page-node-id="n7VvJspAnnvGGJqZYn6O4j">
+
+<h2 id="s2" data-page-node-id="rA3zbgMlaGA6afgZp9Htbb">二、技术栈差异说明（方案稿 vs 现实，避免误判"欠账"）</h2>
+
+<table data-page-node-id="iF1ihp8FhAmRQzTwhaI1Hj">
+  <thead data-page-node-id="8ukV5mCDIAHw32lbG0QYcJ">
+    <tr data-page-node-id="DFbBYuk7T71dD5H4bxeqlF"><th data-page-node-id="CteYQoXp4UUHvd7k6Y8x7g">方案稿组件</th><th data-page-node-id="92QAsodtUrGISBnE4mvnhh">现系统</th><th data-page-node-id="pcBbB7kdzWHDiDxTY6TZPS">判断</th></tr>
+  </thead>
+  <tbody data-page-node-id="IFDyznnrwcR2B8VqBN28aI">
+    <tr data-page-node-id="UHBXN1xcR0LuC91JzhVhm8"><td data-page-node-id="EC1RiXBRK8h5O5Asz5GfBG">YOLOv8s 检测层</td><td data-page-node-id="I0T1e2SJQwfg5YR7IwtIPQ">零训练轮廓分割（ai.seg.ts）+ ai.detect 既有 YOLO</td><td data-page-node-id="8IAiU9VKXoRKGp9kcverlH">不重构；遮挡/堆叠漏检时再按方案"进阶"引入微调</td></tr>
+    <tr data-page-node-id="1kwywMzClZL3fqypilO3pE"><td data-page-node-id="taVv4Rjy0VIaUXPfbFpeWy">CLIP ViT-B/32</td><td data-page-node-id="HZKupLLOHYIcUfvZ8S2orO">Chinese-CLIP ViT-B/16 + rerank</td><td data-page-node-id="TmDSpMkP3kSZpIK336T2k8">现实更强（中文语料+文本信号），不改</td></tr>
+    <tr data-page-node-id="ag1vndACQbzrK3317skta6"><td data-page-node-id="1wWtaUVOcvDkfCIKq6kHtT">FAISS</td><td data-page-node-id="bO2CBwqeAnkIOLOHG8AY0J">JSONB 向量 + 应用层余弦</td><td data-page-node-id="H3ysCCql3YWyF8MXrYgmZO">几百~几万 SKU 无压力，不迁移</td></tr>
+    <tr data-page-node-id="F3OrFEgU78pyJjKeDTspi3"><td data-page-node-id="2UJL6HBDygPhzWCZsrc5s6">SQLite</td><td data-page-node-id="qKA0AHtORlayin3lAyR7iQ">PostgreSQL（联调库 99 表）</td><td data-page-node-id="gWHJcUHPlCmPaUfLK3kflH">现实更强，不迁移</td></tr>
+    <tr data-page-node-id="P1LpM3GqmglFUb0cA3o6xq"><td data-page-node-id="o4fUNUvzLCFG4hgaXg9LCP">PaddleOCR 规格 OCR</td><td data-page-node-id="OYxB26ZtBUHFi9Xwk4WwpH">ai.ocr.ts（送货单收货）</td><td data-page-node-id="J45wWxAVLUH3kdwJeVUWhZ">规格读取在识别链路中仍为后置项，同包装不同规格场景出现时再接</td></tr>
+    <tr data-page-node-id="NOnkpfqkEG4359daWjdZ9o"><td data-page-node-id="FARybMq8eJ2I3ZEsM4p16I">MLflow</td><td data-page-node-id="f8gGnUtpi8f2lqPxUTqb3K">无（规则引擎无需）</td><td data-page-node-id="KmtyG7pFebRjkccX2Sc6Ky">引入 LightGBM 后再议</td></tr>
+  </tbody>
+</table>
+
+<hr data-page-node-id="oymwkifmozUXtRYgKWj0ym">
+
+<h2 id="s3" data-page-node-id="6WRjte7pqvEIKyb6EOv66Z">三、行动建议（按性价比排序）</h2>
+
+<table data-page-node-id="UA5DDU1CYeyCynXsvkOfE9">
+  <thead data-page-node-id="efzMyW3NSTZ2YQBgGU61YS">
+    <tr data-page-node-id="afOP42P8kVlOFJ4IWMBH7w"><th data-page-node-id="qWtuavpuPfLNLMdiEOhJOA">#</th><th data-page-node-id="FSRKNsLdxwaGE6MXAQo4dj">事项</th><th data-page-node-id="7ZJhyoXCtTwWocGFMDDo7k">对应方案</th><th data-page-node-id="pzKlcOT3eMkHCa5fXqEFzn">工作量</th><th data-page-node-id="WKwp4uvanFYJTKCwC8r37l">理由</th></tr>
+  </thead>
+  <tbody data-page-node-id="IYwALQHlSyIF2BGvnrbuVl">
+    <tr data-page-node-id="jt6XbSL1BDszdNZTSpUlPs">
+      <td data-page-node-id="SqnnZA9iCuDGko93icxMEW">1</td>
+      <td data-page-node-id="C54ee0vWngtXRKd0Pm7l7I"><b data-page-node-id="uY2GRK8gpP7pyC8ETA7gcu">漏扫检测 MVP</b>：自助收银结算一致性校验（识别件数 vs 结算件数）+ 称重商品理论重 vs 实秤校验，差异即暂停复核</td>
+      <td data-page-node-id="XDWRlLsKpc3NCPOFy9zomX">1.2 MVP + 4.1</td>
+      <td data-page-node-id="rb42GiYbSWIjJ8XvxiSezs">小（数据与组件全现成）</td>
+      <td data-page-node-id="TO1MSvGbkuKMqmqaprd5GC">自助收银可信化的前提；防损收益直接</td>
+    </tr>
+    <tr data-page-node-id="ywyB2qnVbucpzztFMAaC5D">
+      <td data-page-node-id="OEPBiGNex2FBHN9Pn10MYn">2</td>
+      <td data-page-node-id="2KoKTVVCeyjKT8Npmfc00N"><b data-page-node-id="TY6eN0PphgucwnNv4LUasF">支付账单导入对账</b>：微信/支付宝 CSV 导入 → 按金额+时间对齐 → 差异清单 → 日结对账单</td>
+      <td data-page-node-id="WVlQaAH1SBbyoHiJbs6MGL">4.2</td>
+      <td data-page-node-id="u4yVnBM4MgP5JiuDJml7Fg">中（规则解析）</td>
+      <td data-page-node-id="CVBiuQZo3NyRrkE8Af9gEg">财务安全闭环；开业收到真实账单即可启动</td>
+    </tr>
+    <tr data-page-node-id="0pECe4g6ESY4toU8ZFOyOV">
+      <td data-page-node-id="hPqIoBwME4zgGRW2XxbB7H">3</td>
+      <td data-page-node-id="EJynGmeTPfj4bC65GhAA5v"><b data-page-node-id="O3YBzGobvzBpJmwtV8X2Qf">AI 选品建议</b>：动销/周转四维打分 → 淘汰/上架建议单进 aibrain 待处理建议流</td>
+      <td data-page-node-id="prL8L4GMWUYvOJLJejjy2a">3.3</td>
+      <td data-page-node-id="D4bQdHc54VhC1sfndAK6tb">小</td>
+      <td data-page-node-id="hFO3dGQ8rwU9vNCpFA9CP8">纯增量，复用建议-确认-留痕机制</td>
+    </tr>
+    <tr data-page-node-id="uhpoHF7JjJYlwWBsUHjzBt">
+      <td data-page-node-id="zUsDYVCFlj7whcQ8kN3emh">4</td>
+      <td data-page-node-id="AIkW7XK0ZUlDvTa7QJdF5V"><b data-page-node-id="kpJQ3qyvGegap6ZFCp6qRH">qa 预置问题</b>：今日毛利/畅销榜/损耗榜/库存预警做成一键按钮 + LLM 摘要开关调优</td>
+      <td data-page-node-id="HUVhFgJnzpLdFUZjRABvlv">2.2</td>
+      <td data-page-node-id="AvyxktrCPs1cx1AfqHD5Mh">很小</td>
+      <td data-page-node-id="eF3wA48PT2qUJzv6KtA8YW">老板端体验立竿见影</td>
+    </tr>
+    <tr data-page-node-id="9YL8nI4J3hut4TzqgDxYhJ">
+      <td data-page-node-id="55ZR4sJMERLZH2MWISkVRy">5</td>
+      <td data-page-node-id="q4i2SiJ4x8r2qqYpxArOuZ"><b data-page-node-id="QFdOtSiRlxsp8qAJk0DspY">货架巡店</b>（Phase 3）：手机拍照 → CLIP → 空位/错位标记，先从"巡店拍照顺带积累样本"切入</td>
+      <td data-page-node-id="Az1MrFiHMWFE0dj8Fu3X5d">1.4</td>
+      <td data-page-node-id="pwssiB4BEQ1Fs9hUM2Ra7E">中</td>
+      <td data-page-node-id="01dgcD7t92eZ2FT9ARpAFl">识别管线 100% 复用，等稳定运营后做</td>
+    </tr>
+    <tr data-page-node-id="qCFeUjEARhEOEvRzvB65me">
+      <td data-page-node-id="JobA1UV2GUZCMD0qDAqdlS">6</td>
+      <td data-page-node-id="ezi9HTHIyr0vS5aWxld43H"><b data-page-node-id="DqmU7iVCGskNfxflhYmZ2r">语音查价单点</b>（Phase 3）：whisper.cpp + 意图规则 + piper 报价</td>
+      <td data-page-node-id="HHw58d4FPkmFRxrlVpSl86">2.1</td>
+      <td data-page-node-id="mT4s8V5pG3A7Kda6Wy1hqO">中</td>
+      <td data-page-node-id="1fiaTv0exgkWxaMh4xDViq">先验证店员真用，再谈语音下单</td>
+    </tr>
+    <tr data-page-node-id="zxUW3TGfCkieACaum2c3T7">
+      <td data-page-node-id="UQuhFkDN8dEzBapq5ykdZq">7</td>
+      <td data-page-node-id="EE6ODaVskKZsnwdEzV9cK4">预测升级 LightGBM（开业满一季度、流水 ≥8–12 周后回测再定）</td>
+      <td data-page-node-id="9uKhNxqbaehKbmNckx5P6V">3.1</td>
+      <td data-page-node-id="gOhemo8mZnTKdh4TED4a7C">大</td>
+      <td data-page-node-id="kOHBr1yRsv58d9IcDmGxIy">数据门槛未到，现在做是空转</td>
+    </tr>
+  </tbody>
+</table>
+
+<p data-page-node-id="t1jGnjRiF3BQE4IeN2J1xz"><b data-page-node-id="mTBsI8JDO9hx0Rz5tM2Bxm">明确没必要做的</b>：刷脸会员识别（合规+方案自不建议）、12 维画像实时优惠（数据量天花板）、大模型实时动态定价（方案已否）、行为识别进阶（先跑 MVP 一致性校验）、FAISS/SQLite/YOLO 重构（现有实现更优或不划算）。</p>
+
+<hr data-page-node-id="H6oYMw2jwdCbEDKIKANyVe">
+
+<h2 id="s4" data-page-node-id="5g8XcRZgUh1ohUaPG00TDg">四、与方案落地节奏的对齐</h2>
+
+<ul data-page-node-id="bVCnNXerNxQd1rGoGzazb3">
+  <li data-page-node-id="UgRP78pIDelkgoOUJEaUSR"><b data-page-node-id="MJe7cRjPh5B2MPe43nRr74">Phase 1（方案：0–2 月）</b>：现系统已整体超额完成（识别/流水/报表/手机端/自助雏形/会员码全在），方案 Phase 1 验收口径（单件 1 秒内、准确率&gt;95%、日结对账跑通）中前两条已达成，第三条差"账单导入对账"（行动 #2）。</li>
+  <li data-page-node-id="9dWzxgJ2naVBZY2IXbp3uG"><b data-page-node-id="GgQlQWGCfY7oXHSFrzDh32">Phase 2（3–6 月）</b>：数据门槛 ≥8–12 周流水——<b data-page-node-id="jGrObCz93J4r3RCMDUiZex">主体能力（补货/定价/营销/效期/画像）已提前建成</b>，开业后重点是"用起来 + 回测建议命中率"，而非新开发。</li>
+  <li data-page-node-id="5jRp1npIwPPx90CfCcECCM"><b data-page-node-id="1wki7iYi66wJatP3RSCLV5">Phase 3（远期）</b>：语音/NL 报表进阶/行为识别/巡店/客服，按本报告第三章排序逐项评估。</li>
+</ul>
+
+<div class="final" data-page-node-id="z8TbWy9psU2BSfGzhaYCJq">
+  <p data-page-node-id="0Hs2aBiV1rYDrnN8Q8EKAt"><b data-page-node-id="Rheia6zPvI7AIYlIDhnryA">一句话总结</b>：这份能力全景可以当作现系统的"验收对照表"——真正的增量开发集中在<b data-page-node-id="rfncIw1gDk48jq0ZuLMoeg">自助收银防损</b>和<b data-page-node-id="SEVRTBHdFabhjLXR0AT94n">账单对账</b>两处，其余是"用数据喂熟已有能力"的运营功课。</p>
+</div>
+
+</div>
+</body>
+</html>

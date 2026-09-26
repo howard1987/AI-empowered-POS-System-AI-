@@ -29,6 +29,9 @@
   .cs-mini:active{background:var(--paper-2);}
   .cs-dot{position:absolute;top:-5px;right:-5px;background:var(--bad);color:#fff;font-size:10px;min-width:16px;height:16px;border-radius:8px;display:flex;align-items:center;justify-content:center;padding:0 4px;font-weight:700;}
   .cs-actions{display:flex;gap:6px;flex-wrap:wrap;}
+  /* V4.27.2 顶栏精简模式：次要按钮隐藏，F3 切换完整/精简（本机设置），功能全部可经快捷键/设置调用 */
+  #csTop.cs-compact [data-sec]{display:none;}
+  #csTop .cs-f3hint{font-size:10.5px;color:var(--ink-3);border:1px dashed var(--line);border-radius:8px;padding:2px 8px;white-space:nowrap;cursor:pointer;}
   .cs-user{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;line-height:1.2;}
   .cs-user b{font-size:13px;color:var(--ink);}
   .cs-user span{font-size:10.5px;color:var(--ink-3);}
@@ -303,7 +306,12 @@ window.CashierShell = (function () {
   let active = false;
   const cart = [];            // {p:{id,name,barcode,spec,unit,sellPrice,memberPrice,minPrice,isWeighted,pinyin,stockQty}, qty, manualPrice?, neg?}
   let member = null;          // {id,name,phone,balance}
-  let coupon = null;          // {id,name,type,cut}（预估口径）
+  let lastGiftActs = [];      // V4.28.9c：本单已生效的赠品活动（结算横幅/客显用）
+  let selCoupons = [];        // 本单已选可用券（member_coupons 对象，支持多选·自动核销）
+  let availCoupons = [];      // 本单自动匹配的可用券
+  let memberCouponsRaw = [];  // 会员全部未使用券（缓存，随购物车动态重算）
+  let deselectedIds = new Set(); // 收银员手动取消的券（即便满足阈值也不再自动选）
+  let COUPON_MODE = 'manual'; // 多券使用模式（后台 coupon.mode：manual/single/auto）
   let promo = { amount: 0, next: null };   // /pos/promo-preview 结果
   let manualRound = 0;
   let orderNote = '';         // V4.18.1 P15 批1：整单备注（结算弹窗录入，挂账原因/顾客称呼等）
@@ -343,14 +351,15 @@ window.CashierShell = (function () {
   let quickEdit = false;
   let payInFlight = false;
   // V4.21.0 P16 批2：快捷键映射（pos.cashier.hotkey_map 可自定义）/ 客显推送 / 堂食台位
-  let hkMap = { pay: 'F9', hold: 'F2', take: 'F4', repeat: 'F6', print: 'F7', lock: 'F8', stock: 'F10', price: 'P', disc: 'D' };   // V4.24.0：新增 stock=库存查询；V4.25.3：新增 price=改价 / disc=单品折扣（默认字母键，可自定义）
+  let hkMap = { pay: 'F9', hold: 'F2', take: 'F4', repeat: 'F6', print: 'F7', lock: 'F8', stock: 'F10', price: 'P', disc: 'D',
+                self: '', ask: '', bell: '', neg: '', pend: '', refund: '', shift: '', reprint: '', collect: '' };   // V4.27.3：collect=AI采集/训练模式（闲时采集样本），默认未设键
   let dispPush = true;        // 客显推送开关（pos.display.push）
   let dispClients = 0;        // 副屏连接数（/display/push 返回；-1=推送失败）
   let dispPushTimer = 0;      // 推送去抖
   let csTable = null;         // 当前挂的堂食台位 {id,name}（结算页选择，落单后复位）
   let memSearchResults = [];  // V4.25.8：会员搜索结果缓存（回车二次确认用）
   // V4.22.0 本机设置（按收银台隔离：存本机 localStorage，不入 system_settings、不串台）
-  let LC = { gridCols: 0, printerId: 0, uiMode: 'auto', dispSer: '', dispBaud: 9600, dispProf: 'esc' };
+  let LC = { gridCols: 0, printerId: 0, uiMode: 'auto', dispSer: '', dispBaud: 9600, dispProf: 'esc', topbarMode: 'full', hotkeysOn: true, printOn: true };   // V4.27.9：hotkeysOn/printOn=F3/F7 开关改为本机记忆（后台值仅作新机初始默认）
   const loadLC = () => { try { Object.assign(LC, JSON.parse(localStorage.getItem('pwa_cashier_local') || '{}') || {}); } catch { /* 损坏则用默认 */ } };
   const saveLC = () => { try { localStorage.setItem('pwa_cashier_local', JSON.stringify(LC)); } catch { /* 忽略 */ } };
   // V4.22.0 低分辨率紧凑模式：自动判定（小视口/系统缩放大）或本机设置强制
@@ -483,13 +492,15 @@ window.CashierShell = (function () {
         const hb = await call('GET', '/settings/key/' + encodeURIComponent('pos.heartbeat_timeout')).then(r => r?.value).catch(() => null);
         hbTimeoutSec = Math.max(5, num(hb, 10) || 10);
       } catch { /* 读不到按默认（开/10秒） */ }
-      const hk = get('pos.cashier.hotkeys'); hotkeysOn = hk == null || hk === true || String(hk) === 'true' || String(hk) === '1';
+      // V4.27.9：快捷键总开关改本机记忆（LC 优先），后台 pos.cashier.hotkeys 仅作新机初始默认
+      hotkeysOn = LC.hotkeysOn !== undefined ? !!LC.hotkeysOn
+        : (hk == null || hk === true || String(hk) === 'true' || String(hk) === '1');
       // V4.21.0 P16 批2：快捷键映射 + 客显推送开关
       try {
         const hm = get('pos.cashier.hotkey_map');
         const obj = typeof hm === 'string' ? JSON.parse(hm) : hm;
         if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-          for (const k of ['pay', 'hold', 'take', 'repeat', 'print', 'lock', 'stock', 'price', 'disc']) {
+          for (const k of ['pay', 'hold', 'take', 'repeat', 'print', 'lock', 'stock', 'price', 'disc', 'self', 'ask', 'bell', 'neg', 'pend', 'refund', 'shift', 'reprint', 'collect']) {
             const v = String(obj[k] || '').toUpperCase();
             if (/^(F([1-9]|1[0-2])|[A-Z])$/.test(v)) hkMap[k] = v;
           }
@@ -497,7 +508,9 @@ window.CashierShell = (function () {
       } catch { /* 用默认键位 */ }
       const dp = get('pos.display.push'); dispPush = dp == null || dp === true || String(dp) === 'true' || String(dp) === '1';
       const tt = get('pos.cashier.tts'); ttsOn = tt == null || tt === true || String(tt) === 'true' || String(tt) === '1';
-      const pr = get('pos.cashier.print'); printOn = pr == null || pr === true || String(pr) === 'true' || String(pr) === '1';
+      // V4.27.9：小票打印开关改本机记忆（LC 优先），后台 pos.cashier.print 仅作新机初始默认
+      printOn = LC.printOn !== undefined ? !!LC.printOn
+        : (pr == null || pr === true || String(pr) === 'true' || String(pr) === '1');
       // V4.25.7：店长授权策略（后台「设备管理」配置，收银端自动同步）
       authReuse = String(get('pos.price.auth_reuse') ?? 'batch').replace(/^"|"$/g, '') === 'once' ? 'once' : 'batch';
       authSelf = String(get('pos.price.auth_self') ?? 'off').replace(/^"|"$/g, '') === 'on';
@@ -558,7 +571,7 @@ window.CashierShell = (function () {
     return cart.map(l => l.custom
       ? { custom: true, customName: l.p.name, qty: l.qty, unitPrice: linePrice(l), ...(l.remark ? { lineRemark: l.remark } : {}) }
       : { productId: l.p.id, qty: l.qty,
-          ...(l.gift ? { gift: true, unitPrice: 0 } : (l.manualPrice != null ? { unitPrice: l.manualPrice } : (l.discRate ? { discRate: l.discRate } : {}))),
+          ...(l.gift ? { gift: true, unitPrice: 0, ...(l.promoGift ? { promoGift: true, promoGiftId: l.promoGiftId } : {}) } : (l.manualPrice != null ? { unitPrice: l.manualPrice } : (l.discRate ? { discRate: l.discRate } : {}))),
           ...(l.remark ? { lineRemark: l.remark } : {}) });
   }
   function snapToLines(items) {
@@ -587,8 +600,13 @@ window.CashierShell = (function () {
       return mp > 0 && l.manualPrice == null ? s + (Number(l.p.sellPrice) - mp) * l.qty : s;
     }, 0) : 0;
     let couponCut = 0;
-    if (coupon && coupon.type === '满减券' && goods >= (Number(coupon.threshold) || 0)) couponCut = Number(coupon.discount) || 0;
-    else if (coupon && coupon.type === '折扣券' && Number(coupon.discount) > 0 && Number(coupon.discount) < 1) couponCut = Math.round(goods * (1 - coupon.discount) * 100) / 100;
+    const baseC = goods - (promo.amount || 0);
+    for (const cp of selCoupons) {
+      if (!cp) continue;
+      if (cp.type === '满减券' && baseC >= (Number(cp.threshold) || 0)) couponCut += Math.min(Number(cp.discount) || 0, baseC);
+      else if (cp.type === '折扣券' && Number(cp.discount) > 0 && Number(cp.discount) < 1) couponCut += baseC * (1 - Number(cp.discount));
+    }
+    couponCut = Math.round(couponCut * 100) / 100;
     const goodsC = Math.round(goods * 100), couponC = Math.round(couponCut * 100), promoC = Math.round((promo.amount || 0) * 100);
     const discC = orderDisc ? Math.round(orderDisc.amount * 100) : 0;
     let dueC = Math.max(0, goodsC - couponC - promoC - discC);
@@ -745,17 +763,44 @@ window.CashierShell = (function () {
   let scanBuf = '', scanTimer = 0;
   document.addEventListener('keydown', e => {
     if (!active || lockState.locked) return;
+    // ESC：有弹窗→关最上层弹窗（点其「取消/关闭」按钮，确保 pwaConfirm 的 resolve(false) 正常触发、不误挂 promise）；无弹窗→打开「设置」面板
+    if (e.key === 'Escape') {
+      const pay = document.querySelector('#csPayMask');
+      if (pay && !document.querySelector('.modal, .modal-mask')) {
+        const x = pay.querySelector('#csPayX'); if (x) x.click(); e.preventDefault(); return;
+      }
+      const masks = document.querySelectorAll('.modal, .modal-mask');
+      if (masks.length) {
+        const mm = masks[masks.length - 1];
+        const cancel = mm.querySelector('#csRfNo,#csRfX,#csPeNo,#csDcNo,#csGfNo,#csRmNo,#csOkNo,#csAzX,#csMrClose,#csSdX,#csSqX,#csCmX,#csShX,#csRpX,#csRbX,.btn.ghost');
+        if (cancel) cancel.click(); else mm.remove();
+        e.preventDefault(); return;
+      }
+      if (document.activeElement && document.activeElement.id === 'csSearch') return;   // 交给搜索框自身 ESC（清空并失焦）
+      e.preventDefault(); try { openSettings(); } catch { /* noop */ } return;
+    }
     if (e.key === 'F1' && !document.querySelector('.modal') && !document.querySelector('.modal-mask')) {
       e.preventDefault(); showHotkeyHelp(); return;
     }
+    // V4.27.3：F3 = 快捷键总开关（收银端 F1/F2… 快捷键 生效⇆失效，固定键）。
+    // 状态落后台设置 pos.cashier.hotkeys（与设置面板同源），EXE 全局键同步注销/重注册；
+    // 关闭后仅剩 F1（键位说明）/F3（本开关）等固定键，扫码枪与回车结算键盘流不受影响。
+    if (e.key === 'F3' && !document.querySelector('.modal') && !document.querySelector('#csPayMask') && !document.querySelector('.modal-mask')) {
+      const tg0 = e.target;
+      const inField0 = tg0 && (tg0.tagName === 'INPUT' || tg0.tagName === 'TEXTAREA' || tg0.tagName === 'SELECT');
+      if (!inField0) { e.preventDefault(); toggleHotkeysOn(); return; }
+    }
     if (hotkeysOn) {
-      const act = Object.keys(hkMap).find(k => hkMap[k] === e.key);
+      const kIn = e.key || '';
+      // 大小写无关匹配：hkMap 里字母键为大写 'P'/'D'（自定义读取也 toUpperCase），实际 e.key 多为小写 → 旧 `=== e.key` 永不命中，正是「P 改价没作用」根因
+      const act = Object.keys(hkMap).find(k => String(hkMap[k] || '').toLowerCase() === kIn.toLowerCase());
       if (act) {
         if (document.querySelector('.modal') || document.querySelector('#csPayMask') || document.querySelector('.modal-mask')) return;
-        // V4.25.3：字母键位（如 P=改价 / D=打折）在输入框聚焦时不劫持，避免影响录入；功能键照旧
+        // 字母键位在输入框聚焦时默认不劫持（拼音/名称录入）；但主搜索框 #csSearch 为空时放行字母热键，避免常驻聚焦把 P/D 挡死
         const tgAct = e.target;
         const inField = tgAct && (tgAct.tagName === 'INPUT' || tgAct.tagName === 'TEXTAREA' || tgAct.tagName === 'SELECT' || tgAct.isContentEditable);
-        if (inField && /^[A-Za-z]$/.test(e.key)) return;
+        const searchEmpty = tgAct && tgAct.id === 'csSearch' && !String(tgAct.value || '').trim();
+        if (inField && /^[A-Za-z]$/.test(kIn) && !searchEmpty) return;
         e.preventDefault();
         if (act === 'hold') holdOrder();
         else if (act === 'take') takeOrder();
@@ -764,6 +809,16 @@ window.CashierShell = (function () {
         else if (act === 'lock') lockNow();
         else if (act === 'stock') openStockQuery();   // V4.24.0：库存查询（默认 F10）
         else if (act === 'pay') openPay();
+        // V4.27.2：顶栏精简模式配套快捷动作（默认未设键，设置 → 快捷键自定义）
+        else if (act === 'self') selfCheck();
+        else if (act === 'ask') openVoiceAsk();
+        else if (act === 'bell') showBellMsgs();
+        else if (act === 'neg') showNegList();
+        else if (act === 'pend') showPending();
+        else if (act === 'refund') openRefund();
+        else if (act === 'shift') openShiftModal();
+        else if (act === 'reprint') reprintLast();
+        else if (act === 'collect') openAiCollect();
         // V4.25.3：改价 / 单品折扣作用于当前选中行（默认最后一行；点行可切换）
         else if (act === 'price') { const t = targetLine(); if (!t) toast('购物车为空，无法改价'); else { curIdx = t.i; priceEdit(t.i); } }
         else if (act === 'disc') { const t = targetLine(); if (!t) toast('购物车为空，无法打折'); else { curIdx = t.i; discEdit(t.i); } }
@@ -796,26 +851,28 @@ window.CashierShell = (function () {
     const info = Pricebook.info();
     v.innerHTML = `
     <div id="csRoot">
-      <div id="csTop">
+      <div id="csTop"${LC.topbarMode === 'compact' ? ' class="cs-compact"' : ''}>
         <div class="cs-brand">${esc(localStorage.getItem('pwa_store_name') || '收银台')}<small>收银台</small></div>
-        <span class="cs-ver">V4.25.7</span>
+        <span class="cs-ver">V5.0.0</span>
         <div class="cs-lamps" id="csLamps">
           ${csLamp('scanner', '扫码枪')}${csLamp('scale', '电子秤')}${csLamp('printer', '小票机')}${csLamp('drawer', '钱箱')}${csLamp('display', '客显')}
         </div>
-        <button class="cs-mini" id="csSelf">一键自检</button>
+        <button class="cs-mini" id="csSelf" data-sec>一键自检</button>
         <div class="cs-actions">
-          <button class="cs-mini" id="csVoiceAsk">🎤 问价</button>
-          <button class="cs-mini" id="csStock">📦 库存查询</button>
-          <button class="cs-mini" id="csBell">🔔 消息<b class="cs-dot" id="csBellDot" style="display:none;background:var(--bad)"></b></button>
-          <button class="cs-mini" id="csNegList">负库存<b class="cs-dot" id="csNegDot" style="display:none"></b></button>
-          <button class="cs-mini" id="csPending">挂起单<b class="cs-dot" id="csPendDot" style="display:none"></b></button>
-          <button class="cs-mini" id="csRefund">退货</button>
-          <button class="cs-mini" id="csShift">班次<b class="cs-dot" id="csShiftDot" style="display:none;background:var(--ok)"></b></button>
-          <button class="cs-mini" id="csRepeat">重复上一单</button>
-          <button class="cs-mini" id="csReprint">补打上一单</button>
-          <button class="cs-mini" id="csLock">锁屏</button>
+          <button class="cs-mini" id="csVoiceAsk" data-sec>🎤 问价</button>
+          <button class="cs-mini" id="csStock" data-sec>📦 库存查询</button>
+          <button class="cs-mini" id="csBell" data-sec>🔔 消息<b class="cs-dot" id="csBellDot" style="display:none;background:var(--bad)"></b></button>
+          <button class="cs-mini" id="csNegList" data-sec>负库存<b class="cs-dot" id="csNegDot" style="display:none"></b></button>
+          <button class="cs-mini" id="csPending" data-sec>挂起单<b class="cs-dot" id="csPendDot" style="display:none"></b></button>
+          <button class="cs-mini" id="csRefund" data-sec>退货</button>
+          <button class="cs-mini" id="csShift" data-sec>班次<b class="cs-dot" id="csShiftDot" style="display:none;background:var(--ok)"></b></button>
+          <button class="cs-mini" id="csRepeat" data-sec>重复上一单</button>
+          <button class="cs-mini" id="csReprint" data-sec>补打上一单</button>
+          <button class="cs-mini" id="csCollect" data-sec>🎓 AI采集</button>
+        <button class="cs-mini" id="csLock">锁屏</button>
           <button class="cs-mini" id="csCfg">设置</button>
         </div>
+        <button class="cs-f3hint" id="csF3Hint" title="顶栏 完整⇆精简 切换（F3）">⌨ F3 精简顶栏</button>
         <div class="cs-user"><b>${esc(ME.name)}</b><span>${esc(ME.empNo)}</span></div>
         <div class="cs-time" id="csClock">--:--</div>
         <button class="cs-mini cs-exit" id="csExit">退出收银台</button>
@@ -870,6 +927,7 @@ window.CashierShell = (function () {
       </div>
     </div>`;
     CK = { root: v };
+    applyTopbarMode();
     bindTop();
     bindLeft();
     renderMemberCard();
@@ -895,11 +953,207 @@ window.CashierShell = (function () {
   }
 
   // ── 顶栏事件 ──
-  /** V4.18.9：F7 小票打印开关（立即生效+留痕；与后台 pos.print.auto 总开关叠加） */
-  async function togglePrint() {
+  /** V4.27.2 顶栏精简模式应用（本机 LC.topbarMode；设置面板选择）。
+   *  精简模式隐藏 data-sec 次要按钮，只留 锁屏/设置/退出；隐藏功能全部
+   *  可经快捷键（设置→快捷键自定义，默认未设键）或调出完整顶栏使用。 */
+  function applyTopbarMode() {
+    const top = document.querySelector('#csTop');
+    if (!top) return;
+    top.classList.toggle('cs-compact', LC.topbarMode === 'compact');
+    const hint = top.querySelector('#csF3Hint');
+    // V4.27.3：F3 提示芯片 = 快捷键总开关状态灯（点击/按 F3 切换）
+    if (hint) { hint.textContent = hotkeysOn ? '⌨ 快捷键 开 · F3 关' : '⌨ 快捷键 关 · F3 开'; hint.style.opacity = hotkeysOn ? '1' : '.75'; }
+  }
+  /** V4.18.9：F7 小票打印开关 → V4.27.9 改为本机记忆（LC.printOn）。
+   *  不再写后台全局设置——多台收银机互不干扰；后台 pos.cashier.print 仅作新机初始默认。 */
+  function togglePrint() {
     printOn = !printOn;
-    try { await call('PUT', '/settings/' + encodeURIComponent('pos.cashier.print'), { value: printOn, reason: 'F7 快捷切换' }); } catch { /* 断网时本单内存生效 */ }
-    toast(printOn ? '🖨 小票打印已开启（F7 再按关闭）' : '🔇 小票打印已关闭（F7 再按开启；收款/钱箱不受影响）');
+    LC.printOn = printOn; saveLC();
+    toast(printOn ? '🖨 本机小票打印已开启（F7 再按关闭）' : '🔇 本机小票打印已关闭（仅本机；F7 再按开启，收款/钱箱不受影响）');
+  }
+  /** V4.27.3：F3 快捷键总开关 → V4.27.9 改为本机记忆（LC.hotkeysOn）。
+   *  仅影响本收银机：关闭后本机 F 键快捷键失效；EXE 端同步注销/重注册本机全局键；
+   *  后台 pos.cashier.hotkeys 仅作新机初始默认。 */
+  function toggleHotkeysOn() {
+    hotkeysOn = !hotkeysOn;
+    LC.hotkeysOn = hotkeysOn; saveLC();
+    syncExeHotkeys();
+    applyTopbarMode();
+    toast(hotkeysOn
+      ? '⌨ 本机快捷键已开启：F2 挂单 / F4 取单 / F6 重复上一单 / F9 结算…（F1 看全部，F3 再按关闭）'
+      : '⌨ 本机快捷键已关闭（仅本机，不影响其他收银机）：功能请点顶栏按钮；F1/F3 固定有效');
+  }
+
+  /* ── V4.27.3 AI 采集/训练模式（收银员闲时在收银台电脑/AI秤采集样本） ──
+   *  流程：选商品（扫码枪/手输/搜索）→ 6 角度拍照（收银台摄像头直拍，或文件上传兜底）→
+   *        自动压缩水印 → 提交 /ai/samples/free 进样本库待审核 → 店长审核。
+   *  训练：样本审核后由训练台/GPU 服务器执行（backend/ai-train 脚本，进程隔离不影响收银）；
+   *        店长（ai.train.launch 权限）可在此直接创建训练任务工单。 */
+  async function openAiCollect() {
+    const ANGLES = ['顶面', '正面', '背面', '左侧面', '右侧面', '俯斜面'];
+    const m = document.createElement('div');
+    m.className = 'modal';
+    let cur = null;                       // {id,name,barcode}
+    const shots = {};                     // angle → imagePath
+    let stream = null;
+    m.innerHTML = `<div class="sheet" style="width:min(560px,94vw);max-height:92dvh;overflow:auto">
+      <h3>🎓 AI 采集（训练模式）<button class="btn ghost mini-btn" id="aiCX" style="float:right">关闭</button></h3>
+      <button class="btn ok" id="aiCBatch" style="width:100%;margin-bottom:8px">📸 多商品同拍采集（一次最多 10 个 · 识别即采）</button>
+      <div class="hint" style="margin-bottom:8px">把几个商品平铺进画面拍一张 → 逐件核对（绿=自动命中 / 黄=点候选确认 / 红=扫码搜索指定）→ 入样本库。<b>采集无需店长放权</b>，提交后由店长/管理员后台审核。多换摆放组合/角度多拍，样本越多样识别越准。<br>
+      单品精拍（下方 6 角度）：光线充足、商品居中占画面 1/2 以上、背景干净。</div>
+      <div class="field"><label>1️⃣ 选商品（扫码枪直扫 / 输条码或名称后回车）</label>
+        <input id="aiCScan" placeholder="条码 / 商品名 / 拼音码，回车确认" autocomplete="off"></div>
+      <div id="aiCCur" class="hint" style="margin:6px 0 10px">未选商品</div>
+      <div class="field"><label>2️⃣ 拍照（收银台摄像头 / AI秤相机；无相机自动用文件上传）</label>
+        <video id="aiCVideo" playsinline muted style="display:none;width:100%;max-height:200px;object-fit:cover;border-radius:10px;background:#000"></video>
+        <div class="hint" id="aiCCamHint" style="margin-top:4px">摄像头检测中…</div></div>
+      <div id="aiCRows" style="margin-top:8px"></div>
+      <button class="btn ok" id="aiCGo" style="width:100%;margin-top:10px" disabled>提交样本（需 6 角度齐全）</button>
+      <div id="aiCTrain" style="margin-top:10px"></div>
+    </div>`;
+    document.body.appendChild(m);
+    const close = () => { if (stream) stream.getTracks().forEach(t => t.stop()); m.remove(); };
+    m.querySelector('#aiCX').onclick = close;
+    const batchBtn = m.querySelector('#aiCBatch');
+    if (batchBtn) batchBtn.onclick = () => {   // V4.27.4：切到多商品同拍（共享组件，识别即采）
+      close();
+      if (window.AiBatchCollect) AiBatchCollect.open({ scene: 'checkout' });
+      else toast('多品同拍组件未加载，请刷新收银台页面');
+    };
+    const $m = s => m.querySelector(s);
+
+    const renderCur = () => {
+      const done = ANGLES.filter(a => shots[a]).length;
+      $m('#aiCCur').innerHTML = cur
+        ? `<b>${esc(cur.name)}</b> <span class="pill gray">${esc(cur.barcode || '—')}</span> · 照片 <b>${done}/6</b>${done === 6 ? ' ✅ 可提交' : ''}`
+        : '未选商品';
+    };
+    const renderRows = () => {
+      $m('#aiCRows').innerHTML = ANGLES.map(a => `
+        <div class="kv" style="padding:4px 0"><span class="k">📸 ${a}</span>
+          <span class="v"><span class="pill gray" id="aiCSt_${a}" style="${shots[a] ? 'color:var(--ok)' : ''}">${shots[a] ? '✅ 已传' : '待拍'}</span>
+          <button class="mini-btn" data-take="${a}">${shots[a] ? '📷 重拍' : '📷 拍照'}</button></span></div>`).join('');
+      $m('#aiCRows').querySelectorAll('[data-take]').forEach(b => b.onclick = () => takeShot(b.dataset.take, b));
+      const go = $m('#aiCGo');
+      const ready = cur && ANGLES.every(a => shots[a]);
+      go.disabled = !ready;
+      go.textContent = ready ? `提交样本（${cur.name} · 6 张）` : '提交样本（需 6 角度齐全）';
+    };
+    const mark = a => { const st = $m('#aiCSt_' + a); if (st) { st.textContent = '✅ 已传'; st.style.color = 'var(--ok)'; } const b = $m(`[data-take="${a}"]`); if (b) b.textContent = '📷 重拍'; };
+
+    /* 帧抓取 + 水印（≤1280×720 JPEG 0.8，同识别帧压缩口径） */
+    const grab = () => {
+      const v = $m('#aiCVideo');
+      if (!v || !v.videoWidth) return null;
+      const MAX_W = 1280, MAX_H = 720;
+      const k = Math.min(1, MAX_W / v.videoWidth, MAX_H / v.videoHeight);
+      const c = document.createElement('canvas');
+      c.width = Math.round(v.videoWidth * k); c.height = Math.round(v.videoHeight * k);
+      const ctx = c.getContext('2d');
+      ctx.drawImage(v, 0, 0, c.width, c.height);
+      if (cur) {
+        ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(0, c.height - 22, c.width, 22);
+        ctx.fillStyle = '#fff'; ctx.font = '13px sans-serif';
+        ctx.fillText(`随手拍·${cur.name} ${new Date().toLocaleString('zh-CN', { hour12: false })} ${ME.name || ''}`.slice(0, 60), 6, c.height - 6);
+      }
+      return c.toDataURL('image/jpeg', 0.8);
+    };
+    const upload = async dataUrl => (await call('POST', '/upload', { image: dataUrl })).path;
+    const takeShot = async (angle, btn) => {
+      if (!cur) { toast('请先选商品（扫码/输入后回车）'); return; }
+      btn.disabled = true; btn.textContent = '上传中…';
+      try {
+        let dataUrl = null;
+        const v = $m('#aiCVideo');
+        if (stream && v && v.videoWidth) dataUrl = grab();
+        if (!dataUrl) {   // 无相机 → 文件选择兜底（手机/外接相机拍照后上传）
+          btn.disabled = false; btn.textContent = shots[angle] ? '📷 重拍' : '📷 拍照';
+          pickFile(angle); return;
+        }
+        shots[angle] = await upload(dataUrl);
+        mark(angle); renderCur(); renderRows();
+      } catch (e) { toast('上传失败：' + (e.message || e)); }
+      btn.disabled = false;
+      if (btn.textContent === '上传中…') btn.textContent = shots[angle] ? '📷 重拍' : '📷 拍照';
+    };
+    const pickFile = angle => {
+      const inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'environment'; inp.style.display = 'none';
+      document.body.appendChild(inp);
+      inp.onchange = async () => {
+        const f = inp.files[0]; inp.remove();
+        if (!f || !cur) { if (!cur) toast('请先选商品'); return; }
+        try {
+          const dataUrl = await watermarkImage(f, `随手拍·${angle} ${new Date().toLocaleString('zh-CN', { hour12: false })} ${ME.name || ''}`);
+          shots[angle] = await upload(dataUrl);
+          mark(angle); renderCur(); renderRows();
+        } catch (e) { toast('上传失败：' + (e.message || e)); }
+      };
+      inp.click();
+    };
+
+    /* 选商品：回车提交（扫码枪扫入自动带回车） */
+    $m('#aiCScan').addEventListener('keydown', async e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const kw = String($m('#aiCScan').value || '').trim();
+      if (!kw) return;
+      try {
+        const p = await lookupProduct(kw);
+        if (!p) { toast('未找到商品：' + kw); return; }
+        cur = { id: Number(p.id), name: p.name, barcode: p.barcode || '' };
+        $m('#aiCScan').value = '';
+        renderCur(); renderRows();
+        toast(`已选「${p.name}」，请拍满 6 个角度`);
+      } catch (e2) { toast(e2.message || '查询失败'); }
+    });
+
+    /* 摄像头就绪检测（收银台电脑/AI秤相机；失败回落文件上传） */
+    (async () => {
+      const v = $m('#aiCVideo');
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { $m('#aiCCamHint').textContent = '无摄像头：各角度「拍照」将使用文件上传'; return; }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } } });
+        v.srcObject = stream; await v.play();
+        v.style.display = '';
+        $m('#aiCCamHint').textContent = '✅ 摄像头就绪：选中角度点「拍照」即抓当前画面（把商品摆到画面中央后逐角度拍摄）';
+      } catch { $m('#aiCCamHint').textContent = '摄像头不可用：各角度「拍照」将使用文件上传'; }
+    })();
+
+    /* 提交（同随手拍口径：/ai/samples/free → 待审核） */
+    $m('#aiCGo').onclick = async () => {
+      if (!cur || !ANGLES.every(a => shots[a])) { toast('请先选商品并拍满 6 个角度'); return; }
+      const go = $m('#aiCGo');
+      go.disabled = true; go.textContent = '提交中…';
+      try {
+        await call('POST', '/ai/samples/free', {
+          productId: cur.id,
+          images: ANGLES.map(a => ({ angle: a, path: shots[a] })),
+          annotation: { name: cur.name, barcode: cur.barcode, from: '收银台采集' },
+        });
+        toast(`✅ 样本已提交：${cur.name}（6 张）待店长审核；审核入库后即可被 AI 识别`);
+        for (const a of ANGLES) delete shots[a];
+        cur = null; renderCur(); renderRows();
+      } catch (e) { toast(e.message || '提交失败'); }
+      go.disabled = false; renderRows();
+    };
+
+    /* 店长区：创建训练任务工单 + 标注审核台/训练台指引 */
+    if (hasPerm('ai.train.launch')) {
+      const box = $m('#aiCTrain');
+      box.innerHTML = `<div class="sec">训练（店长）</div>
+        <button class="mini-btn" id="aiCTask">📋 创建训练任务工单</button>
+        <span class="hint" style="margin-left:8px">样本审核后：<a href="/pwa/label-review.html" target="_blank">标注审核台</a> 校正框 → 训练台导出数据集 → GPU 服务器训练（backend/ai-train 脚本，进程隔离不影响收银）</span>`;
+      box.querySelector('#aiCTask').onclick = async () => {
+        try {
+          const t = unwrap(await call('POST', '/ai/tasks', { taskType: '训练', remark: `收银端闲时采集触发（${cur ? cur.name : '通用'}）` }));
+          toast(`✅ 训练任务已创建：${t.task_no || t.id}`);
+        } catch (e) { toast(e.message || '创建失败'); }
+      };
+    }
+
+    renderCur(); renderRows();
+    setTimeout(() => $m('#aiCScan').focus(), 150);
   }
   function bindTop() {
     // V4.22.3：必须包一层箭头函数——直接 `= exit` 会把 click 事件当 silent 传入，导致确认框/挂单校验被跳过
@@ -922,6 +1176,9 @@ window.CashierShell = (function () {
     $('#csStock').onclick = openStockQuery;   // V4.24.0 ④：库存查询弹窗（另有热键，默认 F10）
     $('#csBell').onclick = showBellMsgs;
     $('#csCfg').onclick = openSettings;
+    $('#csCollect').onclick = openAiCollect;   // V4.27.3：AI 采集/训练模式入口
+    const f3h = $('#csF3Hint');
+    if (f3h) f3h.onclick = () => toggleHotkeysOn();   // V4.27.3：芯片点击 = 按 F3（快捷键总开关）
     document.querySelectorAll('#csLamps .cs-lamp').forEach(el => {
       el.onclick = () => lampReconnect(el.dataset.dev);
     });
@@ -938,7 +1195,7 @@ window.CashierShell = (function () {
     $('#csScanBtn').onclick = () => { $('#csSearch').focus(); toast('扫码枪直接对准商品扫即可（全局收码）'); };
     $('#csClear').onclick = async () => {
       if (!cart.length) return;
-      if (await pwaConfirm('清空购物车', '确认清空当前购物车？（可先挂单暂存）')) { cart.length = 0; coupon = null; manualRound = 0; renderCart(); }
+      if (await pwaConfirm('清空购物车', '确认清空当前购物车？（可先挂单暂存）')) { cart.length = 0; clearCoupons(); manualRound = 0; renderCart(); }
     };
     $('#csUndo').onclick = () => {
       const l = cart[cart.length - 1];
@@ -1126,14 +1383,14 @@ window.CashierShell = (function () {
           <div class="cs-mstats">余额 <b>¥${money(member.balance)}</b> · 待分红 <b>¥${money(member.dividend_balance)}</b> · 积分 <b>${esc(member.points ?? 0)}</b></div>
         </div>
         <div class="cs-mops"><button class="cs-mini" id="csCredBtn">挂账/还款</button><button class="cs-mini" id="csMemSwap">换会员</button></div>`;
-      $('#csMemSwap').onclick = () => { member = null; coupon = null; renderMemberCard(); renderCart(); };
+      $('#csMemSwap').onclick = () => { member = null; clearCoupons(); renderMemberCard(); renderCart(); };
       $('#csCredBtn').onclick = () => openCreditsModal();
     }
   }
   function selectMemberById(id) {
     const m = memSearchResults.find(x => Number(x.id) === Number(id));
     if (!m) return false;
-    member = m; coupon = null; renderMemberCard(); renderCart(); schedulePromo(); loadCoupons();
+    member = m; clearCoupons(); renderMemberCard(); renderCart(); schedulePromo(); loadCoupons();
     return true;
   }
   function onMemKey(e) {
@@ -1184,19 +1441,127 @@ window.CashierShell = (function () {
       try {
         await call('POST', '/members', { phone, name, ...(birthday ? { birthday } : {}), privacyAgreed: true, registerChannel: '收银台' });
         const q = await call('GET', '/members?keyword=' + encodeURIComponent(phone) + '&size=1');
-        if (q.items && q.items.length) { member = q.items[0]; renderMemberCard(); renderCart(); schedulePromo(); }
+        if (q.items && q.items.length) { member = q.items[0]; clearCoupons(); renderMemberCard(); renderCart(); schedulePromo(); }
         toast('会员建档成功'); m.remove();
       } catch (e) { toast(e.message || e); }
     };
   }
-  // 会员可用券（在线）
+  // 会员可用券（在线）：自动匹配本单可用券（结算免输码，收银员可多选/取消）
   async function loadCoupons() {
-    if (!member || !navigator.onLine) return;
+    if (!member || !navigator.onLine) { availCoupons = []; renderSummary(); return; }
     try {
+      try { const md = await call('GET', '/settings/key/coupon.mode'); COUPON_MODE = String(md?.value ?? 'manual').replace(/^"|"$/g, '') || 'manual'; } catch { COUPON_MODE = 'manual'; }
       const d = await call('GET', '/coupons/member/' + member.id);
-      const list = (Array.isArray(d) ? d : (d.items || [])).filter(c => c.status === '未使用');
-      if (list.length) toast(`会员有 ${list.length} 张可用券，结算页可选用`);
-    } catch { /* 静默 */ }
+      memberCouponsRaw = (Array.isArray(d) ? d : (d.items || [])).filter(c => c.status === '未使用');
+      deselectedIds.clear();
+      recomputeCoupons();
+      renderSummary();
+      if (availCoupons.length) toast(`自动匹配到 ${availCoupons.length} 张可用券（模式：${({ manual: '手动多选', single: '单张最大', auto: '自动组合' })[COUPON_MODE] || '手动多选'}）`);
+    } catch { memberCouponsRaw = []; availCoupons = []; renderSummary(); }
+  }
+  // 单券是否适用当前购物车（复用 applyCoupon 口径：满减看门槛/折扣看折率/兑换看适用商品）
+  function couponEligible(cp) {
+    const goods = cart.reduce((s, l) => s + lineAmount(l), 0);
+    const base = goods - (promo.amount || 0);
+    if (cp.status !== '未使用') return false;
+    if (cp.type === '满减券') return base >= (Number(cp.threshold) || 0);
+    if (cp.type === '折扣券') return Number(cp.discount) > 0 && Number(cp.discount) < 1 && base > 0;
+    if (cp.type === '兑换券') {
+      const ids = ((cp.scope && cp.scope.productIds) || []).map(Number);
+      return ids.length ? cart.some(l => ids.includes(Number(l.p.id))) : base > 0;
+    }
+    if (cp.type === '次卡') return true;
+    return false;
+  }
+  function clearCoupons() { selCoupons = []; availCoupons = []; memberCouponsRaw = []; deselectedIds.clear(); }
+  // 单券预估抵扣（与后端 couponAmountOf 同口径；不抛错，不可用返回 0）
+  function couponPreviewAmt(cp) {
+    const goods = cart.reduce((s, l) => s + lineAmount(l), 0);
+    const base = goods - (promo.amount || 0);
+    if (cp.type === '满减券' && base >= (Number(cp.threshold) || 0)) return Math.min(Number(cp.discount) || 0, base);
+    if (cp.type === '折扣券' && Number(cp.discount) > 0 && Number(cp.discount) < 1) return base * (1 - Number(cp.discount));
+    if (cp.type === '兑换券') { const ids = ((cp.scope && cp.scope.productIds) || []).map(Number); const mt = cart.filter(l => ids.includes(Number(l.p.id))); return mt.length ? Math.min(...mt.map(l => l.unitPrice)) : 0; }
+    if (cp.type === '次卡') return 0;
+    return 0;
+  }
+  // 自动组合最优：可叠加券之和 vs 最佳互斥券，取较大者
+  function bestCombo(list) {
+    const nonStack = list.filter(a => a.stackable === false).sort((a, b) => couponPreviewAmt(b) - couponPreviewAmt(a))[0];
+    const nonAmt = nonStack ? couponPreviewAmt(nonStack) : -1;
+    const stackables = list.filter(a => a.stackable !== false);
+    const stackSum = stackables.reduce((s, a) => s + couponPreviewAmt(a), 0);
+    return stackSum >= nonAmt ? stackables : (nonStack ? [nonStack] : []);
+  }
+  function recomputeCoupons() {
+    availCoupons = memberCouponsRaw.filter(couponEligible);
+    if (COUPON_MODE === 'single') {
+      // 单张最大优惠：从未手动取消的可用券中取抵扣最大者（系统决定，收银员仅可切换）
+      const cand = availCoupons.filter(a => !deselectedIds.has(Number(a.id)));
+      const best = cand.sort((a, b) => couponPreviewAmt(b) - couponPreviewAmt(a))[0];
+      selCoupons = best ? [best] : [];
+    } else if (COUPON_MODE === 'auto') {
+      // 自动组合最优：忽略手动取消，系统挑选
+      selCoupons = bestCombo(availCoupons);
+    } else { // manual：手动多选，受每券 stackable 约束（互斥券独占）
+      const sel = availCoupons.filter(a => !deselectedIds.has(Number(a.id)));
+      const nonStack = sel.filter(a => a.stackable === false);
+      selCoupons = nonStack.length
+        ? [nonStack.sort((a, b) => couponPreviewAmt(b) - couponPreviewAmt(a))[0]]
+        : sel;
+    }
+  }
+  function couponDesc(c) {
+    if (c.type === '满减券') return `满 ${money(c.threshold || 0)} 减 ${money(c.discount || 0)}`;
+    if (c.type === '折扣券') return `${(Number(c.discount) * 10).toFixed(1).replace(/\.0$/, '')} 折` + (c.threshold ? `（满 ${money(c.threshold)}）` : '');
+    if (c.type === '兑换券') return '兑换指定商品（免费 1 件）';
+    if (c.type === '次卡') return `计次券 ×${c.discount}`;
+    return '';
+  }
+  function openCouponSheet() {
+    if (!availCoupons.length) { toast('本单无可自动匹配的券'); return; }
+    const m = document.createElement('div'); m.className = 'modal';
+    const modeLabel = ({ manual: '手动多选', single: '单张最大优惠', auto: '自动组合最优' })[COUPON_MODE] || '手动多选';
+    const tip = COUPON_MODE === 'auto'
+      ? '系统已自动挑选最优组合，无需手动勾选（可在后台「多券使用模式」调整规则）。'
+      : COUPON_MODE === 'single'
+        ? '一单仅用一张：系统取抵扣最大者；手动切换即改选另一张。'
+        : '勾选即本单核销；勾选「互斥券」会自动取消其他券。购物券为一次性商品，结算后不可退。';
+    m.innerHTML = `<div class="sheet"><h3>🎟 本单可用券（模式：${modeLabel}）
+      <button class="mini-btn" id="csCpX" style="float:right">关闭</button></h3>
+      <div id="csCpList">${availCoupons.map(c => `<label class="cs-cprow" data-id="${c.id}">
+        <div class="cs-cpmain"><b>${esc(c.name)}</b> ${c.code ? `<code>${esc(c.code)}</code>` : ''}
+          <span class="cs-tag-o">${esc(c.type)}</span>${c.stackable === false ? ' <span style="color:#e5484d;font-size:11px;margin-left:4px">互斥</span>' : ''}</div>
+        <div class="muted">${esc(couponDesc(c))} · 约减 ¥${money(couponPreviewAmt(c))}</div></label>`).join('')}</div>
+      <div class="muted" style="padding:6px 2px">${tip}</div></div>`;
+    document.body.appendChild(m);
+    m.querySelector('#csCpX').onclick = () => m.remove();
+    const refreshChecks = () => m.querySelectorAll('.cs-cprow').forEach(r => { const i = r.querySelector('input'); if (i) i.checked = selCoupons.some(s => s.id === Number(r.dataset.id)); });
+    m.querySelectorAll('.cs-cprow').forEach(row => {
+      const id = Number(row.dataset.id);
+      const cp = availCoupons.find(a => Number(a.id) === id);
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = selCoupons.some(s => s.id === id);
+      if (COUPON_MODE === 'auto') cb.disabled = true; // 自动模式只读
+      cb.style.marginLeft = '8px';
+      row.style.display = 'flex'; row.style.justifyContent = 'space-between'; row.style.alignItems = 'center';
+      if (COUPON_MODE !== 'auto') row.appendChild(cb);
+      const sync = () => {
+        if (COUPON_MODE === 'single') {
+          if (cb.checked) { deselectedIds.delete(id); availCoupons.forEach(a => { if (Number(a.id) !== id) deselectedIds.add(Number(a.id)); }); }
+          else deselectedIds.add(id);
+        } else if (COUPON_MODE === 'manual') {
+          if (cb.checked) {
+            deselectedIds.delete(id);
+            if (cp && cp.stackable === false) availCoupons.forEach(a => { if (Number(a.id) !== id) deselectedIds.add(Number(a.id)); });
+            else availCoupons.forEach(a => { if (a.stackable === false && !deselectedIds.has(Number(a.id))) deselectedIds.add(Number(a.id)); });
+          } else deselectedIds.add(id);
+        }
+        recomputeCoupons(); renderSummary(); if (m.__refreshDue) m.__refreshDue(); refreshChecks();
+      };
+      if (COUPON_MODE !== 'auto') {
+        row.onclick = (e) => { if (e.target !== cb) cb.checked = !cb.checked; sync(); };
+        cb.onchange = sync;
+      }
+    });
   }
 
   // ── 购物车 / 合计 ──
@@ -1214,9 +1579,9 @@ window.CashierShell = (function () {
         const isNeg = stockOnline && st != null && l.qty > st;
         return `<div class="cs-crow" data-row="${i}"${curIdx === i ? ' style="box-shadow:inset 0 0 0 2px var(--pri,#20663f);border-radius:8px"' : ''}>
           <div class="cs-cn">
-            <div class="cs-cnm">${esc(l.p.name)}${l.gift ? '<span class="cs-tag-r">赠</span>' : ''}${l.custom ? '<span class="cs-tag-b">开放键</span>' : ''}${l.discRate ? `<span class="cs-tag-o">${l.discRate}折</span>` : ''}${l.manualPrice != null && !l.gift ? '<span class="cs-tag-o">改价</span>' : ''}${isNeg ? '<span class="cs-tag-r">负库存</span>' : ''}${w ? '<span class="cs-tag-b">称重</span>' : ''}${l.remark ? '<span class="cs-tag-b" title="' + esc(l.remark) + '">注</span>' : ''}</div>
+            <div class="cs-cnm">${esc(l.p.name)}${l.gift ? `<span class="cs-tag-r">${l.promoGift ? '促' : '赠'}</span>` : ''}${l.custom ? '<span class="cs-tag-b">开放键</span>' : ''}${l.discRate ? `<span class="cs-tag-o">${l.discRate}折</span>` : ''}${l.manualPrice != null && !l.gift ? '<span class="cs-tag-o">改价</span>' : ''}${isNeg ? '<span class="cs-tag-r">负库存</span>' : ''}${w ? '<span class="cs-tag-b">称重</span>' : ''}${l.remark ? '<span class="cs-tag-b" title="' + esc(l.remark) + '">注</span>' : ''}</div>
             <div class="cs-csub"><span class="cs-plbl" data-e="${i}" title="点击改价（快捷键 P）">¥${money(price)}</span>
-              ${l.gift ? '<span style="color:var(--bad)">赠品 0 元</span>' : (l.discRate ? `<span style="color:var(--warn)">${l.discRate} 折</span>` : (member && Number(l.p.memberPrice) > 0 && l.manualPrice == null ? '<span style="color:var(--warn)">会员价</span>' : (l.custom ? '<span style="color:var(--ink-3)">手输价</span>' : '<span class="cs-snap">快照</span>')))}
+              ${l.gift ? (l.promoGift ? '<span style="color:var(--bad)">促销赠品 0 元</span>' : '<span style="color:var(--bad)">赠品 0 元</span>') : (l.discRate ? `<span style="color:var(--warn)">${l.discRate} 折</span>` : (member && Number(l.p.memberPrice) > 0 && l.manualPrice == null ? '<span style="color:var(--warn)">会员价</span>' : (l.custom ? '<span style="color:var(--ink-3)">手输价</span>' : '<span class="cs-snap">快照</span>')))}
               ${(l.manualPrice != null || l.discRate) && !l.gift && price < Number(l.p.sellPrice) ? `<span style="text-decoration:line-through;color:var(--ink-3)">¥${money(l.p.sellPrice)}</span>` : ''}${l.remark ? `<span style="color:var(--ink-3)">· ${esc(l.remark)}</span>` : ''}</div>
           </div>
           <div class="cs-qty">
@@ -1297,10 +1662,12 @@ window.CashierShell = (function () {
     renderSummary(); schedulePromo();
   }
   function renderSummary() {
+    recomputeCoupons();
     const c = calc();
     let html = `<div class="cs-sline"><span>商品总额</span><span>¥${money(c.goods)}</span></div>`;
     if (c.memSave > 0) html += `<div class="cs-sline save"><span>会员价已省</span><span>-¥${money(c.memSave)}</span></div>`;
-    if (c.couponCut > 0 && coupon) html += `<div class="cs-sline save"><span>券抵扣（${esc(coupon.name)}·预估）</span><span>-¥${money(c.couponCut)}</span></div>`;
+    if (availCoupons.length) html += `<div class="cs-sline"><button class="cs-mini" id="csCouponBtn">🎟 本单可用券 ${availCoupons.length} 张${selCoupons.length ? ` · 已选 ${selCoupons.length}` : ''}</button></div>`;
+    if (c.couponCut > 0) html += `<div class="cs-sline save"><span>券抵扣（${selCoupons.map(s => esc(s.name)).join('+') || '券'}·预估）</span><span>-¥${money(c.couponCut)}</span></div>`;
     if (c.discAmt > 0 && orderDisc) html += `<div class="cs-sline save"><span>整单折扣（${esc(orderDisc.name || orderDisc.rate + '折')}·留痕）</span><span>-¥${money(c.discAmt)}</span></div>`;
     if (promo.amount > 0) html += `<div class="cs-sline save"><span>促销优惠（预估）</span><span>-¥${money(promo.amount)}</span></div>`;
     if (c.ptsCut > 0) html += `<div class="cs-sline save"><span>积分抵现（${Math.round(ptsCfg.rate)} 分=1 元）</span><span>-¥${money(c.ptsCut)}</span></div>`;
@@ -1309,6 +1676,7 @@ window.CashierShell = (function () {
     if (manualRound > 0) html += `<div class="cs-sline save"><span>手动抹零（店长·留痕）</span><span>-¥${money(manualRound)}</span></div>`;
     $('#csSum').innerHTML = html;
     $('#csDue').textContent = money(c.due);
+    const cpBtn = $('#csCouponBtn'); if (cpBtn) cpBtn.onclick = openCouponSheet;
     pushDisplay();   // V4.21.0：车变即推客显（350ms 去抖；断连/关闭静默跳过）
   }
   // 改价（最低售价硬拦，§5.1）
@@ -1327,6 +1695,7 @@ window.CashierShell = (function () {
     document.body.appendChild(m);
     m.querySelector('#csPeNo').onclick = () => m.remove();
     setTimeout(() => m.querySelector('#csPeIn').focus(), 60);
+    m.querySelector('#csPeIn').addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); m.querySelector('#csPeOk').click(); } });   // 回车=确定改价
     m.querySelector('#csPeOk').onclick = async () => {
       const v = Number(m.querySelector('#csPeIn').value);
       if (!(v > 0)) { toast('请输入有效价格'); return; }
@@ -1378,6 +1747,7 @@ window.CashierShell = (function () {
     const clr = m.querySelector('#csDcClr');
     if (clr) clr.onclick = () => { delete l.discRate; m.remove(); renderCart(); toast('已恢复原价'); };
     setTimeout(() => inp.focus(), 60);
+    inp.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); m.querySelector('#csDcOk').click(); } });   // 回车=确定折扣
     m.querySelector('#csDcOk').onclick = async () => {
       const r = Number(inp.value);
       if (!(r > 0)) { toast('请输入折扣率（如 88）'); return; }
@@ -2007,9 +2377,103 @@ window.CashierShell = (function () {
   }
 
   // ── 结算 ──
-  function openPay() {
+  /** V4.28.9 促销赠品自动添加/回收（收银端出库主通道）：
+   *  有会员时，查「消费后奖励-送赠品」进行中活动——购物车小计 ≥ 门槛且未在车 → 自动添加 0 元促销赠品行；
+   *  小计回落到门槛以下（或活动结束）→ 自动回收本会话自动添加的行（手工赠品行不受影响）。 */
+  /** V4.28.9b 数量校准：赠品 0 元总数必须与活动配置严格一致（如满100送A×2 就只送 2 个）——
+   *  超出部分自动转正常价销售行（保持该行原计价：售价/会员价/折扣），缺口优先从正常行转赠、
+   *  不足再新增赠品行。手工赠品行（店长授权）超活动数量的部分同样拆回正常价，防白拿。 */
+  /** V4.28.9c 贵重赠品确认弹窗（活动勾选 needConfirm 时）：默认聚焦「是」，回车即发放。 */
+  function askGiftConfirm(a) {
+    return new Promise(resolve => {
+      const m = document.createElement('div');
+      m.className = 'modal';
+      m.innerHTML = `<div class="sheet"><h3>🎁 活动赠品确认</h3>
+        <div class="hint" style="font-size:14px">本单已满足「满 ${a.threshold} 元」：<b>${esc(a.name)}</b><br>
+          赠送 <b>${esc(a.giftName || '')} × ${a.giftQty}</b>（0 元，真实出库、进赠送报表）</div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn ghost" id="csGcNo" style="flex:1">否，不发放</button>
+          <button class="btn ok" id="csGcYes" style="flex:1">是，添加赠品</button></div></div>`;
+      document.body.appendChild(m);
+      const done = yes => { m.remove(); resolve(yes); };
+      m.querySelector('#csGcNo').onclick = () => done(false);
+      m.querySelector('#csGcYes').onclick = () => done(true);
+      setTimeout(() => m.querySelector('#csGcYes').focus(), 60);   // 默认「是」，回车即发放
+      m.addEventListener('keydown', e => { if (e.key === 'Escape') done(false); });
+    });
+  }
+
+  async function ensurePromoGifts() {
+    if (!member || !cart.length) { lastGiftActs = []; return; }
+    const goods = cart.reduce((s, l) => s + (l.gift ? 0 : lineAmount(l)), 0);
+    let acts = [];
+    try { acts = await call('GET', '/promotions/active-gifts?amount=' + encodeURIComponent(goods) + '&memberId=' + Number(member.id)) || []; }
+    catch { return; }   // 查询失败静默：不影响收银
+    const actIds = new Set(acts.map(a => a.id));
+    // 回收：本会话自动添加、但活动已不满足的行
+    for (let i = cart.length - 1; i >= 0; i--) {
+      const l = cart[i];
+      if (l.autoGift && !actIds.has(l.promoGiftId)) { cart.splice(i, 1); toast(`已移除促销赠品：${l.p.name}（未达活动门槛）`); }
+    }
+    // 逐活动校准数量（同商品多活动时 giftQty 自然累加：第二个活动看到的车内 0 元数已含第一个）
+    for (const a of acts) {
+      const pid = Number(a.giftProductId);
+      // 该商品所有 0 元赠品行数量（含自动与手工）
+      let gQty = 0;
+      for (const l of cart) if (Number(l.p.id) === pid && l.gift) gQty += Number(l.qty) || 0;
+      // ── 超出：拆多余部分回正常价行 ──
+      if (gQty > a.giftQty) {
+        let excess = gQty - a.giftQty;
+        for (const l of cart) {
+          if (excess <= 0) break;
+          if (Number(l.p.id) !== pid || !l.gift) continue;
+          const cut = Math.min(Number(l.qty), excess);
+          l.qty = Math.round((l.qty - cut) * 1000) / 1000; excess -= cut;
+          // 多余数量并入已有正常行（无改价/无折扣/非开放键）或新增一行（正常计价）
+          const nl = cart.find(x => Number(x.p.id) === pid && !x.gift && !x.custom && x.manualPrice == null && !x.discRate);
+          if (nl) nl.qty = Math.round((Number(nl.qty) + cut) * 1000) / 1000;
+          else cart.push({ p: l.p, qty: cut });
+        }
+        toast(`赠品数量已校准：${a.giftName || a.name} 超出活动数量的部分按正常价计价`);
+      }
+      // ── 缺口：需确认的活动先弹窗（默认是）；普通活动自动发放 ──
+      let need = a.giftQty - Math.min(gQty, a.giftQty);
+      if (need > 0) {
+        if (a.needConfirm) {
+          const yes = await askGiftConfirm(a);
+          if (!yes) continue;   // 收银员选择不发放：不加行（后台兜底对需确认活动也不补发）
+        }
+        for (const l of cart) {
+          if (need <= 0) break;
+          if (Number(l.p.id) !== pid || l.gift || l.custom || l.manualPrice != null || l.discRate) continue;
+          const cut = Math.min(Number(l.qty), need);
+          l.qty = Math.round((l.qty - cut) * 1000) / 1000; need -= cut;
+          const gl = cart.find(x => Number(x.p.id) === pid && x.promoGift && x.promoGiftId === a.id);
+          if (gl) gl.qty = Math.round((Number(gl.qty) + cut) * 1000) / 1000;
+          else cart.push({ p: l.p, qty: cut, gift: true, manualPrice: 0, promoGift: true, promoGiftId: a.id,
+            autoGift: true, remark: `促销赠品:${a.giftName || a.name}` });
+        }
+        if (need > 0) {
+          const pb = await productById(pid);
+          cart.push({ p: pb || { id: pid, name: a.giftName || `赠品#${pid}`, sellPrice: 0 }, qty: need,
+            gift: true, manualPrice: 0, promoGift: true, promoGiftId: a.id, autoGift: true,
+            remark: `促销赠品:${a.giftName || a.name}` });
+          need = 0;
+        }
+        toast(`🎁 已按活动「${a.name}」添加/补足赠品：${a.giftName || a.name} × ${a.giftQty}（0 元）`);
+      }
+    }
+    // 清理数量归零的行
+    for (let i = cart.length - 1; i >= 0; i--) if (Number(cart[i].qty) <= 0) cart.splice(i, 1);
+    // 结算横幅/客显数据源：车中实际生效的赠品活动
+    lastGiftActs = acts.filter(a => cart.some(l => l.promoGift && l.promoGiftId === a.id));
+    renderCart();
+  }
+
+  async function openPay() {
     if (!cart.length) { toast('购物车为空'); return; }
     if (payInFlight) return;
+    if (member) await ensurePromoGifts();   // V4.28.9：结算前按活动自动添加/回收促销赠品行
     const c = calc();
     const m = document.createElement('div');
     m.className = 'modal';
@@ -2023,6 +2487,8 @@ window.CashierShell = (function () {
       <div class="cs-optrow"><span>整单备注</span><input id="csOrderNote" maxlength="100" placeholder="挂账原因 / 顾客称呼等（可空）" style="flex:1;border:1px solid var(--line);border-radius:8px;padding:5px 10px;font-size:13px;background:var(--card);color:var(--ink)"></div>
       <div class="cs-optrow" id="csTableRow" style="display:none"><span>堂食台位</span><select id="csTableSel" style="flex:1;max-width:240px;border:1px solid var(--line);border-radius:8px;padding:5px 10px;font-size:13px;background:var(--card);color:var(--ink)"><option value="">不用台位</option></select></div>
       ${offline ? '<div class="warn-bar">📴 离线收银模式：仅现金记账（暂存补传），扫码扣款/券/促销预览暂不可用</div>' : ''}
+      <div id="csPayMockBanner" style="display:none" class="warn-bar">⚠️ 当前为<b>模拟支付通道</b>（联调用）：不发生真实扣款，付款码尾号 0000 模拟失败。正式营业前请在后台关闭（pay.gateway.allow_mock）。</div>
+      <div id="csPayGiftBanner" style="display:none;background:rgba(46,160,67,.12);border-color:rgba(46,160,67,.45);color:var(--ink)">🎁 <span id="csPayGiftTxt"></span></div>
       <div class="seg" id="csPaySeg">
         <button data-ch="cash" class="on">现金</button>
         <button data-ch="scan" ${offline ? 'class="dis"' : ''}>扫码收款</button>
@@ -2076,7 +2542,23 @@ window.CashierShell = (function () {
     const sheet = m.querySelector('#csPaySheet');
     let payType = 'cash';
     let skipPrintOnce = false;   // V4.21.0：空格收款一次有效（仅现金通道）
-    pushDisplay({ status: 'pay', guide: '请选择支付方式' }, true);   // 客显：进入结算
+    // V4.28.9c：赠品活动横幅（收银员+顾客可见）+ 客显同步
+    if (lastGiftActs.length) {
+      const txt = lastGiftActs.map(a => `已享「${a.name}」：${a.giftName || ''}×${a.giftQty}（0 元）`).join('；');
+      const gb = m.querySelector('#csPayGiftBanner');
+      if (gb) { m.querySelector('#csPayGiftTxt').textContent = txt; gb.style.display = ''; }
+      pushDisplay({ status: 'pay', guide: `请选择支付方式 · 🎁${txt}` }, true);   // 客显：顾客当场可监督
+    } else {
+      pushDisplay({ status: 'pay', guide: '请选择支付方式' }, true);   // 客显：进入结算
+    }
+    // V4.28.1 P0-2：模拟支付通道醒目标识（联调可见，避免误当真实扣款；后台 allow_mock 关闭后服务端直接拒绝）
+    (async () => {
+      try {
+        const sv = await call('GET', '/settings/' + encodeURIComponent('pay.gateway.mode'));
+        const mode = String((sv && typeof sv === 'object' ? sv.value : sv) ?? '').replace(/"/g, '');
+        if (mode === 'mock') { const b = m.querySelector('#csPayMockBanner'); if (b) b.style.display = ''; }
+      } catch { /* 读取失败不阻断收银 */ }
+    })();
     // V4.21.0 P16 批2：堂食台位下拉（空闲/使用中/预留可选，停用除外；落单后台自动转使用中）
     (async () => {
       try {
@@ -2157,6 +2639,7 @@ window.CashierShell = (function () {
       m.querySelector('.cs-paydetail').textContent = `商品 ¥${money(c2.goods)}${c2.memSave > 0 ? ` · 会员省 ¥${money(c2.memSave)}` : ''}${c2.couponCut > 0 ? ` · 券 ¥${money(c2.couponCut)}` : ''}${c2.discAmt > 0 ? ` · 整单折扣 ¥${money(c2.discAmt)}` : ''}${promo.amount > 0 ? ` · 促销 ¥${money(promo.amount)}` : ''}${c2.ptsCut > 0 ? ` · 积分抵现 ¥${money(c2.ptsCut)}` : ''}${c2.autoRound > 0 ? ` · 抹零 ¥${money(c2.autoRound)}` : ''}${manualRound > 0 ? ` · 手动抹零 ¥${money(manualRound)}` : ''}`;
       updCashQ(); updChange(); renderSummary();
     };
+    m.__refreshDue = refreshDue;   // 供券面板勾选时实时刷新应收
     // 整单折扣：预设规则直接套用；自定义折扣率需 pos.discount.custom 权限（服务端同口径校验+留痕）
     const renderDiscSlot = () => {
       const slot = m.querySelector('#csDiscSlot');
@@ -2332,8 +2815,15 @@ window.CashierShell = (function () {
       m.querySelector('#csComboScan').value = (c.due - cash) > 0 ? money(c.due - cash) : '0.00';
       m.querySelector('#csComboErr').textContent = cash >= c.due ? '现金部分需小于应收（否则直接用纯现金）' : '';
     });
-    // 券选择
+    // 券选择（兼容旧手动选券 + 券码手输兜底，统一并入本单 selCoupons 多选）
     const cpBtn = m.querySelector('#csCpBtn');
+    const syncCpBtn = () => { if (cpBtn) cpBtn.textContent = selCoupons.length ? `已选券 ${selCoupons.length} 张` : '选用券'; };
+    const addOne = (cp) => {
+      const obj = { id: Number(cp.id), name: cp.name || cp.cpName || '券', type: cp.type, threshold: Number(cp.threshold) || 0, discount: Number(cp.discount) || 0, status: '未使用', scope: cp.scope || null, stackable: cp.stackable ?? true };
+      if (!memberCouponsRaw.some(x => x.id === obj.id)) memberCouponsRaw.push(obj);
+      deselectedIds.delete(obj.id); recomputeCoupons(); syncCpBtn(); renderSummary();
+    };
+    syncCpBtn();
     cpBtn && (cpBtn.onclick = async () => {
       try {
         const d = await call('GET', '/coupons/member/' + member.id);
@@ -2341,20 +2831,14 @@ window.CashierShell = (function () {
         if (!list.length) { toast('该会员暂无可用券'); return; }
         const mm = document.createElement('div');
         mm.className = 'modal';
-        mm.innerHTML = `<div class="sheet"><h3>选用优惠券（预估展示，核销以结账为准）</h3>
+        mm.innerHTML = `<div class="sheet"><h3>选用优惠券（可多选，核销以结账为准）</h3>
           ${list.map(cp => `<div class="row" data-cp="${cp.id}" style="cursor:pointer"><div class="grow">
             <div class="t">${esc(cp.name || cp.cpName || '券')} · ${esc(cp.type || '')}</div>
             <div class="s">门槛 ¥${money(cp.threshold || 0)} · ${cp.type === '满减券' ? '减 ¥' + money(cp.discount) : cp.type === '折扣券' ? Number(cp.discount) * 10 + ' 折' : esc(cp.type || '')}</div></div></div>`).join('')}
-          <button class="btn ghost" id="csCpClose" style="width:100%;margin-top:8px">不使用</button></div>`;
+          <button class="btn ghost" id="csCpClose" style="width:100%;margin-top:8px">清除本单券</button></div>`;
         document.body.appendChild(mm);
-        mm.querySelector('#csCpClose').onclick = () => { coupon = null; cpBtn.textContent = '选用券'; mm.remove(); };
-        mm.querySelectorAll('[data-cp]').forEach(r => r.onclick = () => {
-          const cp = list.find(x => Number(x.id) === Number(r.dataset.cp));
-          coupon = { id: Number(cp.id), name: cp.name || cp.cpName || '券', type: cp.type, threshold: Number(cp.threshold) || 0, discount: Number(cp.discount) || 0 };
-          cpBtn.textContent = '已选：' + coupon.name;
-          mm.remove(); renderSummary();
-          toast('已选用券（结账时服务端核销）');
-        });
+        mm.querySelector('#csCpClose').onclick = () => { clearCoupons(); syncCpBtn(); mm.remove(); renderSummary(); };
+        mm.querySelectorAll('[data-cp]').forEach(r => r.onclick = () => { addOne(list.find(x => Number(x.id) === Number(r.dataset.cp))); mm.remove(); toast('已加入本单可用券'); });
       } catch (e) { toast(e.message || e); }
     });
     // V4.19.0 P15.5 #8 券码手输兜底：无可用券列表/纸质券时按券码核销（服务端校验归属+状态）
@@ -2365,10 +2849,8 @@ window.CashierShell = (function () {
       if (!c2) return;
       try {
         const d = await call('POST', '/coupons/lookup-code', { code: c2, memberId: member.id });
-        coupon = { id: d.mcId, name: d.name || '券', type: d.type, threshold: Number(d.threshold) || 0, discount: Number(d.discount) || 0 };
-        cpBtn.textContent = '已选：' + coupon.name + '（券码）';
-        renderSummary();
-        toast(`已核验券码：${coupon.name}（结账时服务端核销）`);
+        addOne({ id: d.mcId, name: d.name, type: d.type, threshold: d.threshold, discount: d.discount });
+        toast(`已核验券码：${d.name || '券'}（结账时服务端核销）`);
       } catch (e) { toast(e.message || e); }
     });
     // 组合支付：付款码输入框注入到 combo 面板（确认收款时读取）
@@ -2433,7 +2915,7 @@ window.CashierShell = (function () {
     const suspendTimer = setTimeout(() => {   // D3：90 秒未完成自动转挂起
       if (document.body.contains(m)) m.remove();
       pendingPays.push({ outTradeNo, amount, combo, items: snapFromCart(), memberId: member ? member.id : undefined, savedAt: new Date().toISOString() });
-      cart.length = 0; member = null; coupon = null; manualRound = 0;
+      cart.length = 0; member = null; clearCoupons(); manualRound = 0;
       renderCart(); updatePendBadge(); toast('扫码 90 秒未完成，已转挂起单（顶栏可查单续付）'); orderNote = '';
     }, 90000);
     try {
@@ -2512,7 +2994,7 @@ window.CashierShell = (function () {
       payments,
       ...(member ? { memberId: member.id } : {}),
       ...(opt.memberId ? { memberId: opt.memberId } : {}),
-      ...(coupon ? { couponId: coupon.id } : {}),
+      ...(selCoupons.length ? { couponIds: selCoupons.map(c => c.id), couponId: selCoupons[0].id } : {}),
       ...(manualRound > 0 ? { manualRound } : {}),
       ...(orderDisc ? { orderDiscount: orderDisc.amount, discountRate: orderDisc.rate, discountReason: orderDisc.reason } : {}),
       // V4.25.5：含改价/折扣/赠品时随单提交店长授权票据（服务端强制校验，票过期即拒）
@@ -2532,7 +3014,7 @@ window.CashierShell = (function () {
       if (offline && !opt.gateway) {
         // 离线暂存（现金记账单）：复用全局补传队列（clientRef 幂等防重）；含浏览器原生 fetch 错误（Failed to fetch/Load failed）
         enqueueOffline(payload);
-        cart.length = 0; coupon = null; manualRound = 0; member = null; orderNote = '';
+        cart.length = 0; clearCoupons(); manualRound = 0; member = null; orderNote = '';
         renderCart(); renderMemberCard(); refreshStagedBadge();
         toast('📴 网络不可用：本单已离线暂存，恢复联网自动补传');
         payInFlight = false;
@@ -2576,7 +3058,7 @@ window.CashierShell = (function () {
         try { await call('POST', '/shifts/open-drawer', { reason: '收现弹箱失败', failed: true }); } catch { /* 静默 */ } }
     }
     try { if (ttsOn && window.PwaTTS) window.PwaTTS.cash(d.payable, snap.channel); } catch { }
-    cart.length = 0; coupon = null; manualRound = 0; member = memberSnapshot; orderNote = '';
+    cart.length = 0; clearCoupons(); manualRound = 0; member = memberSnapshot; orderNote = '';
     orderDisc = null; ptsUse = 0;   // V4.18.3 P15 批2：整单折扣/积分抵现单次有效，落单后重置
     priceAuth = null;              // V4.25.5：店长授权票随单作废（下一单改价需重新授权）
     const soldTable = csTable; csTable = null;   // 台位单次有效（服务端已转「使用中」，清台走台位管理）
@@ -2628,7 +3110,7 @@ window.CashierShell = (function () {
         memberId: member ? member.id : undefined, remark: `收银台挂单 · ${ME.name}`,
       });
       toast(`已挂单 ${d.order_no || '#' + d.id}`);
-      cart.length = 0; coupon = null; manualRound = 0; member = null;
+      cart.length = 0; clearCoupons(); manualRound = 0; member = null;
       renderCart(); renderMemberCard();
       refreshHeldBadge();   // V4.18.2：挂单后即时刷新取单角标
     } catch (e) { toast(e.message); }
@@ -2696,7 +3178,7 @@ window.CashierShell = (function () {
               if (p) cart.push({ p: { ...p, id: Number(p.id) }, qty: Number(it.qty) || 1, ...(it.unitPrice != null ? { manualPrice: Number(it.unitPrice) } : {}) });
             }
           }
-          member = null; coupon = null;
+          member = null; clearCoupons();
           call('POST', `/pos/held/${d.id}/pick`).catch(() => {});
           m.remove(); renderCart(); renderMemberCard(); refreshStock();
           refreshHeldBadge();   // V4.18.2：取出后即时刷新角标
@@ -2805,16 +3287,68 @@ window.CashierShell = (function () {
     });
   }
   // ── V4.18.5 P15批4 内置退货：输小票号带原单 → 勾行按可退数退 → 原因必选留痕 → 限额内直退/超限转店长 ──
+
+  // 退货选单列表（复用：手机号/后缀反查多条 与 按日期浏览）：点某单「退货」→ openRefund(orderNo) 进入既有逐行退货
+  function pickRefundOrder(orders, dateLabel) {
+    const m = document.createElement('div'); m.className = 'modal';
+    m.innerHTML = `<div class="sheet" style="width:min(560px,94vw)"><h3>↩ 选择原单${dateLabel ? ' · ' + esc(dateLabel) : ''}<button class="mini-btn" id="csRpX" style="float:right">关闭</button></h3>
+      <div class="hint">共 ${orders.length} 单，点「退货」选择要退的销售单据${orders.length >= 200 ? '（仅显示最近 200 单，可用日期缩小范围）' : ''}</div>
+      <div style="max-height:340px;overflow:auto;margin-top:8px">${orders.map(o => `
+        <div class="row" style="display:flex;align-items:center;gap:8px;padding:8px 2px;border-bottom:1px solid var(--line)">
+          <span class="grow" style="min-width:0"><span class="t">${esc(o.orderNo)}</span>
+            <span class="s">${dt(o.createdAt)} · ¥${money(o.amount)}</span></span>
+          <button class="btn pri" data-no="${esc(o.orderNo)}">退货</button></div>`).join('')}
+      </div></div>`;
+    document.body.appendChild(m);
+    m.querySelector('#csRpX').onclick = () => m.remove();
+    m.querySelectorAll('[data-no]').forEach(b => b.onclick = () => { m.remove(); openRefund(b.dataset.no); });
+  }
+
+  // 退货 · 按日期浏览本店「已完成」单据（默认今天）→ 选定后进入既有逐行退货弹窗
+  function openRefundByDate() {
+    const m = document.createElement('div'); m.className = 'modal';
+    const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    m.innerHTML = `<div class="sheet" style="width:min(560px,94vw)"><h3>↩ 内置退货 · 按日期选单<button class="mini-btn" id="csRbX" style="float:right">关闭</button></h3>
+      <div class="field" style="display:flex;gap:8px;align-items:center">
+        <label style="margin:0;white-space:nowrap">日期</label>
+        <input id="csRbDate" type="date" value="${today}" style="flex:1;border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--card);color:var(--ink)">
+        <button class="btn pri" id="csRbGo">查询</button>
+      </div>
+      <div id="csRbList" style="max-height:340px;overflow:auto;margin-top:8px"><div class="hint">正在加载当天单据…</div></div>
+      <div class="hint" style="margin-top:6px">提示：已知小票号/会员手机号时，直接在上一步输入可精确查单。</div></div>`;
+    document.body.appendChild(m);
+    const load = async () => {
+      const d = m.querySelector('#csRbDate').value || today;
+      const box = m.querySelector('#csRbList'); box.innerHTML = '<div class="hint">查询中…</div>';
+      let res; try { res = await call('GET', '/pos/refund-lookup?date=' + encodeURIComponent(d)); }
+      catch (e) { box.innerHTML = `<div class="hint" style="color:var(--bad)">${esc(e.message || e)}</div>`; return; }
+      const orders = (res && res.orders) || [];
+      if (!orders.length) { box.innerHTML = `<div class="hint">${esc(d)} 暂无本店已完成的销售单据</div>`; return; }
+      box.innerHTML = orders.map(o => `
+        <div class="row" style="display:flex;align-items:center;gap:8px;padding:8px 2px;border-bottom:1px solid var(--line)">
+          <span class="grow" style="min-width:0"><span class="t">${esc(o.orderNo)}</span>
+            <span class="s">${dt(o.createdAt)} · ¥${money(o.amount)}</span></span>
+          <button class="btn pri" data-no="${esc(o.orderNo)}">退货</button></div>`).join('');
+      box.querySelectorAll('[data-no]').forEach(b => b.onclick = () => { m.remove(); openRefund(b.dataset.no); });
+    };
+    m.querySelector('#csRbX').onclick = () => m.remove();
+    m.querySelector('#csRbGo').onclick = load;
+    m.querySelector('#csRbDate').onchange = load;
+    load();
+  }
+
   async function openRefund(prefillNo) {
     let no = prefillNo;
     if (!no) {
-      no = await pwaPrompt('内置退货 · 第 1 步', '扫小票条码或输入单号（GD2026…）', { okText: '查询原单' });
-      no = (no || '').trim();
-      if (!no) return;
+      const r = await pwaPrompt('内置退货 · 第 1 步', '扫小票条码或输入单号（GD2026…）；留空可按日期选单', { okText: '查询原单' });
+      if (r === null) return;                    // 取消（关闭/取消键）
+      no = String(r).trim();
+      if (!no) { openRefundByDate(); return; }   // 输入为空 → 按日期浏览本店单据（默认查所有已完成单据，日期选择器筛选）
     }
     let d;
     try { d = await call('GET', '/pos/refund-lookup?no=' + encodeURIComponent(no)); }
     catch (e) { toast(e.message || e); return; }
+    if (!d.order && Array.isArray(d.orders)) { pickRefundOrder(d.orders); return; }   // 手机号/后缀反查命中多条 → 先选单
     const refundableLines = (d.lines || []).filter(l => l.refundable > 0);
     if (!refundableLines.length) { toast('该单没有可退商品（可能已整单退过）'); return; }
     const m = document.createElement('div');
@@ -3118,7 +3652,7 @@ window.CashierShell = (function () {
             if (r.l.qty <= 0.0001) cart.splice(idx, 1);
           }
         }
-        coupon = null; manualRound = 0; orderDisc = null; ptsUse = 0;   // 优惠随拆分重算：原车已套优惠清空
+        clearCoupons(); manualRound = 0; orderDisc = null; ptsUse = 0;   // 优惠随拆分重算：原车已套优惠清空
         m.remove();
         renderCart(); renderSummary();
         refreshHeldBadge();
@@ -3325,9 +3859,10 @@ window.CashierShell = (function () {
       <div class="kv"><span class="k">商品区每行卡片数<b style="color:var(--pri)">（本机）</b></span><span class="v"><select id="csCfgCols">${[4,5,6,7,8].map(n => `<option value="${n}"${gridCols === n ? ' selected' : ''}>${n} 个/行</option>`).join('')}</select></span></div>
       <div class="kv"><span class="k">显示模式<b style="color:var(--pri)">（本机）</b></span><span class="v"><select id="csCfgUi"><option value="auto"${LC.uiMode === 'auto' ? ' selected' : ''}>自动（小屏自动紧凑）</option><option value="normal"${LC.uiMode === 'normal' ? ' selected' : ''}>标准</option><option value="compact"${LC.uiMode === 'compact' ? ' selected' : ''}>紧凑（低分辨率收银机）</option></select></span></div>
       <div class="kv"><span class="k">本机小票机<b style="color:var(--pri)">（本机）</b></span><span class="v"><select id="csCfgPrnDev">${prOpts.join('')}</select></span></div>
-      <div class="kv"><span class="k">键盘快捷键</span><span class="v"><select id="csCfgHk"><option value="1"${hotkeysOn ? ' selected' : ''}>开</option><option value="0"${!hotkeysOn ? ' selected' : ''}>关</option></select></span></div>
+      <div class="kv"><span class="k">键盘快捷键<b style="color:var(--pri)">（本机 · F3 快捷切换）</b></span><span class="v"><select id="csCfgHk"><option value="1"${hotkeysOn ? ' selected' : ''}>开</option><option value="0"${!hotkeysOn ? ' selected' : ''}>关</option></select></span></div>
+      <div class="kv"><span class="k">顶栏显示模式<b style="color:var(--pri)">（本机 · F3 快捷切换）</b></span><span class="v"><select id="csCfgTop"><option value="full"${LC.topbarMode !== 'compact' ? ' selected' : ''}>完整（全部按钮）</option><option value="compact"${LC.topbarMode === 'compact' ? ' selected' : ''}>精简（次要按钮隐藏，走快捷键）</option></select></span></div>
       <div class="kv"><span class="k">收款语音播报</span><span class="v"><select id="csCfgTts"><option value="1"${ttsOn ? ' selected' : ''}>开</option><option value="0"${!ttsOn ? ' selected' : ''}>关</option></select></span></div>
-      <div class="kv"><span class="k">小票打印（<b>F7</b> 快捷开关）</span><span class="v"><select id="csCfgPrn"><option value="1"${printOn ? ' selected' : ''}>开</option><option value="0"${!printOn ? ' selected' : ''}>关</option></select></span></div>
+      <div class="kv"><span class="k">小票打印<b style="color:var(--pri)">（本机 · F7 快捷开关）</b></span><span class="v"><select id="csCfgPrn"><option value="1"${printOn ? ' selected' : ''}>开</option><option value="0"${!printOn ? ' selected' : ''}>关</option></select></span></div>
       <div class="kv"><span class="k">浏览器兜底打印（弹预览）</span><span class="v"><select id="csCfgFb"><option value="1"${curFb ? ' selected' : ''}>开（未配小票机时兜底）</option><option value="0"${!curFb ? ' selected' : ''}>关（绝不弹预览）</option></select></span></div>
       <div class="kv"><span class="k">蓝牙音箱（语音出口探测）</span><span class="v"><button class="mini-btn" id="csCfgBle">连接/探测</button></span></div>
       <div class="kv"><span class="k">客显推送（顾客副屏）</span><span class="v"><select id="csCfgDisp"><option value="1"${dispPush ? ' selected' : ''}>开</option><option value="0"${!dispPush ? ' selected' : ''}>关</option></select> <button class="mini-btn" id="csCfgDispOpen">🖥 打开副屏</button></span></div>
@@ -3423,7 +3958,8 @@ window.CashierShell = (function () {
     });
     // 快捷键自定义编辑器（V4.21.0）：点击捕获按键；冲突自动互换；ESC 取消
     let hkDraft = { ...hkMap };
-    const HK_CN = { pay: '结算', hold: '挂单', take: '取单', repeat: '重复上一单', print: '打印开关', lock: '锁屏', stock: '库存查询', price: '改价', disc: '单品折扣' };   // V4.25.3：price/disc 作用于当前选中行
+    const HK_CN = { pay: '结算', hold: '挂单', take: '取单', repeat: '重复上一单', print: '打印开关', lock: '锁屏', stock: '库存查询', price: '改价', disc: '单品折扣',
+                    self: '一键自检', ask: '🎤 问价', bell: '消息', neg: '负库存', pend: '挂起单', refund: '退货', shift: '班次', reprint: '补打上一单', collect: '🎓 AI采集' };   // V4.27.3：collect=AI 采集/训练模式（默认未设键，点按捕获设置）
     const hkSlot = m.querySelector('#csHkEdit');
     const renderHkEdit = () => {
       if (!hkSlot) return;
@@ -3440,6 +3976,7 @@ window.CashierShell = (function () {
         const key = ev.key.length === 1 ? ev.key.toUpperCase() : ev.key;
         if (ev.key === 'Escape') { renderHkEdit(); return; }
         if (key === 'F1') { toast('F1=键位说明，固定不可改'); renderHkEdit(); return; }
+        if (key === 'F3') { toast('F3=顶栏完整/精简切换，固定不可改'); renderHkEdit(); return; }
         if (!/^(F([1-9]|1[0-2])|[A-Z])$/.test(key)) { toast('仅支持 F1~F12 或单个字母键'); renderHkEdit(); return; }
         const other = Object.keys(hkDraft).find(x => x !== k && hkDraft[x] === key);
         if (other) { toast(`「${key}」已用于${HK_CN[other]}，两键已互换`); hkDraft[other] = hkDraft[k]; }
@@ -3457,9 +3994,7 @@ window.CashierShell = (function () {
           ['pos.cashier.debounce', m.querySelector('#csCfgDb').value === '1'],
           ['pos.cashier.stock_hard', Number(m.querySelector('#csCfgHard').value)],
           ['pos.cashier.lock_timeout', Number(m.querySelector('#csCfgLock').value) || 0],
-          ['pos.cashier.hotkeys', m.querySelector('#csCfgHk').value === '1'],
           ['pos.cashier.tts', m.querySelector('#csCfgTts').value === '1'],
-          ['pos.cashier.print', m.querySelector('#csCfgPrn').value === '1'],
           ['pos.print.browser_fallback', m.querySelector('#csCfgFb').value === '1'],
           ['pos.cashier.tts.voice', m.querySelector('#csCfgVoice').value],
           ['pos.cashier.tts.rate', m.querySelector('#csCfgRate').value],
@@ -3470,6 +4005,12 @@ window.CashierShell = (function () {
         LC.gridCols = Number(m.querySelector('#csCfgCols').value) || 5;
         LC.uiMode = m.querySelector('#csCfgUi').value || 'auto';
         LC.printerId = Number(m.querySelector('#csCfgPrnDev').value) || 0;
+        // V4.27.2：顶栏显示模式（本机）——精简=隐藏次要按钮，F3 快捷切换
+        const cfgTop = m.querySelector('#csCfgTop');
+        if (cfgTop) LC.topbarMode = cfgTop.value === 'compact' ? 'compact' : 'full';
+        // V4.27.9：快捷键总开关 / 小票打印开关（本机）——不再写后台全局，多台收银机互不干扰
+        LC.hotkeysOn = m.querySelector('#csCfgHk').value === '1';
+        LC.printOn = m.querySelector('#csCfgPrn').value === '1';
         saveLC();
         const failed = [];
         for (const [k, v] of puts) {
@@ -3480,7 +4021,7 @@ window.CashierShell = (function () {
         toast('收银设置已保存并留痕');
         // V4.21.1：音色/界面刷新不阻塞保存反馈（异常也不吞 toast/关窗）
         if (window.PwaTTS) { const p = PwaTTS.loadCfg(true); if (p && p.catch) p.catch(() => { }); }
-        try { await loadSettings(); armIdleLock(); renderGrid(); syncExeHotkeys(); applyCompact(); } catch (e) { console.warn('设置刷新异常', e); }
+        try { await loadSettings(); armIdleLock(); renderGrid(); syncExeHotkeys(); applyCompact(); applyTopbarMode(); } catch (e) { console.warn('设置刷新异常', e); }
         m.remove();
       } catch (e) {
         // V4.21.1 兜底：任何未预期异常都必须给用户反馈（不再可能出现「点了没反应」）
@@ -3540,7 +4081,10 @@ window.CashierShell = (function () {
     try {
       // V4.25.3：只把功能键（F1~F12）注册为 EXE 全局键；字母键（如 P/D）不注册——
       //   globalShortcut 单字母会全局劫持系统输入（在别的窗口按 P 也会被拦），故字母键仅页面内生效
-      const keys = [...new Set(Object.values(hkMap).filter(Boolean).filter(k => /^F([1-9]|1[0-2])$/.test(k)))];
+      // V4.27.3：F3=快捷键总开关固定键（页面内生效，不注册全局）；总开关关闭时清空全部全局键注册
+      const keys = hotkeysOn
+        ? [...new Set(Object.values(hkMap).filter(Boolean).filter(k => /^F([1-9]|1[0-2])$/.test(k) && k !== 'F3'))]
+        : [];
       if (window.DesktopShell && DesktopShell.registerHotkeys) DesktopShell.registerHotkeys(keys);
     } catch { /* 非 EXE 环境 */ }
   }
@@ -3612,19 +4156,21 @@ window.CashierShell = (function () {
     reload();
   }
 
-  // ── F1 键位说明弹窗（固定键，不可自定义） ──
+  // ── F1 键位说明弹窗（F1/F3 固定键，其余可自定义） ──
   function showHotkeyHelp() {
-    const CN = { pay: '结算（开收款）', hold: '挂单', take: '取单', repeat: '重复上一单', print: '小票打印开关', lock: '锁屏', stock: '库存查询', price: '改价（当前行）', disc: '单品折扣（当前行）' };
+    const CN = { pay: '结算（开收款）', hold: '挂单', take: '取单', repeat: '重复上一单', print: '小票打印开关', lock: '锁屏', stock: '库存查询', price: '改价（当前行）', disc: '单品折扣（当前行）',
+                 self: '一键自检', ask: '🎤 问价', bell: '消息', neg: '负库存', pend: '挂起单', refund: '退货', shift: '班次', reprint: '补打上一单' };
     const m = document.createElement('div');
     m.className = 'modal';
     m.innerHTML = `<div class="sheet" style="width:min(430px,92vw)"><h3>⌨ 快捷键说明<button class="mini-btn" id="csHkX" style="float:right">关闭</button></h3>
-      ${Object.keys(CN).map(k => `<div class="kv"><span class="k">${CN[k]}</span><span class="v"><b>${esc(hkMap[k] || '未设')}</b></span></div>`).join('')}
+      ${Object.keys(CN).map(k => `<div class="kv"><span class="k">${CN[k]}</span><span class="v"><b>${esc(hkMap[k] || '未设（可在设置里设）')}</b></span></div>`).join('')}
       <div class="kv"><span class="k">快捷键说明（本弹窗）</span><span class="v"><b>F1</b></span></div>
+      <div class="kv"><span class="k">快捷键总开关（固定）· 开/关 F1/F2… 全部快捷键</span><span class="v"><b>F3</b></span></div>
       <div class="kv"><span class="k">结算弹窗 · 确认收款</span><span class="v">回车</span></div>
       <div class="kv"><span class="k">结算弹窗 · 收款但不打小票</span><span class="v">空格</span></div>
       <div class="kv"><span class="k">购物车有商品时</span><span class="v">回车 = 直接结算</span></div>
       <div class="kv"><span class="k">收款成功弹窗</span><span class="v">回车 = 新的一单</span></div>
-      <div class="hint">「改价 / 单品折扣」默认作用于<b>当前选中行</b>（点一下购物车行选中，再按快捷键）；未选则作用于最后一行。改价不得低于最低卖价、折扣不得低于最低折扣，越线需店长放行留痕。<br>键位可在「设置 → 快捷键自定义」修改（F1 固定）；改后立即生效，EXE 桌面端自动同步为全局键。F3/F5/F11/F12 为浏览器保留键，不建议设。</div></div>`;
+      <div class="hint">「改价 / 单品折扣」默认作用于<b>当前选中行</b>（点一下购物车行选中，再按快捷键）；未选则作用于最后一行。改价不得低于最低卖价、折扣不得低于最低折扣，越线需店长放行留痕。<br>键位可在「设置 → 快捷键自定义」修改（F1/F3 固定），未设键的顶栏功能（自检/问价/消息/负库存/挂起单/退货/班次/补打/AI采集）也在那里设。<br><b>F3 = 快捷键总开关（仅本机）</b>：关闭后<b>本收银机</b>所有 F 键快捷键失效（防与其它软件抢键/键盘流干扰），不影响其他收银机；扫码枪与回车结算不受影响；顶栏右上角芯片实时显示开/关状态。</div></div>`;
     document.body.appendChild(m);
     m.querySelector('#csHkX').onclick = () => m.remove();
   }

@@ -607,6 +607,15 @@ class AuthController {
       `INSERT INTO employees (store_id, emp_no, name, phone, password_hash)
        VALUES ($1,$2,$3,$4,$5) RETURNING id, emp_no, name`,
       [user.storeId, empNo, body.name, body.phone ?? null, hash]);
+    // V4.28.0 安全修复（F-07）：禁止经员工创建绑定「超级管理员」角色（防店长自我提权）；
+    // 绑定超管必须由持 * 通配权限者操作
+    const isSuperUser = user.perms.includes('*');
+    const wantedRoles = body.roleIds ?? [];
+    if (!isSuperUser && wantedRoles.length) {
+      const bad = await q(
+        `SELECT r.name FROM roles r WHERE r.id = ANY($1::bigint[]) AND r.name = '超级管理员'`, [wantedRoles]);
+      if (bad.length) throw new BizException(40301, '不能绑定「超级管理员」角色（需系统最高权限）', 403);
+    }
     for (const rid of (body.roleIds ?? [])) {
       await q(`INSERT INTO employee_roles (employee_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [emp.id, rid]);
     }

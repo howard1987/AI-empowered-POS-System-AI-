@@ -13,7 +13,8 @@ import { PRODUCT_VISIBLE } from '../common/sql';   // V5.0.0 商品可售可见�
 import { readFileSync, existsSync } from 'fs';
 import { basename } from 'path';
 import { clipcnEmbedImage, clipcnEmbedText, cnCosine, clipcnReady, CLIPCN_MODEL_TAG } from './ai.clipcn';
-import { segmentItems, cropItemBase64, SegBox } from './ai.seg';
+import { segmentItems, cropItemBase64, SegBox, SegResult } from './ai.seg';
+import { segmentItemsYolo } from './ai.seg.yolo';
 import { UPLOADS_DIR, uploadsFilePath, saveUploadImage } from '../common/uploads';
 /** 样本状态口径与视觉知识库（ai.vl.ts）保持一致：只有审核通过的样本参与检索 */
 const READY_STATUS = "('已审核','已入库')";
@@ -260,17 +261,23 @@ export interface EmbMultiResult {
   segMs: number;
   ms: number;
   framePath: string | null;
+  /** V4.27.0 定位引擎：yolo=检测模型框选（任意背景鲁棒）；contour=零训练轮廓分割兜底 */
+  segEngine: 'yolo' | 'contour';
 }
 
 /**
- * 方案 v3.2 M2 · 多件识别：识别帧 → 零训练轮廓分割定位每件 → 逐件裁剪 → Chinese-CLIP 检索 + 别名 rerank。
+ * 方案 v3.2 M2 · 多件识别：识别帧 → 定位每件（V4.27.0 起 YOLO 检测模型优先，未配置/失败回落
+ * 零训练轮廓分割）→ 逐件裁剪 → Chinese-CLIP 检索 + 别名 rerank。
  * 单件画面（0~1 个有效框）返回 multi=false，调用方回落单件管线。
  * 每件独立给出候选与判定信号（conf/rawImgSim/textSim），聚合计数与门槛判定由 ai.module 完成。
  */
 export async function embSearchMulti(frameBase64: string, storeId: number, topK = 3): Promise<EmbMultiResult> {
   const t0 = Date.now();
-  const seg = await segmentItems(frameBase64);
-  if (!seg.multi) return { multi: false, boxes: seg.boxes, crops: [], sampleTotal: 0, segMs: seg.ms, ms: Date.now() - t0, framePath: null };
+  // V4.27.0：YOLO 检测式定位优先（ai.seg.model_id），未配置/推理失败 → 轮廓分割兜底，链路不阻断
+  const yoloSeg = await segmentItemsYolo(frameBase64).catch((): SegResult | null => null);
+  const seg = yoloSeg ?? await segmentItems(frameBase64);
+  const segEngine: 'yolo' | 'contour' = yoloSeg ? 'yolo' : 'contour';
+  if (!seg.multi) return { multi: false, boxes: seg.boxes, crops: [], sampleTotal: 0, segMs: seg.ms, ms: Date.now() - t0, framePath: null, segEngine };
   const rows = await loadSearchRows(storeId);
   const w = await rerankTextWeight();
   const crops: MultiCropResult[] = [];
@@ -285,7 +292,7 @@ export async function embSearchMulti(frameBase64: string, storeId: number, topK 
       crops.push({ box, candidates: [], reranked: false, ms: Date.now() - ct0 });
     }
   }
-  return { multi: true, boxes: seg.boxes, crops, sampleTotal: rows.length, segMs: seg.ms, ms: Date.now() - t0, framePath: saveFrameThrottled(frameBase64) };
+  return { multi: true, boxes: seg.boxes, crops, sampleTotal: rows.length, segMs: seg.ms, ms: Date.now() - t0, framePath: saveFrameThrottled(frameBase64), segEngine };
 }
 
 /** 识别帧节流落盘（10s 一张，与 ai.sample-match.ts 策略一致；供纠正链路/样本回流取图；V4.15.5 按月分目录） */

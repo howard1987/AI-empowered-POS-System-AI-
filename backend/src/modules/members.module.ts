@@ -85,16 +85,22 @@ export async function syncMemberLevel(
 @Controller('members')
 class MembersController {
 
-  /** 快速查询：手机号 / 卡号 / 姓名 / 拼音码 即输即查（V4.5.2） */
+  /** 快速查询：手机号 / 卡号 / 姓名 / 拼音码 即输即查（V4.5.2）。
+   *  V4.28.0 安全修复（F-06）：按本店收敛 + 手机号脱敏（持 member.balance.adjust 可见完整号） */
   @Get()
-  async list(@Query('keyword') keyword?: string, @Query('page') page = '1', @Query('size') size = '20') {
+  async list(@Query('keyword') keyword?: string, @Query('page') page = '1', @Query('size') size = '20',
+             @CurrentUser() user?: AuthUser) {
     const kw = (keyword || '').trim();
     const pn = Math.max(1, Number(page) || 1);
     const sz = Math.min(100, Math.max(1, Number(size) || 20));
-    const where = `m.deleted_at IS NULL AND ($1 = '' OR m.phone=$1 OR m.card_no=$1
+    const canSeePhone = !!user && (user.perms.includes('*') || user.perms.includes('member.balance.adjust'));
+    const where = `m.deleted_at IS NULL AND m.store_id = ${Number(user.storeId)}
+      AND ($1 = '' OR m.phone=$1 OR m.card_no=$1
       OR m.name ILIKE '%'||$1||'%' OR m.pinyin_code ILIKE '%'||$1||'%')`;
+    const phoneSel = canSeePhone ? 'm.phone' :
+      `CASE WHEN m.phone IS NULL OR m.phone='' THEN '' ELSE LEFT(m.phone,3)||'****'||RIGHT(m.phone,4) END AS phone`;
     const items = await q(
-      `SELECT m.id, m.card_no, m.phone, m.name, m.pinyin_code, m.level_id, m.points, m.status,
+      `SELECT m.id, m.card_no, ${phoneSel}, m.name, m.pinyin_code, m.level_id, m.points, m.status,
               m.last_active_date, m.invalid_at, m.created_at,
               a.balance, a.dividend_balance, a.dividend_capped, a.principal_total,
               a.dividend_cumulative, a.dividend_weight,
@@ -198,7 +204,7 @@ class MembersController {
            FROM sales_orders o
           WHERE o.member_id=$1 AND o.status='已完成'
           ORDER BY o.id DESC LIMIT 20`, [id]),
-      q(`SELECT mc.id, mc.status, mc.received_at, mc.expire_at, mc.used_at, mc.times_used,
+      q(`SELECT mc.id, mc.code, mc.status, mc.received_at, mc.expire_at, mc.used_at, mc.times_used,
                 c.name, c.type, c.threshold, c.discount, c.valid_days
            FROM member_coupons mc
            JOIN coupons c ON c.id = mc.coupon_id

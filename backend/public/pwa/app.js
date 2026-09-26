@@ -629,7 +629,7 @@ const PERM_NAMES = {
   'pos.hold': '挂单', 'pos.hang': '挂单/取单', 'pos.refund': '退款', 'pos.refund.apply': '发起退款', 'pos.refund.audit': '退款审核',
   'pos.emergency': '应急收银',
   'stock.inbound.audit': '入库审核', 'stock.return.audit': '退货审核',
-  'stock.count.audit': '盘点审核', 'stock.count.task': '盘点任务管理', 'stock.loss.create': '报损登记', 'stock.transfer': '调拨',
+  'stock.count.audit': '盘点审核', 'stock.count.task': '盘点任务管理', 'stock.loss.create': '报损登记', 'stock.loss.audit': '报损审核', 'stock.transfer': '调拨执行', 'stock.transfer.audit': '调拨确认',
   'purchase.po.approve': '采购审批', 'recon.confirm': '对账确认', 'recon.settle.audit': '结算审核', 'settle.pay.close': '关闭付款流程',
   'staff.manage': '员工与权限管理', 'member.manage': '会员管理', 'report.view': '报表查看', 'report.view.all': '全店报表查看',
   'member.register': '会员注册', 'member.balance.recharge': '储值收款', 'member.balance.adjust': '储值人工调整',

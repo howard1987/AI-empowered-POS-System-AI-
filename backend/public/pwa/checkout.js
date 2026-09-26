@@ -233,6 +233,16 @@ View.checkout = function (v) {
     applyHand();   // V4.13.9 左右手习惯：按后台设置镜像按钮排布
   };
 
+  /** V4.27.1 Q7 生鲜称重复核：拿到重量（秤码解析/串口读重）后比对单件重量期望区间，越界提示复核 */
+  async function warnWeightOut(pid, kg) {
+    try {
+      const g = Math.round(Number(kg) * 1000);
+      if (!(g > 0)) return;
+      const r = unwrap(await call('POST', '/ai/weight-check', { productId: Number(pid), weightG: g }));
+      if (r && r.checked && !r.ok) toast(r.message || `重量越界：${g}g，请复核`, false);
+    } catch { /* 校验失败不阻断收银 */ }
+  }
+
   function bind() {
     $('#ckEmg').onchange = () => { emergency = $('#ckEmg').checked; render(); };
     Scanner.attach($('#ckScan'), async key => {
@@ -263,6 +273,7 @@ View.checkout = function (v) {
                 else cart.push({ p: { ...base, id }, qty: Number(kg.toFixed(3)) });
               }
               renderCart(); $('#ckScan').value = '';
+              warnWeightOut(base.id, kg);   // V4.27.1 Q7：秤码重量 vs 期望区间复核
               toast(`⚖ 秤码识别${sp.offline ? '（离线）' : ''}：${sp.product.name} ${kg.toFixed(3)}kg${sp.amount > 0 ? ' ¥' + money(sp.amount) : ''}`);
               return;
             }
@@ -737,6 +748,7 @@ View.checkout = function (v) {
         if (kg <= 0.002) { toast('秤盘读数为 0：请先把商品放上秤盘'); return; }
         l.qty = kg;
         renderCart();
+        warnWeightOut(l.p.id, kg);   // V4.27.1 Q7：串口秤读重 vs 期望区间复核
         toast(`已读重 ${kg.toFixed(3)} kg：${l.p.name}`);
       });
       box.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { cart.splice(+b.dataset.d, 1); renderCart(); });

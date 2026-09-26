@@ -960,7 +960,7 @@ class PurchaseController {
         for (const bt of batches) {
           await cx(c,
             `INSERT INTO stock_flows (store_id, product_id, batch_id, direction, qty, unit_cost, ref_type, ref_id, employee_id)
-             SELECT 1, product_id, id, '出库', remain_qty, inbound_cost, 'inbound_void', $2, $3 FROM batches WHERE id=$1`,
+             SELECT b.store_id, product_id, id, '出库', remain_qty, inbound_cost, 'inbound_void', $2, $3 FROM batches b WHERE b.id=$1`,
             [bt.id, id, user.sub]);
           await cx(c, `UPDATE batches SET remain_qty=0, status='入库作废' WHERE id=$1`, [bt.id]);
         }

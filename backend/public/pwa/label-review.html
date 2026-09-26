@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>AI 标注审核台 · 框叠加预览与拖拽修正</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f4f6f9; color: #1d2b3a; }
+  header { background: #1d2b3a; color: #fff; padding: 10px 16px; display: flex; align-items: center; gap: 12px; }
+  header b { font-size: 15px; }
+  header .sp { flex: 1; }
+  header a { color: #9ecbff; font-size: 13px; text-decoration: none; }
+  main { max-width: 860px; margin: 0 auto; padding: 14px; }
+  .card { background: #fff; border: 1px solid #e3e8ef; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  .hint { font-size: 12.5px; color: #6b7a8c; line-height: 1.7; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 9px 4px; border-bottom: 1px dashed #edf1f5; font-size: 13.5px; }
+  .row:last-child { border-bottom: 0; }
+  .row img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; background: #eef1f4; }
+  .row .t { flex: 1; min-width: 0; }
+  .row .t .n { font-weight: 600; }
+  .row .t .s { font-size: 11.5px; color: #8a97a5; margin-top: 2px; }
+  button { border: 0; border-radius: 8px; padding: 7px 14px; font-size: 13px; cursor: pointer; background: #2f6fed; color: #fff; }
+  button.ghost { background: #eef2f7; color: #33445a; }
+  button.danger { background: #fdecec; color: #c0392b; }
+  button:disabled { opacity: .5; cursor: default; }
+  .canvasWrap { position: relative; text-align: center; }
+  canvas { max-width: 100%; border-radius: 10px; touch-action: none; cursor: crosshair; background: #111; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  .boxList { margin-top: 8px; }
+  .boxList .brow { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #44546a; padding: 4px 0; }
+  .boxList .brow code { background: #f0f3f7; padding: 2px 6px; border-radius: 6px; }
+  .empty { text-align: center; color: #8a97a5; padding: 40px 0; font-size: 14px; }
+  .toast { position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%); background: #1d2b3a; color: #fff;
+           padding: 9px 18px; border-radius: 20px; font-size: 13px; opacity: 0; transition: .25s; pointer-events: none; z-index: 9; }
+  .toast.show { opacity: .95; }
+</style>
+</head>
+<body>
+<header>
+  <b>🏷 AI 标注审核台</b>
+  <span class="hint" style="color:#9ecbff">自动建议框 → 拖拽修正 → 保存入库（训练集优先用人工校正框）</span>
+  <span class="sp"></span>
+  <a href="/pwa/">← 返回</a>
+</header>
+<main id="app"></main>
+<div class="toast" id="toast"></div>
+<script>
+'use strict';
+/* V4.27.1 Q3 标注审核台（PWA 独立页，店长/训练台权限）：
+ *   GET  /ai/label/pending      待标注样本队列
+ *   GET  /ai/label/:id/boxes    样本图 + 自动建议框（YOLO 定位优先，回落轮廓分割；已有人工框直接返回）
+ *   POST /ai/label/:id/boxes    保存人工校正框（annotation.boxes + labelReviewed=true）
+ * 交互：画布叠加框预览；拖框移动、拖右下角手柄缩放、「新增框」后拉框、逐框删除、保存/跳过。 */
+const API_BASE = localStorage.getItem('pwa_api_base') || '';
+const TOKEN = localStorage.getItem('pwa_token') || '';
+const $ = s => document.querySelector(s);
+const app = $('#app');
+let toastTimer = 0;
+const toast = t => { const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2600); };
+
+async function api(method, path, body) {
+  const res = await fetch(API_BASE + path, {
+    method,
+    headers: { ...(TOKEN ? { authorization: 'Bearer ' + TOKEN } : {}), ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const r = await res.json().catch(() => ({ code: -1, msg: '网络异常' }));
+  if (r.code !== 0) throw new Error(r.msg || ('请求失败 #' + r.code));
+  return r.data;
+}
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/* V4.28.5 F-09：/uploads 已挂登录鉴权，<img src> 无法带 header → 拼 ?token= */
+const imgUrl = p => {
+  const url = API_BASE + String(p || '');
+  if (!/^\/uploads\//.test(String(p || '')) || !TOKEN) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN);
+};
+
+/* ── 队列视图 ── */
+async function renderQueue() {
+  app.innerHTML = '<div class="card"><div class="empty">加载中…</div></div>';
+  let list;
+  try { list = await api('GET', '/ai/label/pending?size=100'); } catch (e) {
+    app.innerHTML = `<div class="card"><div class="empty">加载失败：${esc(e.message)}<br><span class="hint">请确认已登录且具备 ai.train.launch 权限（本页读取浏览器中的登录令牌，请从 PWA 登录后打开）</span></div></div>`;
+    return;
+  }
+  const rows = Array.isArray(list) ? list : [];
+  if (!rows.length) {
+    app.innerHTML = '<div class="card"><div class="empty">✅ 没有待标注样本：全部样本已完成框校正（新样本审核入库后会出现在这里）</div></div>';
+    return;
+  }
+  app.innerHTML = `<div class="card">
+    <div class="hint" style="margin-bottom:6px">待标注 <b>${rows.length}</b> 个样本。点击进入单样本修正。</div>
+    ${rows.map(s => `
+      <div class="row">
+        <img src="${esc(imgUrl(s.image_path))}" loading="lazy" onerror="this.style.visibility='hidden'">
+        <div class="t"><div class="n">#${s.id} ${esc(s.product_name || '商品' + s.product_id)}</div>
+          <div class="s">${esc(s.angle || '')} · ${esc(s.status)} · ${esc(s.image_path)}</div></div>
+        <button data-id="${s.id}">标注</button>
+      </div>`).join('')}
+  </div>`;
+  app.querySelectorAll('button[data-id]').forEach(b => b.onclick = () => renderEditor(Number(b.dataset.id)));
+}
+
+/* ── 单样本编辑视图 ── */
+async function renderEditor(sampleId) {
+  app.innerHTML = '<div class="card"><div class="empty">加载样本与建议框…</div></div>';
+  let d;
+  try { d = await api('GET', `/ai/label/${sampleId}/boxes`); } catch (e) { toast(e.message); renderQueue(); return; }
+  let boxes = (d.boxes || []).map(b => ({ ...b }));
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.src = imgUrl(d.imagePath);
+  await new Promise((ok, err) => { img.onload = ok; img.onerror = () => err(new Error('图片加载失败')); }).catch(() => {});
+
+  app.innerHTML = `<div class="card">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <button class="ghost" id="back">← 队列</button>
+      <b style="flex:1">#${d.sampleId} ${esc(d.productName || '')}</b>
+      <span class="hint">建议引擎：${d.engine === 'manual' ? '人工框（已校正）' : d.engine === 'yolo' ? 'YOLO 定位' : '轮廓分割'}</span>
+    </div>
+    <div class="canvasWrap"><canvas id="cv"></canvas></div>
+    <div class="toolbar">
+      <button id="add">➕ 新增框（点后在图上拉框）</button>
+      <button id="clear" class="ghost">清空（负样本）</button>
+      <button id="skip" class="ghost">跳过</button>
+      <button id="save" style="flex:1">✅ 保存校正框</button>
+    </div>
+    <div class="hint">拖动框内移动；拖右下角手柄缩放。空框保存 = 确认该图为背景负样本。</div>
+    <div class="boxList" id="boxList"></div>
+  </div>`;
+  $('#back').onclick = renderQueue;
+  const cv = $('#cv');
+  const ctx = cv.getContext('2d');
+  const dispScale = Math.min(1, 800 / Math.max(img.width || 1, img.height || 1));
+  cv.width = Math.round((img.width || 640) * dispScale);
+  cv.height = Math.round((img.height || 480) * dispScale);
+  const toDisp = b => ({ x: b.x * dispScale, y: b.y * dispScale, w: b.w * dispScale, h: b.h * dispScale });
+  const toOrig = b => ({ x: Math.round(b.x / dispScale), y: Math.round(b.y / dispScale), w: Math.round(b.w / dispScale), h: Math.round(b.h / dispScale) });
+  const HANDLE = 12;
+  const inHandle = (b, px, py) => { const q = toDisp(b); return Math.abs(px - (q.x + q.w)) <= HANDLE && Math.abs(py - (q.y + q.h)) <= HANDLE; };
+  const inBox = (b, px, py) => { const q = toDisp(b); return px >= q.x && px <= q.x + q.w && py >= q.y && py <= q.y + q.h; };
+
+  let dragIdx = -1, dragMode = '', dragStart = null, drawing = false;
+
+  const draw = () => {
+    ctx.drawImage(img, 0, 0, cv.width, cv.height);
+    boxes.forEach((b, i) => {
+      const q = toDisp(b);
+      ctx.strokeStyle = '#37d67a'; ctx.lineWidth = 2;
+      ctx.strokeRect(q.x, q.y, q.w, q.h);
+      ctx.fillStyle = 'rgba(55,214,122,.12)'; ctx.fillRect(q.x, q.y, q.w, q.h);
+      ctx.fillStyle = '#37d67a';
+      ctx.fillRect(q.x + q.w - HANDLE, q.y + q.h - HANDLE, HANDLE, HANDLE);
+      ctx.fillStyle = '#fff'; ctx.font = '11px sans-serif';
+      ctx.fillText(String(i + 1), q.x + 3, q.y + 12);
+    });
+    renderBoxList();
+  };
+  const renderBoxList = () => {
+    $('#boxList').innerHTML = boxes.length
+      ? boxes.map((b, i) => `<div class="brow"><b>${i + 1}</b><code>x=${b.x} y=${b.y} w=${b.w} h=${b.h}</code>
+          <button class="danger" data-del="${i}" style="padding:2px 8px">删除</button></div>`).join('')
+      : '<div class="hint">暂无框（保存空框 = 负样本）</div>';
+    $('#boxList').querySelectorAll('[data-del]').forEach(btn => btn.onclick = () => { boxes.splice(Number(btn.dataset.del), 1); draw(); });
+  };
+
+  const pos = ev => { const r = cv.getBoundingClientRect(); return { x: (ev.clientX - r.left) * (cv.width / r.width), y: (ev.clientY - r.top) * (cv.height / r.height) }; };
+  cv.addEventListener('pointerdown', ev => {
+    const p = pos(ev);
+    for (let i = boxes.length - 1; i >= 0; i--) {
+      if (inHandle(boxes[i], p.x, p.y)) { dragIdx = i; dragMode = 'resize'; dragStart = p; cv.setPointerCapture(ev.pointerId); return; }
+    }
+    for (let i = boxes.length - 1; i >= 0; i--) {
+      if (inBox(boxes[i], p.x, p.y)) { dragIdx = i; dragMode = 'move'; dragStart = p; cv.setPointerCapture(ev.pointerId); return; }
+    }
+    if (drawing) { dragIdx = boxes.push({ x: Math.round(p.x / dispScale), y: Math.round(p.y / dispScale), w: 1, h: 1 }) - 1; dragMode = 'draw'; dragStart = p; cv.setPointerCapture(ev.pointerId); }
+  });
+  cv.addEventListener('pointermove', ev => {
+    if (dragIdx < 0 || !dragStart) return;
+    const p = pos(ev), dx = (p.x - dragStart.x) / dispScale, dy = (p.y - dragStart.y) / dispScale;
+    const b = boxes[dragIdx];
+    if (dragMode === 'move') { b.x = Math.max(0, Math.round(b.x + dx)); b.y = Math.max(0, Math.round(b.y + dy)); dragStart = p; }
+    else if (dragMode === 'resize') { b.w = Math.max(6, Math.round(b.w + dx)); b.h = Math.max(6, Math.round(b.h + dy)); dragStart = p; }
+    else if (dragMode === 'draw') { b.w = Math.max(6, Math.round((p.x / dispScale) - b.x)); b.h = Math.max(6, Math.round((p.y / dispScale) - b.y)); }
+    draw();
+  });
+  cv.addEventListener('pointerup', () => { dragIdx = -1; dragMode = ''; dragStart = null; });
+
+  $('#add').onclick = () => { drawing = !drawing; $('#add').textContent = drawing ? '✏️ 在图上拉框（再点取消）' : '➕ 新增框（点后在图上拉框）'; };
+  $('#clear').onclick = () => { boxes = []; draw(); };
+  $('#skip').onclick = renderQueue;
+  $('#save').onclick = async () => {
+    const btn = $('#save'); btn.disabled = true; btn.textContent = '保存中…';
+    try {
+      const r = await api('POST', `/ai/label/${sampleId}/boxes`, { boxes: boxes.map(toOrig) });
+      toast(`✅ 已保存 ${r.boxes} 个校正框`);
+      renderQueue();
+    } catch (e) { toast('保存失败：' + e.message); btn.disabled = false; btn.textContent = '✅ 保存校正框'; }
+  };
+
+  draw();
+}
+
+renderQueue();
+</script>
+</body>
+</html>

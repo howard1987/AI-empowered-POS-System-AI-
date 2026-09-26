@@ -185,6 +185,51 @@ class SettingsController {
     return { key, value: logVal, ...(writeToStore ? { scope: 'store', storeId: curStore() } : {}) };
   }
 
+  /** V4.27.8 作用域调整（仅总部视角）：把某个键在「通用（hq）⇄ 门店级（store）」之间切换。
+   *  通用 = 连锁端直接读取统一值（门店不可改，改值自动下发）；门店级 = 各店可覆盖 + 总部可按店下发。
+   *  hq→store：不动值；store→hq：清除各店覆盖值（统一值立即生效），防"看不见的旧覆盖"继续生效。 */
+  @RequirePerms('sys.settings')
+  @Put(':key/scope')
+  async setScope(
+    @Param('key') key: string,
+    @Body() body: { scope: string },
+    @CurrentUser() user: AuthUser,
+  ) {
+    const scope = String(body.scope || '');
+    if (!['hq', 'store'].includes(scope)) throw new BizException(40003, 'scope 须为 hq（通用）或 store（门店级）');
+    if (user.perms.includes('*') === false && !user.perms.includes('sys.settings')) {
+      throw new BizException(40303, '需要系统设置权限', 403);
+    }
+    // 只有总部视角（dataScope=all）可调整作用域；门店账号无权决定一个键是通用还是门店级
+    const sc = curScope();
+    if (sc.dataScope !== 'all') throw new BizException(40304, '仅总部/老板视角可调整设置作用域', 403);
+    const row = await q1<any>(`SELECT setting_key, scope FROM system_settings WHERE setting_key=$1`, [key]);
+    if (!row) throw new BizException(40404, `设置项 ${key} 不存在`, 404);
+    if (row.scope === scope) return { key, scope, unchanged: true };
+    await tx(async c => {
+      await cx(c, `UPDATE system_settings SET scope=$2, updated_at=now() WHERE setting_key=$1`, [key, scope]);
+      // 门店级 → 通用：清掉各店覆盖值（否则统一值不生效、排查困难）
+      let cleaned = 0;
+      if (scope === 'hq') {
+        const d = await cx(c, `DELETE FROM store_settings WHERE setting_key=$1 RETURNING store_id`, [key]);
+        cleaned = d.length || 0;
+      }
+      // 连锁模式：作用域调整同步到全部门店（门店侧收到后更新本地分类）
+      if (await chainEnabled()) {
+        await cx(c, `INSERT INTO sync_changes (entity, entity_id, op, payload, target, target_ids)
+                     VALUES ('hq_setting_scope', 0, 'upsert', $1::jsonb, 'all', NULL)`,
+          [JSON.stringify({ key, scope })]);
+      }
+      await cx(c, `INSERT INTO setting_change_logs (setting_key, old_value, new_value, operator_id)
+                   VALUES ($1,$2::jsonb,$3::jsonb,$4)`,
+        [key, JSON.stringify({ scope: row.scope }), JSON.stringify({ scope, cleanedOverrides: cleaned }), user.sub]);
+      await audit(user.storeId, user.sub, '设置', 'settings.scope.change', 'setting', undefined,
+        { key, from: row.scope, to: scope, cleanedOverrides: cleaned });
+      return { key, scope, cleanedOverrides: cleaned };
+    });
+    return { key, scope };
+  }
+
   /** 单键读取（V4.13：PWA 语音查价等端侧开关；登录即可读布尔/数值开关；P0-F2：secret 项一律脱敏不回传密文） */
   @Get('key/:key')
   async getOne(@Param('key') key: string) {

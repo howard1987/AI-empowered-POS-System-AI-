@@ -50,10 +50,10 @@ async function bootstrap() {
         const u = new URL(origin);
         const host = u.hostname;
         const loopback = /^(localhost|127\.0\.0\.1|\[::1\]|::1)$/i.test(host);
-        const privateIp = /^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})$/.test(host);
-        const mdns = /\.local$/i.test(host);
         const sameHost = !!req.headers.host && (host + (u.port ? ':' + u.port : '')) === String(req.headers.host);
-        ok = loopback || privateIp || mdns || sameHost;
+        // V4.28.0 安全修复（F-15，P2-M12b 整改回归）：收银机/手机/老板端全部为同源加载（页面与 API 同主机），
+        // 正常业务无需跨源；收紧为 回环 + 同主机，不再放行整个私有网段（防内网跨源带凭据请求）
+        ok = loopback || sameHost;
       } catch { ok = false; }
     }
     if (!ok) return res.status(403).json({ code: 40300, msg: 'CORS 未授权来源', data: null });
@@ -69,6 +69,27 @@ async function bootstrap() {
     }
     next();
   });
+  // ── V4.28.5 F-09：/uploads 图片目录鉴权（P1）——登录前不可直接翻图 ──
+  //  目录里有报损照片/电子签名/AI 识别帧/退款凭证等敏感图片，此前任何人不登录即可按路径直读。
+  //  接受 ① Authorization: Bearer <jwt>（fetch/XHR）② ?token=<jwt>（<img src> 场景）。
+  //  仅校验登录态（员工 token；member token 与无效 token 一律 401）。中间件注册在两条静态路由之前，
+  //  外置目录（AI_UPLOADS_DIR）与 public/uploads（useStaticAssets）统一被拦。
+  {
+    const { JWT_SECRET } = await import('./common/auth');
+    const jwt = (await import('jsonwebtoken')).default;
+    app.use('/uploads', (req: any, res: any, next: any) => {
+      try {
+        const m = /^Bearer (.+)$/.exec(String(req.headers['authorization'] || ''));
+        const token = m ? m[1] : String(req.query.token || '');
+        if (!token) throw new Error('no token');
+        const payload: any = jwt.verify(token, JWT_SECRET);
+        if (payload?.kind === 'member') throw new Error('member token 不可读员工图片');
+        next();
+      } catch {
+        res.status(401).json({ code: 40100, msg: '图片目录需登录后访问（F-09）', data: null });
+      }
+    });
+  }
   // V4.15.5：AI 图片目录外置（冷热分层）——AI_UPLOADS_DIR 指向其他数据盘/NAS 时，/uploads 静态路由跟随
   const uploadsExternal = process.env.AI_UPLOADS_DIR;
   if (uploadsExternal) {
@@ -76,7 +97,14 @@ async function bootstrap() {
     app.use('/uploads', (await import('express')).default.static(uploadsExternal));
     console.log(`  图片目录: ${uploadsExternal}（AI_UPLOADS_DIR 外置）`);
   }
-  app.useStaticAssets(join(__dirname, '..', 'public')); // 极简管理页
+  // V4.27.9：前端资源禁用启发式缓存——no-cache（每次带 ETag 协商，内容未变返回 304，不浪费流量）。
+  //  根因：Express 静态默认不带 Cache-Control，浏览器按启发式策略把 cashier.js 等当"仍新鲜"，
+  //  收银端重启 EXE 也读到旧文件（F1 键位说明不同步即此因）。no-cache = 永远校验、永远最新。
+  app.useStaticAssets(join(__dirname, '..', 'public'), {
+    setHeaders: (res: any, p: string) => {
+      if (/\.(js|mjs|html|webmanifest|css)$/i.test(p)) res.setHeader('Cache-Control', 'no-cache');
+    },
+  }); // 极简管理页
   // 照片类接口（上传样本/凭证/AI 识别）走 base64 JSON，放宽到 15MB
   // （先于 Nest 默认解析器注册；body-parser 见 req._body 已置位会跳过，不双重解析）
   app.use(json({ limit: '15mb' }));

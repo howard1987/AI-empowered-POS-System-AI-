@@ -57,7 +57,49 @@ function openTab(tabId) {
   CURRENT_TAB = tabId;
   stack.length = 0;
   document.querySelectorAll('#tabbar .tab').forEach(b => b.classList.toggle('on', b.dataset.tab === tabId));
+  const view = $('#view'); if (view) { view.style.transform = ''; view.style.transition = ''; }
   renderStack();
+}
+function initTabSwipe() {
+  const view = $('#view');
+  if (!view || view.dataset.swipe) return;
+  view.dataset.swipe = '1';
+  const TABS = ['overview', 'approve', 'reports', 'notices', 'settings'];
+  const exclude = el => el.closest('.tw, canvas, input, textarea, select, .chipbar');
+  let sx = 0, sy = 0, st = 0, horiz = false, dx = 0, blocked = false;
+  view.addEventListener('touchstart', e => {
+    if (stack.length) return;
+    const t = e.touches[0];
+    sx = t.clientX; sy = t.clientY; st = Date.now();
+    horiz = false; dx = 0; blocked = !!exclude(e.target);
+    view.style.transition = 'none';
+  }, { passive: true });
+  view.addEventListener('touchmove', e => {
+    if (stack.length || blocked) return;
+    const t = e.touches[0];
+    dx = t.clientX - sx; const dy = t.clientY - sy;
+    if (!horiz) { if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.2) horiz = true; else return; }
+    view.style.transform = `translateX(${dx * 0.35}px)`;
+  }, { passive: true });
+  view.addEventListener('touchend', e => {
+    if (stack.length || !horiz || blocked) { view.style.transform = ''; blocked = false; return; }
+    const elapsed = Math.max(1, Date.now() - st);
+    const fast = Math.abs(dx) / elapsed > 0.30 && Math.abs(dx) > 45;
+    const idx = TABS.indexOf(CURRENT_TAB);
+    view.style.transition = 'transform .18s ease-out';
+    if (fast && idx >= 0) {
+      const dir = dx < 0 ? 1 : -1;
+      const next = TABS[idx + dir];
+      if (next) {
+        const tw = view.offsetWidth;
+        view.style.transform = `translateX(${dir < 0 ? -tw : tw}px)`;
+        setTimeout(() => openTab(next), 180);
+        return;
+      }
+    }
+    view.style.transform = 'translateX(0)';
+    setTimeout(() => { view.style.transform = ''; view.style.transition = ''; }, 180);
+  });
 }
 // ── VQA 体检项：老板端消息中心（缺纸/秤离线/对账差异等服务端告警的触达出口）──
 async function refreshNoticesBadge() {
@@ -118,6 +160,7 @@ $('#hdBack').onclick = () => {
 };
 window.addEventListener('popstate', () => { if (stack.length) popView(); });
 document.querySelectorAll('#tabbar .tab').forEach(b => b.onclick = () => openTab(b.dataset.tab));
+initTabSwipe();
 
 // ── 认证 ──
 // V4.21.1 收银机授权：本机设备码（首次生成后持久化；老板手机/PAD 同样纳管，ADMIN 账号服务端豁免）
@@ -499,6 +542,9 @@ View.reports = async function (v) {
       <div class="kv"><span class="k">分红计提 / 抵扣</span><span class="v num">¥${fmt(cur.dividendGiven ?? 0)} / ¥${fmt(cur.dividendUsed ?? 0)}</span></div>
     </div>
 
+    <div class="sec">本月营业热力格</div>
+    <div class="card" id="heatBox" style="padding:12px"><div class="empty">加载中…</div></div>
+
     <div class="sec">📑 报表明细（点开可看表格）</div>
     <div class="egrid">
       <button class="e-card" id="rDaily"><div class="eic">📅</div><b>营业日报</b><small>按日：单量/营业额/毛利</small></button>
@@ -514,6 +560,7 @@ View.reports = async function (v) {
       <button class="e-card" id="rLeak"><div class="eic">🛡️</div><b>漏扫告警</b><small>自助收银差异复核</small></button>
     </div>
     <div class="hint">明细默认「近 7 日」，进入后可切换今日 / 本月 / 近 30 日。</div>`;
+  renderHeatMonth($('#heatBox'));
   $('#rDaily').onclick = () => push('营业日报', View.repDaily);
   $('#rAbc').onclick = () => push('ABC 分类', View.repAbc);
   $('#rSku').onclick = () => push('商品销售明细', View.repSku);
@@ -526,6 +573,68 @@ View.reports = async function (v) {
   $('#rBrain').onclick = () => push('🧠 AI 建议', View.brainSugg);
   $('#rLeak').onclick = () => push('🛡️ 漏扫告警', View.antiLeak);
 };
+
+// ── 本月营业热力格 ──
+async function renderHeatMonth(box, metric = 'salesTotal') {
+  const today = new Date();
+  const y = today.getFullYear(), m = today.getMonth();
+  const first = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+  const last = `${y}-${String(m + 1).padStart(2, '0')}-${String(new Date(y, m + 1, 0).getDate()).padStart(2, '0')}`;
+  const label = { salesTotal: '营业额', orderCount: '订单数' }[metric];
+  try {
+    const d = await call('GET', `/reports/daily?from=${first}&to=${last}`);
+    const days = d.days || [];
+    const map = {};
+    days.forEach(x => { map[String(x.bizDate).slice(0, 10)] = x; });
+    const vals = days.filter(x => Number(x[metric]) > 0).map(x => Number(x[metric])).sort((a, b) => a - b);
+    const breaks = [];
+    for (let i = 1; i <= 5; i++) breaks.push(vals[Math.min(vals.length - 1, Math.floor((vals.length - 1) * i / 5))] || 0);
+    const level = v => { const n = Number(v) || 0; if (n <= 0) return 0; for (let i = 0; i < breaks.length; i++) if (n <= breaks[i]) return i + 1; return 5; };
+    const firstDay = new Date(y, m, 1);
+    const pad = (firstDay.getDay() + 6) % 7;
+    const dim = new Date(y, m + 1, 0).getDate();
+    let cells = '';
+    for (let i = 0; i < pad; i++) cells += '<div class="heat-cell other"></div>';
+    for (let day = 1; day <= dim; day++) {
+      const ds = `${y}-${String(m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const data = map[ds];
+      const lv = level(data ? data[metric] : 0);
+      const sub = data && Number(data[metric]) ? `<span class="sub">${metric === 'salesTotal' ? Math.round(data[metric]) : Number(data[metric])}</span>` : '';
+      cells += `<div class="heat-cell l${lv}" data-d="${ds}"><span>${day}</span>${sub}</div>`;
+    }
+    box.innerHTML = `
+      <div class="heat-head"><span class="t">${m + 1}月 · ${label}分布</span><div class="heat-metric">
+        <button class="${metric === 'salesTotal' ? 'on' : ''}" data-m="salesTotal">营业额</button>
+        <button class="${metric === 'orderCount' ? 'on' : ''}" data-m="orderCount">订单数</button>
+      </div></div>
+      <div class="heat-wd"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+      <div class="heat-grid">${cells}</div>
+      <div class="heat-legend"><span>低</span><i></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i><i class="l5"></i><span>高</span></div>`;
+    box.querySelectorAll('.heat-metric button').forEach(b => b.onclick = () => renderHeatMonth(box, b.dataset.m));
+    box.querySelectorAll('.heat-cell[data-d]').forEach(c => c.onclick = () => showHeatDay(c.dataset.d, map[c.dataset.d], metric));
+  } catch (e) {
+    box.innerHTML = `<div class="empty">热力格加载失败：${esc(e.message)}</div>`;
+  }
+}
+function showHeatDay(date, data, metric) {
+  const d = data || {};
+  const avg = d.orderCount ? (Number(d.salesTotal || 0) / Number(d.orderCount)) : 0;
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-mask';
+  wrap.innerHTML = `<div class="sheet sheet-day" style="max-height:70vh">
+    <button class="sheet-back" onclick="this.closest('.sheet-mask').remove()">关闭</button>
+    <h3>${date} 营业详情</h3>
+    <div class="card" style="margin-top:10px">
+      <div class="kv"><span class="k">营业额</span><span class="v num">¥${fmt(d.salesTotal)}</span></div>
+      <div class="kv"><span class="k">订单数</span><span class="v num">${n0(d.orderCount)} 单</span></div>
+      <div class="kv"><span class="k">成本</span><span class="v num">¥${fmt(d.costTotal)}</span></div>
+      <div class="kv"><span class="k">毛利</span><span class="v num">¥${fmt(d.profitTotal)}</span></div>
+      <div class="kv"><span class="k">客单价</span><span class="v num">¥${fmt(avg)}</span></div>
+    </div>
+  </div>`;
+  wrap.onclick = e => { if (e.target === wrap) wrap.remove(); };
+  document.body.appendChild(wrap);
+}
 
 // ── V4.9.8 报表明细（移动端表格）──
 const dstr = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -1185,6 +1294,44 @@ View.paySettings = async function (v) {
   bindSave('psSaveAli', ['pay.alipay.app_id', 'pay.alipay.private_key', 'pay.alipay.public_key', 'pay.alipay.gateway']);
 };
 
+// ── 表名中文映射（系统初始化展示用）──
+const TABLE_CN = {
+  // 交易与结算
+  sales_orders:'销售订单', sale_items:'销售明细', sale_payments:'销售支付', sale_refunds:'销售退款', sale_refund_items:'退款明细',
+  sale_item_batches:'销售批次', return_batch_allocs:'退货批次分配', settlements:'结算单', shifts:'班次', held_orders:'挂单',
+  recharge_orders:'充值订单', print_jobs:'打印任务',
+  // 库存与单据
+  batches:'批次', stock_flows:'库存流水', inventory_current:'当前库存', inbound_orders:'入库单', inbound_order_items:'入库明细',
+  purchase_orders:'采购订单', purchase_order_items:'采购明细', purchase_returns:'采购退货', purchase_return_items:'采购退货明细',
+  loss_records:'报损单', loss_items:'报损明细', reconciliations:'对账单', reconciliation_items:'对账明细', inventory_counts:'盘点单',
+  inventory_count_items:'盘点明细', stocktake_tasks:'盘点任务', stocktake_task_items:'盘点任务明细', stock_transfers:'调拨单',
+  stock_transfer_items:'调拨明细', bundle_ops:'组合装操作', bundle_op_items:'组合装操作明细', expiry_disposals:'临期处理',
+  picking_shortages:'拣货缺货', consign_recons:'代销对账', consign_recon_items:'代销对账明细', price_changes:'价格变更',
+  price_change_items:'价格变更明细', pricebook_snapshots:'价格本快照',
+  // 会员与分红
+  members:'会员', member_accounts:'会员账户', member_profiles:'会员资料', member_activity_windows:'会员活动窗口',
+  member_addresses:'会员地址', member_coupons:'会员优惠券', member_level_log:'会员等级日志', points_flows:'积分流水',
+  balance_flows:'余额流水', dividend_periods:'分红周期', dividend_records:'分红记录', big_customer_payments:'大客户回款',
+  coupons:'优惠券', promotions:'促销活动', marketing_rules:'营销规则', marketing_touches:'营销触达',
+  // 供应商往来
+  supplier_ledger:'供应商台账', supplier_fees:'供应商费用',
+  // AI 数据
+  ai_recognition_logs:'AI识别日志', ai_samples:'AI样本', ai_name_embs:'AI名称向量', ai_tasks:'AI任务',
+  ai_suggestions:'AI建议', forecast_snapshots:'预测快照', ai_kb_documents:'AI知识库文档', ai_kb_chunks:'AI知识库片段',
+  // 操作日志
+  audit_logs:'审计日志', setting_change_logs:'设置变更日志',
+  // 可保留档案
+  categories:'分类', products:'商品', product_barcodes:'商品条码', product_units:'商品单位', product_bundles:'组合装',
+  product_bundle_items:'组合装明细', product_aliases:'商品别名', suppliers:'供应商', supplier_product_prices:'供应商供货价',
+  supplier_fee_agreements:'供应商费用协议', supplier_fee_types:'供应商费用类型', member_levels:'会员等级',
+  big_customers:'大客户', big_customer_prices:'大客户价格', promotion_templates:'促销模板',
+  // 设备与模板
+  devices:'设备', printers:'打印机', print_templates:'打印模板', signature_templates:'签名模板',
+  // 系统骨架
+  stores:'门店', employees:'员工', roles:'角色', permission_points:'权限点', role_permissions:'角色权限',
+  employee_roles:'员工角色', system_settings:'系统设置', ai_models:'AI模型',
+};
+
 // ── V4.12 系统初始化（开业前清库）：白名单分组预览 → 二次确认 → 单事务 TRUNCATE ──
 View.sysReset = async function (v) {
   v.innerHTML = `<div id="srBox"><div class="empty">加载中…</div></div>`;
@@ -1192,11 +1339,12 @@ View.sysReset = async function (v) {
   try { PRE = await call('GET', '/admin/reset/preview'); }
   catch (e) { $('#srBox').innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`; return; }
   const n0c = n => Number(n || 0).toLocaleString('zh-CN');
+  const tcn = n => TABLE_CN[n] || n;
   const grp = (label, items, key) => `
     <div class="sec">${label}</div>
     <div class="card" style="padding:8px 12px">
       <div style="display:flex;flex-wrap:wrap;gap:4px 10px">
-        ${items.filter(x => x.n > 0).map(x => `<span style="font-size:11.5px;color:var(--ink-3)">${esc(x.name)}<b class="num" style="color:var(--ink-2)">&nbsp;${n0c(x.n)}</b></span>`).join('') || '<span style="font-size:12px;color:var(--ink-3)">均为空</span>'}
+        ${items.filter(x => x.n > 0).map(x => `<span style="font-size:11.5px;color:var(--ink-3)">${esc(tcn(x.name))}<b class="num" style="color:var(--ink-2)">&nbsp;${n0c(x.n)}</b></span>`).join('') || '<span style="font-size:12px;color:var(--ink-3)">均为空</span>'}
       </div>
     </div>`;
   $('#srBox').innerHTML = `
@@ -1227,7 +1375,7 @@ View.sysReset = async function (v) {
     <div class="sec">永不清除（系统骨架）</div>
     <div class="card" style="padding:8px 12px">
       <div style="display:flex;flex-wrap:wrap;gap:4px 10px">
-        ${PRE.keepAlways.map(x => `<span style="font-size:11.5px;color:#1a7a3a">${esc(x.name)}<b class="num">&nbsp;${n0c(x.n)}</b></span>`).join('')}
+        ${PRE.keepAlways.map(x => `<span style="font-size:11.5px;color:#1a7a3a">${esc(tcn(x.name))}<b class="num">&nbsp;${n0c(x.n)}</b></span>`).join('')}
       </div>
     </div>
     <div class="card" style="margin-top:10px">

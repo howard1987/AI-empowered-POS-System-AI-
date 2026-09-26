@@ -79,10 +79,23 @@ async function main() {
     const checksum = crypto.createHash('sha256').update(sql).digest('hex');
     const prev = await pool.query(`SELECT checksum FROM schema_migrations WHERE name=$1`, [f]);
     if (prev.rowCount && prev.rows[0].checksum !== checksum) {
-      console.warn(`⚠ 漂移告警：已应用迁移 ${f} 的内容与记账校验和不一致（历史迁移应新增文件而非修改，请确认是否有意为之）`);
+      // V4.28.0（SQL 审查 🔴-1）：漂移从"告警后覆盖"升级为"直接失败"——
+      // 已应用迁移禁止修改；确需修改必须先手工清理 schema_migrations 对应记录
+      throw new Error(`迁移漂移：已应用迁移 ${f} 的内容与记账校验和不一致（历史迁移禁止修改；` +
+        `如确属有意修改，请先在数据库执行 DELETE FROM schema_migrations WHERE name='${f}' 后重跑）`);
+    }
+    // V4.28.9 修复（安装版首测暴露）：已记账文件【跳过】而非"幂等全量重跑"。
+    //   旧设计要求全部种子语句幂等（ON CONFLICT），但 001 基线里的
+    //   system_settings/permission_points 大种子并非全幂等——任何已初始化库在服务重启时
+    //   都会撞 duplicate key（安装版 r4 首测实证）。标准迁移语义：记账一致 = 已应用 = 跳过；
+    //   漂移检查保留（文件被改仍报错）；新文件照常执行；全新库行为不变。
+    if (prev.rowCount) {
+      console.log(`↷ ${f} 已应用（记账一致），跳过`);
+      continue;
     }
     const stmts = splitStatements(sql);
     let skipped = 0;
+    const skippedLog: string[] = [];
     try {
       // 逐条执行：每条独立隐式事务。
       // 关键原因：ALTER TYPE ... ADD VALUE 的新枚举值禁止在同一事务内使用，
@@ -93,7 +106,18 @@ async function main() {
           await pool.query(stmts[idx]);
         } catch (e: any) {
           const m = String(e?.message || '');
-          if (/already exists|duplicate key/i.test(m)) { skipped++; continue; }
+          // V4.28.0（SQL 审查 🔴-2）：吞错收敛——
+          //   `already exists`（对象重复）= 幂等重放伪影，计数并记录片段（不再完全静默）；
+          //   `duplicate key`（数据重复）= 种子数据真实冲突，绝不吞掉——否则种子缺失无告警。
+          if (/already exists/i.test(m)) {
+            skipped++;
+            if (skippedLog.length < 10) skippedLog.push(stmts[idx].replace(/\s+/g, ' ').slice(0, 100));
+            continue;
+          }
+          if (/duplicate key/i.test(m)) {
+            const snippet = stmts[idx].replace(/\s+/g, ' ').slice(0, 160);
+            throw new Error(`种子数据重复键（迁移应使用 ON CONFLICT 幂等）：${m} | SQL: ${snippet}`);
+          }
           const snippet = stmts[idx].replace(/\s+/g, ' ').slice(0, 160);
           throw new Error(`第 ${idx + 1}/${stmts.length} 条失败: ${m} | SQL: ${snippet}`);
         }
@@ -101,7 +125,8 @@ async function main() {
       await pool.query(
         `INSERT INTO schema_migrations (name, checksum) VALUES ($1,$2)
          ON CONFLICT (name) DO UPDATE SET checksum=$2, last_run_at=now()`, [f, checksum]);
-      console.log(`✓ SQL: ${f}（${stmts.length} 条${skipped ? `，跳过已存在 ${skipped} 条` : ''}）`);
+      console.log(`✓ SQL: ${f}（${stmts.length} 条${skipped ? `，幂等跳过 ${skipped} 条` : ''}）`);
+      if (skippedLog.length) for (const l of skippedLog) console.log(`   ↳ 跳过: ${l}`);
     } catch (e: any) {
       console.error(`✗ SQL: ${f} 失败：${e.message}`);
       throw e;

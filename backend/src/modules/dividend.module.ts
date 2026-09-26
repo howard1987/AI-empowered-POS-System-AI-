@@ -381,6 +381,44 @@ class DividendController {
         WHERE ($1::bigint IS NULL OR d.member_id = $1::bigint)
         ORDER BY d.id DESC LIMIT 100`, [memberId ? Number(memberId) : null]);
   }
+
+  /** V4.28.4 P1-12 分红人工调整（正=补发 / 负=冲减）：独立端点 + 原因必填 + 全额审计留痕。
+   *  场景：差错修正、投诉补偿、系统外兑现核销等。冲减不得使余额为负（分红是纯收益，不产生负债）；
+   *  连锁模式仅总部可调（M5-6 铁律同计提）。退款自动回冲见 refund.module（P1-11），本端点用于人工场景。 */
+  @RequirePerms('member.dividend.adjust')
+  @Post('adjust')
+  async adjust(@Body() b: { memberId: number; amount: number; reason?: string }, @CurrentUser() user: AuthUser) {
+    const memberId = Number(b.memberId);
+    const amt = Math.round(Number(b.amount) * 100) / 100;
+    const reason = String(b.reason || '').trim();
+    if (!memberId) throw new BizException(40003, 'memberId 必填');
+    if (!Number.isFinite(amt) || amt === 0) throw new BizException(40003, 'amount 必须为非零金额（负=冲减 / 正=补发）');
+    if (Math.abs(amt) > 100000) throw new BizException(40003, '单笔调整不得超过 ±100000 元（如需更大金额请分笔并说明）');
+    if (!reason) throw new BizException(40003, '必须填写调整原因（留痕要求）');
+    const { chainEnabled, isHqStore } = await import('../common/scope');
+    if (await chainEnabled() && !(await isHqStore(user.storeId))) {
+      throw new BizException(40302, '分红调整只在总部执行（M5-6：防止门店侧篡改会员资产）', 403);
+    }
+    return tx(async c => {
+      const acc = await cx(c, `SELECT dividend_balance FROM member_accounts WHERE member_id=$1 FOR UPDATE`, [memberId]);
+      if (!acc.length) throw new BizException(40404, '会员账户不存在', 404);
+      const balance = Number(acc[0].dividend_balance);
+      if (amt < 0 && balance + amt < -0.005) {
+        throw new BizException(40003, `冲减后余额为负（当前余额 ${balance}，本次冲减 ${-amt}）：会员分红不产生负债，请核对金额`);
+      }
+      await cx(c,
+        `UPDATE member_accounts SET dividend_balance = dividend_balance + $2,
+            dividend_cumulative = dividend_cumulative + $2, updated_at = now()
+          WHERE member_id=$1`, [memberId, amt]);
+      await cx(c,
+        `INSERT INTO dividend_records (store_id, member_id, record_type, amount, ref_type, operator_id, remark)
+         VALUES (${curStore()},$1,'调整',$2,'manual',$3,$4)`,
+        [memberId, amt, user.sub, `人工调整：${reason}`]);
+      await audit(user.storeId, user.sub, '分红', 'dividend.adjust', 'member', memberId,
+        { amount: amt, reason, balanceAfter: Math.round((balance + amt) * 100) / 100 });
+      return { ok: true, memberId, amount: amt, balance: Math.round((balance + amt) * 100) / 100 };
+    });
+  }
 }
 
 @Module({ controllers: [DividendController], providers: [DividendAutoJob] })

@@ -8,6 +8,7 @@ import { autoAttachSignature } from './sign';
 import { storePrice } from './store-price.service';   // V4.26.5 门店覆盖价
 import { PRODUCT_VISIBLE } from '../common/sql';       // V5.0.0 商品可售可见性
 import { visibleStores, isHqStore, assertStoreAllowed } from '../common/scope'; // V5.0.0 批次6：调拨状态机/范围
+import { enqueueSync } from '../common/outbox';   // V4.28.2 P0-5 连锁上行（同事务发件箱）
 
 // ─── Controller（库存中心：即时库存 / 批次溯源 / 临期预警 + P0-3 盘点/报损/调拨，方案 5.4） ───
 @Controller('inventory')
@@ -146,7 +147,7 @@ class InventoryController {
     const hours = Number(dh) > 0 ? Math.floor(Number(dh)) : 48;
     return q1(
       `INSERT INTO expiry_disposals (store_id, batch_id, product_id, status, deadline_at, started_at, handler_id, handler_name)
-       SELECT 1, b.id, b.product_id, '处理中', now() + make_interval(hours => $2::int), now(), $3, $4
+       SELECT b.store_id, b.id, b.product_id, '处理中', now() + make_interval(hours => $2::int), now(), $3, $4
          FROM batches b WHERE b.id = $1
        ON CONFLICT (batch_id) DO UPDATE SET
          status = CASE WHEN expiry_disposals.status = '已退换' THEN expiry_disposals.status ELSE '处理中' END,
@@ -168,7 +169,7 @@ class InventoryController {
                      @CurrentUser() user: AuthUser) {
     const r = await q1(
       `INSERT INTO expiry_disposals (store_id, batch_id, product_id, status, deadline_at, handled_at, handler_id, handler_name, return_doc_no)
-       SELECT 1, b.id, b.product_id, '已退换', now(), now(), $2, $3, $4
+       SELECT b.store_id, b.id, b.product_id, '已退换', now(), now(), $2, $3, $4
          FROM batches b WHERE b.id = $1
        ON CONFLICT (batch_id) DO UPDATE SET
          status = '已退换', handled_at = now(), handler_id = $2, handler_name = $3,
@@ -176,6 +177,16 @@ class InventoryController {
        RETURNING *`,
       [batchId, user.sub, user.name || '', (b.returnDocNo || '').trim() || null],
     );
+    // V4.28.2 P0-5：处置完成后该商品库存快照上行（无事务场景，enqueue 自开连接；总部/单店 no-op）
+    if (r?.product_id) {
+      const inv = await q1(
+        `SELECT qty_total FROM inventory_current WHERE store_id=$1 AND product_id=$2`,
+        [Number(r.store_id), Number(r.product_id)]);
+      if (inv) {
+        await enqueueSync(null, 'inventory', null,
+          { items: [{ productId: Number(r.product_id), qtyTotal: Number(inv.qty_total) }] });
+      }
+    }
     return r;
   }
 
@@ -275,6 +286,12 @@ class InventoryController {
       await cx(c,
         `UPDATE inventory_counts SET status='已审核', audited_by=$2, audited_at=now() WHERE id=$1`,
         [id, user.sub]);
+      // V4.28.2 P0-5：盘点单上行（count_no 幂等）+ 库存快照
+      await enqueueSync(c, 'stock_count', id, {
+        countNo: String(cnt.count_no), scope: cnt.scope,
+        items: items.map((it: any) => ({ productId: Number(it.product_id), bookQty: Number(it.book_qty), actualQty: Number(it.actual_qty) })),
+      });
+      await this.snapInventory(c, items.map((it: any) => Number(it.product_id)));
       await audit(curStore(), user.sub, '进销存', 'count.audit', 'inventory_count', id, { no: cnt.count_no, diffTotal: r3(diffTotal) });
       return { id, status: '已审核', diffTotal: r3(diffTotal) };
     });
@@ -303,6 +320,18 @@ class InventoryController {
       }
     }
     return diffTotal;
+  }
+
+  /** V4.28.2 P0-5：受影响商品库存快照上行（'inventory' 实体 → 总部 upsert inventory_current；
+   *  总部/单店节点 no-op）。productIds 传本店商品 id（连锁主档同 id；门店自建品未收编时总部侧按存在性跳过）。 */
+  private async snapInventory(c: any, productIds: number[]) {
+    const pids = [...new Set(productIds.map(Number).filter(Boolean))];
+    if (!pids.length) return;
+    const rows = await cx(c,
+      `SELECT product_id, qty_total FROM inventory_current
+        WHERE store_id=${curStore()} AND product_id = ANY($1::bigint[])`, [pids]);
+    await enqueueSync(c, 'inventory', null,
+      { items: rows.map((r: any) => ({ productId: Number(r.product_id), qtyTotal: Number(r.qty_total) })) });
   }
 
   /* ═══════════ 盘点任务（V4.8.25：后台建任务→指派店员→手机端实盘→审核生成盘点单） ═══════════ */
@@ -483,6 +512,12 @@ class InventoryController {
       await cx(c,
         `UPDATE stocktake_tasks SET status='已完成', count_id=$2, updated_at=now() WHERE id=$1`,
         [id, countId]);
+      // V4.28.2 P0-5：任务生成的盘点单上行 + 库存快照
+      await enqueueSync(c, 'stock_count', countId, {
+        countNo: no, scope,
+        items: items.map((it: any) => ({ productId: Number(it.product_id), bookQty: Number(it.book_qty), actualQty: Number(it.actual_qty) })),
+      });
+      await this.snapInventory(c, items.map((it: any) => Number(it.product_id)));
       await audit(curStore(), user.sub, '进销存', 'count.task.audit', 'stocktake_task', id,
         { taskNo: t.task_no, countNo: no, diffTotal: r3(diffTotal) });
       return { id, countId, countNo: no, status: '已完成', diffTotal: r3(diffTotal) };
@@ -576,8 +611,9 @@ class InventoryController {
     return { ...l, id: Number(l.id), items };
   }
 
-  /** 报损审核：扣指定批次（remain 归零置 '报损'）+ 库存流水 + 即时库存 */
-  @RequirePerms('stock.loss.create')
+  /** 报损审核：扣指定批次（remain 归零置 '报损'）+ 库存流水 + 即时库存
+   *  V4.28.3 P1-10：审核与创建分离——创建 stock.loss.create（店员登记），审核 stock.loss.audit（库管/店长复核） */
+  @RequirePerms('stock.loss.audit')
   @Post('losses/:id/audit')
   async auditLoss(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
     return tx(async c => {
@@ -615,6 +651,12 @@ class InventoryController {
       await cx(c,
         `UPDATE loss_records SET status='已审核', audited_by=$2 WHERE id=$1`,
         [id, user.sub]);
+      // V4.28.2 P0-5：报损单上行（总部台账，loss_no 幂等；明细批次为门店本地不可复刻 → 总部只落单头）
+      await enqueueSync(c, 'loss', id, {
+        lossNo: String(loss.loss_no), reasonType: loss.reason_type, totalCost: Number(loss.total_cost ?? 0),
+        items: items.map((it: any) => ({ productId: Number(it.product_id), qty: Number(it.qty), unitCost: Number(it.unit_cost) })),
+      });
+      await this.snapInventory(c, [...byProduct.keys()]);
       await audit(curStore(), user.sub, '进销存', 'loss.audit', 'loss_record', id, { no: loss.loss_no });
       return { id, status: '已审核', totalCost: Number(loss.total_cost) };
     });
@@ -624,7 +666,7 @@ class InventoryController {
    * V4.9.8 报损单驳回（手机端审批）：待审核 → 已驳回，原因必填并留痕；不扣库存不扣批次。
    * 典型场景：照片不清、数量存疑、责任未定——驳回后由门店重拍/核实再提。
    */
-  @RequirePerms('stock.loss.create')
+  @RequirePerms('stock.loss.audit')   // V4.28.3 P1-10：驳回同审核权（不能自己建自己驳）
   @Post('losses/:id/reject')
   async rejectLoss(@Param('id', ParseIntPipe) id: number,
                    @Body() b: { reason?: string },
@@ -804,7 +846,7 @@ class InventoryController {
   }
 
   /** 调拨确认（权限 stock.transfer）：扣源批次（置 '调出'）→ 生成转入批次（成本不变）→ 双边库存流水；同店即时库存不变 */
-  @RequirePerms('stock.transfer')
+  @RequirePerms('stock.transfer.audit')   // V4.28.3 P1-10：确认是管理动作，与发货/收货执行分离
   @Post('transfers/:id/confirm')
   async confirmTransfer(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
     return tx(async c => {
@@ -978,6 +1020,14 @@ class InventoryController {
           [demandPoId, r2(amt), r3(shortfalls.reduce((s, x) => s + x.qty, 0))]);
       }
       await cx(c, `UPDATE stock_transfers SET status='在途', shipped_at=now(), updated_at=now() WHERE id=$1`, [id]);
+      // V4.28.2 P0-5：调拨发货上行（transfer_no 幂等；明细批次为门店本地批次不可复刻 → 总部只落单头）
+      await enqueueSync(c, 'stock_transfer', id, {
+        transferNo: String(tr.transfer_no), fromStoreId: fromStore, toStoreId: Number(tr.to_store_id) || null,
+        status: '在途', reason: tr.reason,
+        totalCost: r2(items.reduce((s: number, it: any) => s + Number(it.qty) * Number(it.unit_cost), 0)),
+        items: items.map((it: any) => ({ productId: Number(it.product_id), qty: Number(it.qty), unitCost: Number(it.unit_cost) })),
+      });
+      await this.snapInventory(c, items.map((it: any) => Number(it.product_id)));
       await audit(curStore(), user.sub, '进销存', 'transfer.ship', 'stock_transfer', id,
         { no: tr.transfer_no, shortfall: shortfalls.reduce((s, x) => s + x.qty, 0), demandPoId });
       return { id, status: '在途', shortfallTotal: r3(shortfalls.reduce((s, x) => s + x.qty, 0)), demandPoId };
@@ -1043,6 +1093,8 @@ class InventoryController {
       }
       await cx(c, `UPDATE stock_transfers SET status='已入库', received_at=now(), audited_by=$2, updated_at=now() WHERE id=$1`,
         [id, user.sub]);
+      // V4.28.2 P0-5：收货后库存快照上行（调入方 → 总部 inventory_current）
+      await this.snapInventory(c, items.map((it: any) => Number(it.product_id)));
       await audit(curStore(), user.sub, '进销存', 'transfer.receive', 'stock_transfer', id,
         { no: tr.transfer_no, recv: recvTotal, diff: diffTotal });
       return { id, status: '已入库', recvTotal: r3(recvTotal), diffTotal: r3(diffTotal) };
@@ -1050,7 +1102,7 @@ class InventoryController {
   }
 
   /** 取消（仅未动库存的状态：待审核 / 待发货 / 驳回） */
-  @RequirePerms('stock.transfer')
+  @RequirePerms('stock.transfer.audit')   // V4.28.3 P1-10：取消作废单据，同确认管理权
   @Post('transfers/:id/cancel')
   async cancelTransfer(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
     return tx(async c => {

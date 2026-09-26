@@ -164,7 +164,10 @@ class CrossReturnService {
     });
   }
 
-  /** 总部侧跨店退货单列表（待审核在前） */
+  /** 总部侧跨店退货单列表（待审核在前）
+   *  V4.28.6 修复「退货与往来」页 items.map is not a function：本方法此前返回**裸数组**，
+   *  与同文件其他 list（302/361/383 返回 {items}）不一致，而前端 hq-trade.js 按 {items} 解构 →
+   *  d.items=undefined。统一为 {items} 形状（根因修复），前端另做数组兼容双保险。 */
   async list(user: AuthUser, only: string) {
     const rows = await q(
       `SELECT r.id, r.refund_no, r.store_id, s1.name AS accept_store, r.origin_store_id,
@@ -176,10 +179,10 @@ class CrossReturnService {
          LEFT JOIN sales_orders o ON o.id = r.order_id
         WHERE r.is_cross_store
         ORDER BY (r.status='待审核') DESC, r.id DESC LIMIT 200`);
-    return rows.map((x: any) => ({
+    return { items: rows.map((x: any) => ({
       ...x, id: Number(x.id), store_id: Number(x.store_id), origin_store_id: Number(x.origin_store_id),
       amount: Number(x.amount),
-    }));
+    })) };
   }
 }
 

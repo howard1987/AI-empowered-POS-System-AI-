@@ -225,7 +225,7 @@ class PosController {
       lines.push({ p, unitPrice, baseQty, lineAmount: r2(unitPrice * baseQty) });
       goods += r2(unitPrice * baseQty);
     }
-    const promo = await applyPromotions(pool, user.storeId, lines)
+    const promo = await applyPromotions(pool, user.storeId, lines, body.memberId)   // V4.28.9e：会员专享活动按会员过滤
       .catch(() => ({ promoAmount: 0, orderPromoId: null } as { promoAmount: number; orderPromoId: number | null }));
     // 下一档满减（未达标提示「再买 ¥X 可用」）
     let nextPromo: { name: string; threshold: number } | null = null;
@@ -390,7 +390,7 @@ class PosController {
          FROM held_orders h
          LEFT JOIN members m ON m.id = h.member_id
          LEFT JOIN employees e ON e.id = h.held_by
-        WHERE h.id=$1`, [id]);
+        WHERE h.id=$1 AND h.store_id=$2`, [id, curStore()]);
     if (!h) throw new BizException(50063, '挂单不存在', 404);
     const items = Array.isArray(h.items) ? h.items : [];
     const pids = [...new Set(items.map((i: any) => Number(i?.productId)).filter(Boolean))];
@@ -660,9 +660,19 @@ class PosController {
    * 口径与 refund.create 一致：已退款/待审核/创建中 均占用额度）。挂账/赊账单拒退（P2-M8 冲减口径）。
    */
   @Get('refund-lookup')
-  async refundLookup(@Query('no') no: string, @CurrentUser() user: AuthUser) {
+  async refundLookup(@Query('no') no: string, @Query('date') date: string, @CurrentUser() user: AuthUser) {
     const key = String(no ?? '').trim();
-    if (!key) throw new BizException(40003, '请输入原小票号');
+    if (!key) {
+      // 空输入 → 按日期浏览本店「已完成」销售单据（默认今天），供收银台逐单选单退货
+      const d = /^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))
+        ? String(date)
+        : new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+      const list = await q<any>(
+        `SELECT id, order_no, payable_amount, created_at FROM sales_orders
+          WHERE store_id=$1 AND status='已完成' AND created_at::date = $2::date
+          ORDER BY id DESC LIMIT 200`, [user.storeId, d]);
+      return { by: 'by_date', date: d, orders: list.map((o: any) => ({ id: Number(o.id), orderNo: o.order_no, amount: Number(o.payable_amount), createdAt: o.created_at })) };
+    }
     // VQA-GAP02：无小票退货——①11 位手机号：该会员近 30 天本店已完成订单候选；②≥4 位单号后缀：模糊候选
     if (/^1[3-9]\d{9}$/.test(key)) {
       const list = await q<any>(

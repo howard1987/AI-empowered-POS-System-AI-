@@ -4,21 +4,22 @@ import { get, post, must, money, esc, dt, toast } from '../api.js';
 export async function render(view) {
   view.innerHTML = `
     <div class="card">
-      <h3>创建券模板 <span class="api">POST /coupons</span></h3>
+      <h3>创建券模板 </h3>
       <div class="bar">
         <input id="cName" placeholder="券名称*" style="width:130px">
-        <select id="cType">${['满减券', '折扣券', '兑换券'].map(t => `<option>${t}</option>`).join('')}</select>
+        <select id="cType">${['满减券', '折扣券', '兑换券', '次卡'].map(t => `<option>${t}</option>`).join('')}</select>
         <input id="cThr" type="number" step="0.01" placeholder="门槛(满减)" style="width:100px">
         <input id="cDis" type="number" step="0.01" placeholder="面额/折扣率*" style="width:110px">
         <input id="cDays" type="number" placeholder="有效天数" style="width:90px" value="30">
         <input id="cPer" type="number" placeholder="每人限领(张)" style="width:104px" value="1" title="每个会员最多领几张，防止一人囤券">
         <input id="cQty" type="number" placeholder="总量池(张,选填)" style="width:120px" title="全店最多发出去多少张，不填=不限量；控制成本用">
+        <input id="cCode" placeholder="大类码(选填)" style="width:110px" title="营销活动精确匹配键，如 NEWYEAR-50（按门店唯一，留空自动生成 CP+序号）">
         <button class="btn pri" id="cSave">创建</button>
       </div>
       <div class="doc-tip" style="margin:8px 18px 0">💡 <b>每人限领</b>：单个会员最多能领几张（默认 1 张）。<b>总量池</b>：这批券全店最多发出去多少张，留空=不限量（如发 200 张预算可控）。<b>有效天数</b>：从领券当天起算 N 天内有效。</div>
     </div>
     <div class="card">
-      <h3>券列表（含核销统计） <span class="api">GET /coupons</span>
+      <h3>券列表（含核销统计） 
         <button class="btn" id="cScan" style="margin-left:12px">执行过期扫描</button></h3>
       <div id="clist"></div>
     </div>`;
@@ -35,7 +36,9 @@ export async function render(view) {
       validDays: Number(view.querySelector('#cDays').value) || 30,
       perMember: Number(view.querySelector('#cPer').value) || 1,
       totalQty: view.querySelector('#cQty').value ? Number(view.querySelector('#cQty').value) : undefined,
+      code: view.querySelector('#cCode').value.trim() || undefined,
     }), '券模板已创建');
+    view.querySelector('#cCode').value = '';
     view.querySelector('#cName').value = '';
     await list();
   };
@@ -48,19 +51,22 @@ export async function render(view) {
   async function list() {
     const rows = await must(get('/coupons')).catch(() => []);
     view.querySelector('#clist').innerHTML = rows.length ? `
-      <table><thead><tr><th>ID</th><th>名称</th><th>类型</th><th class="num">门槛</th><th class="num">面额/折扣</th>
-        <th class="num">未使用</th><th class="num">已核销</th><th class="num">已过期</th><th>状态</th><th></th></tr></thead>
+      <table><thead><tr><th>ID</th><th>大类码</th><th>名称</th><th>类型</th><th class="num">门槛</th><th class="num">面额/折扣</th>
+        <th class="num">在库</th><th class="num">未使用</th><th class="num">已核销</th><th class="num">已过期</th><th class="num">作废</th><th>状态</th><th></th></tr></thead>
       <tbody>${rows.map(c => `<tr>
-        <td>${c.id}</td><td>${esc(c.name)}</td><td>${esc(c.type)}</td>
+        <td>${c.id}</td><td><code>${esc(c.code || '')}</code></td><td>${esc(c.name)}</td><td>${esc(c.type)}</td>
         <td class="num">${c.threshold ? money(c.threshold) : '—'}</td>
         <td class="num">${c.type === '折扣券' ? Number(c.discount) + ' 折率' : c.discount ? money(c.discount) : '—'}</td>
-        <td class="num">${c.unused_count}</td><td class="num">${c.used_count}</td><td class="num">${c.expired_count}</td>
+        <td class="num">${c.stock_controlled ? (Number(c.in_stock) ?? '—') : '不限'}</td>
+        <td class="num">${c.unused_count}</td><td class="num">${c.used_count}</td><td class="num">${c.expired_count}</td><td class="num">${c.voided_count}</td>
         <td>${c.status === 1 ? '<span class="tag g">启用</span>' : '<span class="tag r">停用</span>'}</td>
         <td>
+          <button class="btn sm" data-id="${c.id}" data-inst>券包/退券</button>
           <button class="btn sm" data-id="${c.id}" data-issue>发券</button>
           ${c.status === 1 ? `<button class="btn sm warn" data-id="${c.id}" data-stop>停用</button>` : `<button class="btn sm pri" data-id="${c.id}" data-start>启用</button>`}
         </td></tr>`).join('')}</tbody></table>` : '<div class="empty">无券模板</div>';
 
+    view.querySelectorAll('[data-inst]').forEach(b => b.onclick = () => instances(b.dataset.id, rows.find(r => r.id == b.dataset.id)?.code));
     view.querySelectorAll('[data-issue]').forEach(b => b.onclick = () => issue(b.dataset.id));
     view.querySelectorAll('[data-stop]').forEach(b => b.onclick = async () => {
       await must(post(`/coupons/${b.dataset.id}/status`, { status: 0 }), '已停用'); await list();
@@ -91,6 +97,40 @@ export async function render(view) {
         setTimeout(() => { mask.remove(); list(); }, 1000);
       } catch { /* toast 已提示 */ }
     };
+  }
+
+  /** 券实例（会员小码）列表：溯源 + 退券（仅未使用，一次性商品不退已用券） */
+  async function instances(id, code) {
+    const mask = document.createElement('div');
+    mask.className = 'modal-mask';
+    mask.innerHTML = `<div class="modal" style="width:720px"><h3>券实例 · <code>${esc(code || '')}</code> #${id}
+      <select id="iStatus" style="margin-left:8px"><option value="">全部状态</option><option>未使用</option><option>已使用</option><option>已过期</option><option>已作废</option></select>
+      <span class="muted" style="margin-left:8px">一次性商品：已使用/已过期不退券</span></div>
+      <div id="iList" class="pg-host"></div></div>`;
+    document.body.appendChild(mask);
+    mask.onclick = e => { if (e.target === mask) mask.remove(); };
+    const load = async () => {
+      const st = mask.querySelector('#iStatus').value;
+      const rows = await must(get(`/coupons/${id}/instances?status=${encodeURIComponent(st)}`)).catch(() => []);
+      mask.querySelector('#iList').innerHTML = rows.length ? `
+        <table><thead><tr><th>小码</th><th>会员</th><th>状态</th><th>来源</th><th>领取时间</th><th>使用时间</th><th>关联单据</th><th></th></tr></thead>
+        <tbody>${rows.map(r => `<tr>
+          <td><code>${esc(r.code || '')}</code></td>
+          <td>${esc(r.member_name || '')}${r.member_phone ? `<span class="muted"> ${esc(r.member_phone)}</span>` : ''}</td>
+          <td>${esc(r.status)}</td><td>${esc(r.issue_source || '')}</td>
+          <td>${r.received_at ? dt(r.received_at) : '—'}</td>
+          <td>${r.used_at ? dt(r.used_at) : '—'}</td>
+          <td>${r.used_order_id ? '#' + r.used_order_id : '—'}</td>
+          <td>${r.status === '未使用' ? `<button class="btn sm warn" data-void="${r.id}">退券</button>` : ''}</td>
+        </tr>`).join('')}</tbody></table>` : '<div class="empty">无券实例</div>';
+      mask.querySelectorAll('[data-void]').forEach(b => b.onclick = async () => {
+        if (!confirm('确认退券（商家召回，仅未使用券可退；一次性商品不退已用券）？')) return;
+        try { await must(post(`/coupons/${id}/void`, { memberCouponId: Number(b.dataset.void) }), '已退券'); await load(); await list(); }
+        catch { /* toast 已提示 */ }
+      });
+    };
+    mask.querySelector('#iStatus').onchange = load;
+    await load();
   }
 
   await list();

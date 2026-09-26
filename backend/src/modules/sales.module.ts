@@ -6,16 +6,18 @@ import * as jwt from 'jsonwebtoken';
 import { SettingsService } from './settings.module';
 import { syncMemberLevel } from './members.module';
 import { applyPromotions, grantPostCheckoutRewards } from './promotions.module';
-import { applyCoupon } from './coupons.module';
+import { applyCoupons, couponStockAfter, logCoupon } from './coupons.module';   // V5.0 多选核销 + 核销出库流水
 import { storePrice } from './store-price.service';   // V4.26.5 门店覆盖价：结算按当前门店取价
 import { COST_REF } from '../common/sql';              // V5.0.0 R8：进价口径 L1 优先（红线兜底）
 import { enqueueSync, nodeIdentity } from '../common/outbox';  // V5.0.0 批次4A：同事务上行入队（hq/单店 no-op）
 import { SyncStoreService } from './sync-store.service'; // V5.0.0：结算后事件触发立即推送
 import { isChainStoreNode, hqMemberPost, offlineBalanceCredit, HQ_UNREACHABLE_CODE } from './member-chain.module'; // V5.0.0 批次5+P2-1：会员资产权威账本在总部；断网挂账
+import { curStore, curScope } from '../common/context';   // V4.28.0：销售列表/明细按数据范围收敛（审计 F-04）
 
 interface CheckoutItem { productId: number; qty: number; unitName?: string; unitPrice?: number;
   lineRemark?: string; manualEntry?: boolean; manualBarcode?: string;
-  customEntry?: boolean; gift?: boolean; name?: string; discRate?: number; }   // V4.18.1 P15：开放键临时行 / 赠品行；V4.25.3 单品折扣 discRate
+  customEntry?: boolean; gift?: boolean; name?: string; discRate?: number;
+  promoGift?: boolean; promoGiftId?: number; }   // V4.18.1 P15：开放键临时行 / 赠品行；V4.25.3 单品折扣 discRate；V4.28.9 促销自动赠品行（免授权，结算强校验活动）
 interface CheckoutDto {
   items: CheckoutItem[];
   memberId?: number;
@@ -24,7 +26,8 @@ interface CheckoutDto {
   isEmergency?: boolean;
   channel?: string;
   remark?: string;
-  couponId?: number; // member_coupons.id（5.9 券核销）
+  couponId?: number; // member_coupons.id（5.9 券核销，兼容旧单券）
+  couponIds?: number[]; // V5.0 一单多券核销（收银员多选）
   shiftId?: number;  // 交接班：班次归属（shifts 表，5.2.5）
   selfCheckout?: boolean; // 顾客扫码购（6.4.2）：无收银员归属、余额自动付清、不出改价/应急
   deliveryFee?: number;   // 线上配送费（方向4 在线商城：服务端定价后并入应收）
@@ -60,7 +63,7 @@ export class SalesService {
     // ── V4.25.5 店长现场授权：凡涉及「改价 / 单品折扣 / 赠品 / 整单折扣」，必须携带有效授权票据 ──
     //   票据由 POST /auth/authorize（店长工号 + 授权码）签发，120 秒有效、scope=price；
     //   作用仅为「授权本次价格操作」，不切换登录身份；无票据直接拒绝（50035）。
-    const needsPriceAuth = (dto.items as any[]).some(it => it && !it.custom && !it.customEntry
+    const needsPriceAuth = (dto.items as any[]).some(it => it && !it.custom
       && (it.unitPrice !== undefined || it.discRate !== undefined || it.gift))
       || (Number(dto.orderDiscount) > 0);
     let priceAuthorizer: { id: number; empNo: string; name: string } | null = null;
@@ -232,8 +235,11 @@ export class SalesService {
         let basePrice: number;
         let lineAmountOverride: number | null = null; // 包装定价时行金额按包装价精确（避免换算摊分尾差）
         // ── V4.18.1 P15 赠品行：0 元出库，库存照扣/成本照记；需 pos.price.manual 权限 + 留痕（§13 A3 手工赠）──
-        const isGift = !!(it as any).gift;
-        if (isGift) {
+        //  V4.28.9 促销赠品行（promoGift）：由「消费后奖励-送赠品」活动自动添加，0 元同一出库通道；
+        //  免店长授权（活动配置即授权），但结算时强校验活动有效性 + 门槛达标（防伪造免授权白拿，见 1.7 区）。
+        const isPromoGift = !!(it as any).promoGift;
+        const isGift = !!(it as any).gift || isPromoGift;
+        if ((it as any).gift && !isPromoGift) {
           if (!user.perms.includes('pos.price.manual')) {
             throw new BizException(42003, '手工赠品行需改价权限（pos.price.manual）', 403);
           }
@@ -342,7 +348,7 @@ export class SalesService {
           const batches = await cx(c,
             `SELECT id, remain_qty, inbound_cost FROM batches
               WHERE store_id=$1 AND product_id=$2 AND status='在库' AND remain_qty > 0
-              ORDER BY expiry_date, inbound_date
+              ORDER BY expiry_date, inbound_date, id
               FOR UPDATE`, [user.storeId, p.id]);
           let totalAvail = 0;
           for (const b of batches) totalAvail += Number(b.remain_qty);
@@ -386,27 +392,32 @@ export class SalesService {
         costCents += lineCostCents;
         const finalRemark = it.manualEntry
           ? `手输:${it.manualBarcode}${it.lineRemark ? ' ' + it.lineRemark : ''}`
-          : (isGift ? `赠品${it.lineRemark ? ':' + it.lineRemark : ''}` : (it.lineRemark ?? null));
+          : (isPromoGift ? `赠品(促销)${it.lineRemark ? ':' + it.lineRemark : ''}` : (isGift ? `赠品${it.lineRemark ? ':' + it.lineRemark : ''}` : (it.lineRemark ?? null)));
         lines.push({ p, unitName, baseQty, unitPrice, originPrice, lineAmount, lineCost, allocs, priceChanged, lineRemark: finalRemark,
+                     promoGift: isPromoGift, promoGiftId: isPromoGift ? Number((it as any).promoGiftId) || null : null,
                      manualBarcode: it.manualEntry ? (it.manualBarcode ?? null) : null, shortage: shortageHold });
       }
 
       // ── 1.5 促销引擎（5.4 T12）：行级特价/第二件半价 → 整单级满减/满折，跨层叠加；
       //      整单优惠按行小比分摊到 sale_items（退货按行原路退）；会员价冲突取更优 ──
-      const promo = await applyPromotions(c, user.storeId, lines);
+      const promo = await applyPromotions(c, user.storeId, lines, dto.memberId);   // V4.28.9e：会员专享活动按会员过滤
       // RV-01 按分计算：应收链路（促销→券→抹零→配送费）全程整数分，汇总回除为元供落库/审计
       const goodsAmount = goodsCents / 100;
       const costTotal = costCents / 100;
       const levelDiscountTotal = levelDiscCents / 100;
       let payableCents = goodsCents - toCents(promo.promoAmount);
-      // ── 1.6 优惠券核销（5.9）：促销后计算，门槛按货值；留痕 coupon_amount/coupon_id ──
-      let couponAmount = 0, couponIdUsed: number | null = null;
-      if (dto.couponId) {
-        const cp = await applyCoupon(c, dto.memberId ?? 0, dto.couponId, goodsAmount, promo.promoAmount, lines);
-        couponAmount = cp.amount;
-        couponIdUsed = cp.memberCouponId;
-        payableCents -= toCents(couponAmount);
-      }
+      // ── 1.6 优惠券核销（5.9 V5.0 多选）：促销后计算，门槛按货值；逐张校验并累加 ──
+      let couponAmount = 0;
+      let couponIdsUsed: number[] = [];
+      const cpIds = Array.isArray(dto.couponIds)
+        ? dto.couponIds.map(Number).filter(x => x > 0) : [];
+      if (dto.couponId && !cpIds.includes(Number(dto.couponId))) cpIds.push(Number(dto.couponId)); // 兼容旧字段
+      // V5.0 叠加规则统一裁决：coupon.mode（single/auto/manual）+ 每券 stackable
+      const cpRes = await applyCoupons(c, dto.memberId ?? 0, cpIds, goodsAmount, promo.promoAmount, lines);
+      couponAmount = cpRes.amount;
+      couponIdsUsed = cpRes.usedIds;
+      payableCents -= toCents(couponAmount);
+      const couponIdUsed = couponIdsUsed.length ? couponIdsUsed[0] : null;
       // ── 1.7 抹零（5.2 收银设置 pos.round_rule：分/角/5角/元，向下去零；抹掉金额记 round_amount ≥0）──
       // RV-01：单位直接用分，向下去零 = 对 ruc 取余，整数运算零尾差
       const roundRule = String((await this.settings.getVal('pos.round_rule')) ?? '分');
@@ -479,6 +490,88 @@ export class SalesService {
             { rate, amount: orderDiscountCents / 100, reason, preset: presetOk });
         }
       }
+      // ── 1.7c 促销赠品行强校验（V4.28.9）：免店长授权的促销赠品行，必须逐活动验证——
+      //    ① 对应「消费后奖励-送赠品」活动真实存在且进行中（防伪造 promoGift 免授权白拿）；
+      //    ② 活动配置的赠品商品与行商品一致；③ 实付 ≥ 活动门槛；
+      //    ④ 数量上限：每个活动的赠品行数量必须 ≤ 活动配置 giftQty（V4.28.9b——
+      //       "满100送A×2"就只送 2 个，多出的必须按正常价销售，赠品数量与后台设置严格一致）。
+      //    任一不满足 → 拒绝结账（此时未支付，收银员移除/校准赠品行即可，无资金损失）。──
+      const pgByAct = new Map<number, { qty: number; name: string }>();
+      for (const ln of lines.filter((ln: any) => ln.promoGift)) {
+        const pr = (await cx(c,
+          `SELECT id, name, status, start_at, end_at, rules FROM promotions
+            WHERE id=$1 AND store_id=${user.storeId}`, [ln.promoGiftId]))[0];
+        const rules = (pr?.rules && typeof pr.rules === 'object') ? pr.rules : {};
+        const active = pr && pr.status === '进行中'
+          && new Date(pr.start_at).getTime() <= Date.now() && new Date(pr.end_at).getTime() >= Date.now();
+        if (!active || String(rules.rewardType) !== 'gift'
+          || Number(rules.giftProductId) !== Number(ln.p.id)) {
+          throw new BizException(40003,
+            `促销赠品行无效（活动不存在 / 已结束 / 赠品商品不符）：${ln.p.name}——请移除该赠品行后重新结算`);
+        }
+        if (Number(rules.threshold) > 0 && payableCents / 100 < Number(rules.threshold)) {
+          throw new BizException(40003,
+            `未达「${pr.name}」活动门槛（单笔实付满 ${Number(rules.threshold)} 元），当前应收 ${(payableCents / 100).toFixed(2)} 元：请继续加购或移除促销赠品行`);
+        }
+        const agg = pgByAct.get(Number(ln.promoGiftId)) || { qty: 0, name: ln.p.name };
+        agg.qty += Number(ln.baseQty) || 0;
+        pgByAct.set(Number(ln.promoGiftId), agg);
+        const capQty = Math.max(1, Number(rules.giftQty) || 1);
+        if (agg.qty > capQty) {
+          throw new BizException(40003,
+            `「${pr.name}」赠品数量超限：活动设置赠 ${capQty} 个「${agg.name}」，购物车 0 元赠品行共 ${agg.qty} 个——` +
+            `超出的 ${agg.qty - capQty} 个请按正常价销售（收银台重新结算会自动拆分校准）`);
+        }
+      }
+
+      // ── 1.7d 整单成交价下限闸（V4.28.1 P0-1）：促销/券/会员价/整单折扣/抹零叠加后，
+      //    应收货值不得低于 Σ(行红线价×数量)——红线价与改价同口径 max(最低卖价, 进价)。
+      //    开关 sales.price_floor_guard（默认开）；击穿时需店长现场授权票据（scope=price，
+      //    与改价授权同通道），并全额审计留痕。堵住"优惠叠加静默击穿进价"的最后缺口。 ──
+      if ((await this.settings.getNum('sales.price_floor_guard', 1)) === 1 && payableCents > 0) {
+        let floorCents = 0;
+        // ── V4.28.9 促销赠品行豁免：0 元促销赠品行不计入下限（活动门槛已在 1.7c 强校验）──
+        // ── V4.28.6 临期豁免：在库临期批次（≤ ai.pricing.expiry_days 天到期）的商品不计入下限——
+        //    临期自动折扣允许低于进价去化（sales.floor_guard_expiry_exempt，默认开），其余商品照常拦截 ──
+        let expiryIds = new Set<number>();
+        if ((await this.settings.getBool('sales.floor_guard_expiry_exempt', true))) {
+          const expDays = Number(await this.settings.getNum('ai.pricing.expiry_days', 30) ?? 30);
+          const linePids = [...new Set(lines.map((ln: any) => Number((ln.p as any)?.id)).filter(Boolean))];
+          if (linePids.length) {
+            const er = await cx(c,
+              `SELECT DISTINCT product_id FROM batches
+                WHERE store_id=${user.storeId} AND status='在库' AND remain_qty > 0
+                  AND expiry_date <= CURRENT_DATE + $1::int AND product_id = ANY($2::bigint[])`,
+              [expDays, linePids]);
+            expiryIds = new Set(er.map((x: any) => Number(x.product_id)));
+          }
+        }
+        for (const ln of lines) {
+          if ((ln as any).promoGift) continue;                      // 促销赠品行：0 元，不计入下限（门槛已在 1.7c 校验）
+          if (expiryIds.has(Number((ln.p as any)?.id))) continue;   // 临期商品：不设下限
+          const priceSet = Number((ln.p as any)?.min_price ?? 0) || 0;
+          const sellP = Number((ln.p as any)?.sell_price) || 0;
+          const costP = Number((ln.p as any)?.cost_price) || 0;
+          const minP = Math.max(priceSet > 0 ? priceSet : Math.round(sellP * 0.6 * 100) / 100, costP);
+          if (minP > 0) floorCents += Math.round(minP * 100) * Number(ln.baseQty || 0);
+        }
+        if (payableCents < floorCents) {
+          const tk = String((dto as any).priceAuthTicket || '');
+          let authorizer = '';
+          try {
+            const pl: any = jwt.verify(tk, JWT_SECRET);
+            if (pl?.scope === 'price' && pl?.sub) authorizer = `${String(pl.empNo || '')}(${String(pl.name || '')})`;
+          } catch { /* 无票/过期 → 拦截 */ }
+          if (!authorizer) {
+            throw new BizException(50038,
+              `整单应收 ${(payableCents / 100).toFixed(2)} 元低于商品最低售价合计 ${(floorCents / 100).toFixed(2)} 元` +
+              `（优惠叠加击穿红线）：需店长现场授权（输入店长工号与授权码）后才能收款`);
+          }
+          await audit(user.storeId, user.sub, '收银', '整单成交价低于红线（店长授权放行）', 'sales_order', null,
+            { payable: payableCents / 100, floor: floorCents / 100, authorizer });
+        }
+      }
+
       // 应收为 0（全抹零）时允许零支付结账；否则必须至少一种支付方式
       if (payableCents > 0 && !(dto.payments ?? []).length) throw new BizException(40003, '至少一种支付方式');
 
@@ -514,29 +607,48 @@ export class SalesService {
         `INSERT INTO sales_orders (store_id, order_no, channel, is_emergency, member_id, cashier_id, status,
                                    goods_amount, promo_amount, coupon_amount, payable_amount, cost_amount,
                                    profit_amount, member_discount, round_amount, shift_id, promo_id, coupon_id,
-                                   remark, delivery_fee, client_ref, order_discount, pay_status, pay_paid_at, table_id)
-         VALUES ($1,$2,$3,$4,$5,$6,'已完成',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,'paid',now(),$22) RETURNING id`,
+                                   remark, delivery_fee, client_ref, order_discount, pay_status, pay_paid_at, table_id,
+                                   coupon_ids)
+         VALUES ($1,$2,$3,$4,$5,$6,'已完成',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,'paid',now(),$22,$23) RETURNING id`,
         [user.storeId, orderNo, dto.channel || '收银台', !!dto.isEmergency, dto.memberId ?? null, operatorId,
          goodsAmount, promo.promoAmount, couponAmount, payable, costTotal, profit, levelDiscountTotal,
          roundAmount, shiftId, promo.orderPromoId, couponIdUsed, dto.remark ?? null, deliveryFee,
-         dto.clientRef ?? null, orderDiscountCents / 100, tableId]);
+         dto.clientRef ?? null, orderDiscountCents / 100, tableId,
+         couponIdsUsed.length ? JSON.stringify(couponIdsUsed) : null]);
       const orderId = order[0].id;
       if (tableId) {
         // 落单即占用（预留/空闲 → 使用中；使用中幂等无碍）
         await cx(c, `UPDATE dining_tables SET status='使用中', updated_at=now() WHERE id=$1`, [tableId]);
       }
-      if (couponIdUsed) {
-        // 次卡计次核销（5.3）：累加次数不置「已使用」；其余券用后即销
+      // ── 1.6b 券实例核销留痕 + 核销出库流水（V5.0）──
+      for (const mcId of couponIdsUsed) {
         const usedCpn = await cx(c,
-          `SELECT cp.type FROM member_coupons mc JOIN coupons cp ON cp.id=mc.coupon_id WHERE mc.id=$1`, [couponIdUsed]);
-        if (usedCpn[0]?.type === '次卡') {
+          `SELECT cp.type, cp.id AS coupon_id, cp.store_id, mc.member_id, mc.times_used, cp.discount
+             FROM member_coupons mc JOIN coupons cp ON cp.id=mc.coupon_id WHERE mc.id=$1`, [mcId]);
+        if (!usedCpn.length) continue;
+        const uc = usedCpn[0];
+        if (uc.type === '次卡') {
+          // 次卡计次核销（5.3）：累加次数；用尽才置「已使用」并记核销出库
+          const total = Number(uc.discount), used = Number(uc.times_used ?? 0) + 1;
+          const finished = used >= total;
           await cx(c,
-            `UPDATE member_coupons SET times_used = times_used + 1, used_at=now(), used_order_id=$2 WHERE id=$1`,
-            [couponIdUsed, orderId]);
+            `UPDATE member_coupons SET times_used=$2, used_at=now(), used_order_id=$3${finished ? ", status='已使用'" : ''} WHERE id=$1`,
+            [mcId, used, orderId]);
+          if (finished) {
+            const sa = await couponStockAfter(c, Number(uc.coupon_id));
+            await logCoupon(c, { storeId: Number(uc.store_id), couponId: Number(uc.coupon_id), memberCouponId: mcId,
+              moveType: '核销出库', qty: -1, memberId: Number(uc.member_id), operatorId, docNo: orderNo,
+              stockAfter: sa, remark: '结算核销(次卡完毕)' });
+          }
         } else {
+          // 一次性券：用后即销
           await cx(c,
             `UPDATE member_coupons SET status='已使用', used_at=now(), used_order_id=$2 WHERE id=$1`,
-            [couponIdUsed, orderId]);
+            [mcId, orderId]);
+          const sa = await couponStockAfter(c, Number(uc.coupon_id));
+          await logCoupon(c, { storeId: Number(uc.store_id), couponId: Number(uc.coupon_id), memberCouponId: mcId,
+            moveType: '核销出库', qty: -1, memberId: Number(uc.member_id), operatorId, docNo: orderNo,
+            stockAfter: sa, remark: '结算核销' });
         }
       }
 
@@ -816,7 +928,7 @@ export class SalesService {
       // V4.14.1 消费后奖励：满阈值发购物券/登记赠品（事务内，失败不阻断收银）
       let rewards: any[] = [];
       if (dto.memberId) {
-        try { rewards = await grantPostCheckoutRewards(c, user.storeId, Number(dto.memberId), payable, orderId); } catch { rewards = []; }
+        try { rewards = await grantPostCheckoutRewards(c, user.storeId, Number(dto.memberId), payable, orderId, user.sub); } catch { rewards = []; }
       }
 
       await audit(user.storeId, operatorId, '收银',
@@ -937,11 +1049,14 @@ class SalesController {
     @Query('from') from?: string, @Query('to') to?: string,
     @Query('cashierId') cashierId?: string, @Query('keyword') keyword?: string,
     @Query('supplierId') supplierId?: string, @Query('channel') channel?: string,
+    @CurrentUser() user?: AuthUser,
   ) {
     const pn = Math.max(1, Number(page) || 1);
     const sz = Math.min(100, Math.max(1, Number(size) || 20));
     const kw = (keyword || '').trim();
     const ch = (channel || '').trim();
+    // V4.28.0 安全修复（F-04）：按数据范围收敛门店（总部 all 可看全链，其余仅本店）
+    const storeCond = curScope().dataScope === 'all' ? '' : ` AND o.store_id = ${Number(user?.storeId || 0)}`;
     const where = `($1::date IS NULL OR o.created_at::date >= $1::date)
           AND ($2::date IS NULL OR o.created_at::date <= $2::date)
           AND ($3::bigint IS NULL OR o.cashier_id = $3::bigint)
@@ -949,7 +1064,7 @@ class SalesController {
                 WHERE si4.order_id = o.id AND (p4.name ILIKE '%'||$4||'%' OR p4.barcode = $4)))
           AND ($5::bigint IS NULL OR EXISTS (SELECT 1 FROM sale_items si5 JOIN products p5 ON p5.id = si5.product_id
                 WHERE si5.order_id = o.id AND p5.supplier_default_id = $5::bigint))
-          AND ($6 = '' OR o.channel::text = $6)`;
+          AND ($6 = '' OR o.channel::text = $6)${storeCond}`;
     const params = [from || null, to || null, cashierId || null, kw, supplierId || null, ch] as any[];
     const items = await q(
       `SELECT o.*, m.name AS member_name, e.name AS cashier_name
@@ -971,25 +1086,33 @@ class SalesController {
     @Query('from') from?: string, @Query('to') to?: string,
     @Query('cashierId') cashierId?: string, @Query('keyword') keyword?: string,
     @Query('channel') channel?: string, @Query('categoryId') categoryId?: string,
+    @CurrentUser() user?: AuthUser,
   ) {
     const pn = Math.max(1, Number(page) || 1);
     const sz = Math.min(200, Math.max(1, Number(size) || 20));
     const kw = (keyword || '').trim();
     const ch = (channel || '').trim();
+    // V4.28.0 安全修复（F-04）：门店收敛 + 成本/毛利仅对财务相关权限可见
+    const storeCond = curScope().dataScope === 'all' ? '' : ` AND o.store_id = ${Number(user?.storeId || 0)}`;
+    const canCost = !!user && (user.perms.includes('*')
+      || user.perms.some(p => p.startsWith('recon.') || p.startsWith('sys.') || p === 'finance.billrecon'));
+    const costSel = canCost
+      ? 'si.line_cost AS "lineCost", (si.line_amount - si.line_cost) AS "lineProfit"'
+      : 'NULL::numeric AS "lineCost", NULL::numeric AS "lineProfit"';
     const where = `o.status = '已完成'
           AND ($1::date IS NULL OR o.created_at::date >= $1::date)
           AND ($2::date IS NULL OR o.created_at::date <= $2::date)
           AND ($3::bigint IS NULL OR o.cashier_id = $3::bigint)
           AND ($4 = '' OR p.name ILIKE '%'||$4||'%' OR p.barcode = $4)
           AND ($5 = '' OR o.channel::text = $5)
-          AND ($6::bigint IS NULL OR p.category_id = $6::bigint)`;
+          AND ($6::bigint IS NULL OR p.category_id = $6::bigint)${storeCond}`;
     const params = [from || null, to || null, cashierId || null, kw, ch, categoryId || null] as any[];
     const items = await q(
       `SELECT si.id, si.order_id AS "orderId", o.order_no, o.channel::text AS channel, o.created_at,
               si.product_id AS "productId", p.name AS "productName", p.barcode, p.base_unit AS unit,
               p.category_id AS "categoryId", pc.name AS "categoryName",
               si.qty, si.unit_price AS "unitPrice", si.line_amount AS "lineAmount",
-              si.line_cost AS "lineCost", (si.line_amount - si.line_cost) AS "lineProfit",
+              ${costSel},
               e.name AS "cashierName", m.name AS "memberName"
          FROM sale_items si
          JOIN sales_orders o ON o.id = si.order_id
@@ -1001,14 +1124,21 @@ class SalesController {
         ORDER BY o.id DESC, si.id ASC LIMIT $7 OFFSET $8`,
       [...params, sz, (pn - 1) * sz]);
     const sum = await q1<any>(
-      `SELECT count(*)::int AS n, COALESCE(SUM(si.qty),0) AS qty, COALESCE(SUM(si.line_amount),0) AS amount,
-              COALESCE(SUM(si.line_amount - si.line_cost),0) AS profit
+      `SELECT count(*)::int AS n, COALESCE(SUM(si.qty),0) AS qty, COALESCE(SUM(si.line_amount),0) AS amount
          FROM sale_items si
          JOIN sales_orders o ON o.id = si.order_id
          JOIN products p ON p.id = si.product_id
         WHERE ${where}`, params);
+    let sumProfit = 0;
+    if (canCost) {
+      const ps = await q1<any>(
+        `SELECT COALESCE(SUM(si.line_amount - si.line_cost),0) AS profit
+           FROM sale_items si JOIN sales_orders o ON o.id = si.order_id JOIN products p ON p.id = si.product_id
+          WHERE ${where}`, params);
+      sumProfit = Number(ps?.profit ?? 0);
+    }
     return { page: pn, size: sz, total: Number(sum?.n ?? 0),
-      sumQty: Number(sum?.qty ?? 0), sumAmount: Number(sum?.amount ?? 0), sumProfit: Number(sum?.profit ?? 0), items };
+      sumQty: Number(sum?.qty ?? 0), sumAmount: Number(sum?.amount ?? 0), sumProfit, items };
   }
 
   /* ═══════════ 配货拣货（6.11 拣货单：线上订单 → 扫码校验 → 缺货登记 → 完成） ═══════════ */
@@ -1041,11 +1171,14 @@ class SalesController {
     return { order, items, shortages };
   }
 
-  /** 订单详情（含明细/批次成本/支付，可追溯） */
+  /** 订单详情（含明细/批次成本/支付，可追溯）。V4.28.0（F-04）：按数据范围断言门店，堵 IDOR */
   @Get(':id')
   async detail(@Param('id', ParseIntPipe) id: number) {
     const order = await q1(`SELECT * FROM sales_orders WHERE id=$1`, [id]);
     if (!order) throw new BizException(40404, '订单不存在', 404);
+    if (curScope().dataScope !== 'all' && Number(order.store_id) !== Number(curStore())) {
+      throw new BizException(40301, '无权查看其他门店的订单', 403);
+    }
     const items = await q(
       `SELECT i.*, p.name AS product_name,
               (SELECT json_agg(json_build_object('batch', b.batch_no, 'qty', sib.qty, 'cost', sib.unit_cost))

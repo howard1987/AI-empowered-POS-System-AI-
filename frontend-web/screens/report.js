@@ -13,7 +13,7 @@ export async function render(view) {
 
     <div id="tab-sale">
       <div class="card" style="padding-bottom:14px">
-        <h3>商品销售明细 <span class="api">GET /reports/sale-detail?from=&to=&keyword=&categoryId=</span></h3>
+        <h3>商品销售明细 </h3>
         <div class="bar">
           <input type="date" id="sdFrom"> <span class="muted">至</span> <input type="date" id="sdTo">
           <input id="sdKw" placeholder="商品名称/条码" style="width:160px">
@@ -27,7 +27,7 @@ export async function render(view) {
 
     <div id="tab-member" style="display:none">
       <div class="card">
-        <h3>会员消费报表 <span class="api">GET /reports/member?from=&to=</span></h3>
+        <h3>会员消费报表 </h3>
         <div class="bar">
           <input type="date" id="mbFrom"> <span class="muted">至</span> <input type="date" id="mbTo">
           <button class="btn pri" id="mbGo">查询</button>
@@ -40,7 +40,7 @@ export async function render(view) {
 
     <div id="tab-employee" style="display:none">
       <div class="card">
-        <h3>员工业绩报表 <span class="api">GET /reports/employee?from=&to=</span></h3>
+        <h3>员工业绩报表 </h3>
         <div class="bar">
           <input type="date" id="emFrom"> <span class="muted">至</span> <input type="date" id="emTo">
           <select id="emCashier" style="width:150px"><option value="">全部收银员</option></select>
@@ -53,7 +53,7 @@ export async function render(view) {
 
     <div id="tab-inventory" style="display:none">
       <div class="card">
-        <h3>进销存报表 <span class="api">GET /reports/inventory?from=&to=&keyword=&categoryId=</span></h3>
+        <h3>进销存报表 </h3>
         <div class="bar">
           <input type="date" id="ivFrom"> <span class="muted">至</span> <input type="date" id="ivTo">
           <input id="ivKw" placeholder="商品名称/条码" style="width:160px">
@@ -64,13 +64,52 @@ export async function render(view) {
         </div>
         <div id="ivBody"></div>
       </div>
+    </div>
+
+    <div id="tab-gift" style="display:none">
+      <div class="card">
+        <h3>🎁 赠送记录 <span class="muted" style="font-size:11.5px">含手工赠品与促销自动赠品（均为 0 元真实出库，扣批次库存）</span></h3>
+        <div class="bar">
+          <input type="date" id="gfFrom"> <span class="muted">至</span> <input type="date" id="gfTo">
+          <button class="btn pri" id="gfGo">查询</button>
+          <button class="btn" id="gfCsv">⬇ CSV 导出</button>
+        </div>
+        <div id="gfSum"></div>
+        <div id="gfBody"></div>
+      </div>
+    </div>
+    <div id="tab-coupon" style="display:none">
+      <div class="card">
+        <h3>🎟 优惠券库存看板 <span class="muted" style="font-size:11.5px">生成入库→发放→核销出库（一次性商品，不退券）</span></h3>
+        <div class="bar">
+          <input id="cpKw" placeholder="大类码/名称" style="width:160px">
+          <button class="btn pri" id="cpGo">查询</button>
+          <button class="btn" id="cpCsv">⬇ CSV 导出</button>
+        </div>
+        <div id="cpSum"></div>
+        <div id="cpBody"></div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h3>优惠券出入库流水 <span class="muted" style="font-size:11.5px">谁领取/使用·何时·关联单据，全链路可追溯</span></h3>
+        <div class="bar">
+          <input id="clKw" placeholder="大类码/名称/id" style="width:150px">
+          <select id="clType"><option value="">全部动作</option><option>入库</option><option>发放出库</option><option>核销出库</option><option>过期出库</option><option>退库</option></select>
+          <input id="clMember" placeholder="会员ID" style="width:90px">
+          <input id="clDoc" placeholder="单据号" style="width:120px">
+          <input type="date" id="clFrom"> <span class="muted">至</span> <input type="date" id="clTo">
+          <button class="btn pri" id="clGo">查询</button>
+          <button class="btn" id="clCsv">⬇ CSV 导出</button>
+        </div>
+        <div id="clBody"></div>
+      </div>
     </div>`;
 
   /* ── Tab 切换（V4.26.4：改用 .seg 分段控件） ── */
-  const tabs = { sale: 'tab-sale', member: 'tab-member', employee: 'tab-employee', inventory: 'tab-inventory' };
+  const tabs = { sale: 'tab-sale', member: 'tab-member', employee: 'tab-employee', inventory: 'tab-inventory', gift: 'tab-gift', coupon: 'tab-coupon' };
   const RP_TABS = [
     { k: 'sale', t: '🛒 商品销售明细' }, { k: 'member', t: '👥 会员消费报表' },
     { k: 'employee', t: '🧑‍💼 员工业绩报表' }, { k: 'inventory', t: '📦 进销存报表' },
+    { k: 'gift', t: '🎁 赠送记录' }, { k: 'coupon', t: '🎟 优惠券明细' },
   ];
   function drawTabs(cur) {
     const host = view.querySelector('#rpSeg'); if (!host) return;
@@ -80,6 +119,86 @@ export async function render(view) {
   function switchTab(k) {
     Object.entries(tabs).forEach(([key, id]) => view.querySelector('#' + id).style.display = key === k ? '' : 'none');
   }
+  /* ═══ 优惠券明细（V5.0：库存闭环 + 全链路流水） ═══ */
+  let cpRows = [];
+  async function drawCouponStock() {
+    const kw = view.querySelector('#cpKw').value.trim();
+    cpRows = await must(get('/reports/coupons-stock?keyword=' + encodeURIComponent(kw))).catch(() => []);
+    const sum = cpRows.reduce((s, r) => ({
+      inStock: (s.inStock || 0) + (r.stock_controlled ? Number(r.in_stock) || 0 : 0),
+      used: (s.used || 0) + Number(r.used_count || 0),
+      benefit: (s.benefit || 0) + Number(r.benefit_amount || 0),
+    }), {});
+    view.querySelector('#cpSum').innerHTML = `<div class="muted">共 ${cpRows.length} 种券 · 在库合计 ${money(sum.inStock || 0)} 张 · 已核销 ${sum.used || 0} 张 · 让利合计 ${money(sum.benefit || 0)}</div>`;
+    view.querySelector('#cpBody').innerHTML = cpRows.length ? `
+      <table><thead><tr><th>大类码</th><th>名称</th><th>类型</th><th class="num">入库总量</th><th class="num">在库</th>
+        <th class="num">未使用</th><th class="num">已核销</th><th class="num">已过期</th><th class="num">作废</th>
+        <th class="num">核销率</th><th class="num">让利金额</th><th>状态</th></tr></thead>
+      <tbody>${cpRows.map(r => `<tr>
+        <td><code>${esc(r.code || '')}</code></td><td>${esc(r.name)}</td><td>${esc(r.type)}</td>
+        <td class="num">${r.stock_controlled ? Number(r.total_qty) : '不限'}</td>
+        <td class="num">${r.stock_controlled ? Number(r.in_stock) : '—'}</td>
+        <td class="num">${Number(r.unused_count || 0)}</td><td class="num">${Number(r.used_count || 0)}</td>
+        <td class="num">${Number(r.expired_count || 0)}</td><td class="num">${Number(r.voided_count || 0)}</td>
+        <td class="num">${Number(r.redeem_rate || 0)}%</td><td class="num">${money(r.benefit_amount || 0)}</td>
+        <td>${r.status === 1 ? '<span class="tag g">启用</span>' : '<span class="tag r">停用</span>'}</td>
+      </tr>`).join('')}</tbody></table>` : '<div class="empty">无数据</div>';
+  }
+  view.querySelector('#cpGo').onclick = drawCouponStock;
+  view.querySelector('#cpCsv').onclick = () => {
+    const headers = ['大类码', '名称', '类型', '入库总量', '在库', '未使用', '已核销', '已过期', '作废', '核销率', '让利金额', '状态'];
+    const rows = cpRows.map(r => [r.code, r.name, r.type, r.stock_controlled ? r.total_qty : '不限', r.stock_controlled ? r.in_stock : '',
+      r.unused_count, r.used_count, r.expired_count, r.voided_count, (r.redeem_rate || 0) + '%', r.benefit_amount || 0, r.status === 1 ? '启用' : '停用']);
+    csvDownload('优惠券库存看板.csv', headers, rows);
+  };
+
+  let clRows = [];
+  const clTypeColor = { '入库': 'g', '发放出库': '', '核销出库': 'r', '过期出库': 'warn', '退库': 'b' };
+  async function drawCouponLog(page = 1) {
+    const p = new URLSearchParams();
+    const kw = view.querySelector('#clKw').value.trim(); if (kw) p.set('coupon', kw);
+    const mt = view.querySelector('#clType').value; if (mt) p.set('moveType', mt);
+    const mid = view.querySelector('#clMember').value.trim(); if (mid) p.set('memberId', mid);
+    const doc = view.querySelector('#clDoc').value.trim(); if (doc) p.set('docNo', doc);
+    const f = view.querySelector('#clFrom').value; if (f) p.set('from', f);
+    const t = view.querySelector('#clTo').value; if (t) p.set('to', t);
+    p.set('page', String(page)); p.set('size', '50');
+    const d = await must(get('/reports/coupon-stock-log?' + p.toString())).catch(() => ({ rows: [], total: 0 }));
+    clRows = d.rows || [];
+    view.querySelector('#clBody').innerHTML = clRows.length ? `
+      <table><thead><tr><th>时间</th><th>动作</th><th>大类码</th><th>券名称</th><th>会员</th><th>经手人</th>
+        <th class="num">变动</th><th class="num">可用库存</th><th>单据号</th><th>备注</th></tr></thead>
+      <tbody>${clRows.map(r => `<tr>
+        <td>${dt(r.created_at)}</td>
+        <td><span class="tag ${clTypeColor[r.move_type] || ''}">${esc(r.move_type)}</span></td>
+        <td><code>${esc(r.coupon_code || '')}</code></td><td>${esc(r.coupon_name || '')}</td>
+        <td>${esc(r.member_name || '')}</td><td>${esc(r.operator_name || '系统')}</td>
+        <td class="num">${r.qty > 0 ? '+' : ''}${r.qty}</td><td class="num">${r.stock_after}</td>
+        <td>${esc(r.related_doc_no || '')}</td><td>${esc(r.remark || '')}</td>
+      </tr>`).join('')}</tbody></table>
+      <div class="bar muted">共 ${d.total || 0} 条 · 第 ${page} 页
+        <button class="btn sm" id="clPrev">上一页</button><button class="btn sm" id="clNext">下一页</button></div>`
+      : '<div class="empty">无流水</div>';
+    const prev = view.querySelector('#clPrev'), next = view.querySelector('#clNext');
+    if (prev) prev.onclick = () => drawCouponLog(Math.max(1, page - 1));
+    if (next) next.onclick = () => drawCouponLog(page + 1);
+  }
+  view.querySelector('#clGo').onclick = () => drawCouponLog(1);
+  view.querySelector('#clCsv').onclick = async () => {
+    const p = new URLSearchParams();
+    const kw = view.querySelector('#clKw').value.trim(); if (kw) p.set('coupon', kw);
+    const mt = view.querySelector('#clType').value; if (mt) p.set('moveType', mt);
+    const mid = view.querySelector('#clMember').value.trim(); if (mid) p.set('memberId', mid);
+    const doc = view.querySelector('#clDoc').value.trim(); if (doc) p.set('docNo', doc);
+    const f = view.querySelector('#clFrom').value; if (f) p.set('from', f);
+    const t = view.querySelector('#clTo').value; if (t) p.set('to', t);
+    p.set('size', '5000');
+    const d = await must(get('/reports/coupon-stock-log?' + p.toString())).catch(() => ({ rows: [] }));
+    const headers = ['时间', '动作', '大类码', '券名称', '会员', '经手人', '变动', '可用库存', '单据号', '备注'];
+    const rows = (d.rows || []).map(r => [r.created_at, r.move_type, r.coupon_code, r.coupon_name, r.member_name, r.operator_name, r.qty, r.stock_after, r.related_doc_no, r.remark]);
+    csvDownload('优惠券出入库流水.csv', headers, rows);
+  };
+
   drawTabs('sale');
 
   /* ── CSV 导出（客户端生成，BOM 头保证 Excel 中文不乱码）── */
@@ -309,5 +428,56 @@ export async function render(view) {
       Number(r.sale_amount), Number(r.sale_cost), Number(r.sale_profit),
       Number(r.sale_amount) ? (Number(r.sale_profit) / Number(r.sale_amount) * 100).toFixed(1) + '%' : '']));
 
-  await Promise.all([loadSale(), loadMember(), loadEmployee(), loadInventory()]);
+  /* ── V4.28.9 🎁 赠送记录（手工赠品 + 促销自动赠品，均为 0 元真实出库） ── */
+  let gfRows = [];
+  async function loadGifts() {
+    const from = view.querySelector('#gfFrom').value || '';
+    const to = view.querySelector('#gfTo').value || '';
+    const qs = new URLSearchParams(); if (from) qs.set('from', from); if (to) qs.set('to', to);
+    const d = await must(get('/reports/gifts' + (qs.toString() ? '?' + qs.toString() : '')));
+    gfRows = d.rows || [];
+    const s = d.summary || {};
+    view.querySelector('#gfSum').innerHTML = `<div class="bar" style="flex-wrap:wrap">
+      <span class="pill" style="background:#fff6e5;color:#c07f00">赠送 ${Number(s.times || 0)} 行次</span>
+      <span class="pill" style="background:#e8f5ec;color:#2f7d4f">合计 ${Number(s.qtyTotal || 0)} 件</span>
+      <span class="pill" style="background:#fdeeee;color:#c0392b">成本合计 ¥${money(s.costTotal)}</span>
+      <span class="pill gray">涉及 ${Number(s.kinds || 0)} 种商品</span></div>`;
+    const pg = paginate(gfRows, 1, 15);
+    view.querySelector('#gfBody').innerHTML = gfRows.length ? `
+      <table><thead><tr><th>时间</th><th>单号</th><th>商品</th><th class="num">数量</th>
+        <th class="num">成本</th><th>来源</th><th>活动</th><th>收银员</th><th>备注</th></tr></thead>
+      <tbody>${pg.slice.map(r => `<tr>
+        <td>${dt(r.created_at)}</td>
+        <td class="mono">${esc(r.order_no)}</td>
+        <td>${esc(r.productName || '—')}</td>
+        <td class="num">${Number(r.qty)}</td>
+        <td class="num">${money(r.cost)}</td>
+        <td><span class="tag ${String(r.source) === '促销自动' ? 'o' : 'b'}">${esc(r.source)}</span></td>
+        <td>${esc(r.promoName || '—')}</td>
+        <td>${esc(r.cashier || '—')}</td>
+        <td class="l muted" style="font-size:12px">${esc(r.remark || '')}</td>
+      </tr>`).join('')}</tbody></table>${pg.bar}` : '<div class="empty">所选区间暂无赠送记录</div>';
+    bindPager(view.querySelector('#gfBody'), p => {
+      const pg2 = paginate(gfRows, p, 15);
+      // 简单重绘：复用上面结构（数据量小直接整页渲染）
+      view.querySelector('#gfBody').innerHTML = gfRows.length ? (() => {
+        const rows2 = pg2.slice.map(r => `<tr>
+          <td>${dt(r.created_at)}</td><td class="mono">${esc(r.order_no)}</td>
+          <td>${esc(r.productName || '—')}</td><td class="num">${Number(r.qty)}</td>
+          <td class="num">${money(r.cost)}</td>
+          <td><span class="tag ${String(r.source) === '促销自动' ? 'o' : 'b'}">${esc(r.source)}</span></td>
+          <td>${esc(r.promoName || '—')}</td><td>${esc(r.cashier || '—')}</td>
+          <td class="l muted" style="font-size:12px">${esc(r.remark || '')}</td></tr>`).join('');
+        return `<table><thead><tr><th>时间</th><th>单号</th><th>商品</th><th class="num">数量</th>
+          <th class="num">成本</th><th>来源</th><th>活动</th><th>收银员</th><th>备注</th></tr></thead><tbody>${rows2}</tbody></table>${pg2.bar}`;
+      })() : '';
+    });
+  }
+  view.querySelector('#gfGo').onclick = loadGifts;
+  view.querySelector('#gfCsv').onclick = () => csvDownload('赠送记录.csv',
+    ['时间', '单号', '商品', '条码', '数量', '成本', '来源', '活动', '收银员', '备注'],
+    gfRows.map(r => [dt(r.created_at), r.order_no, r.productName, r.barcode, Number(r.qty), Number(r.cost),
+      r.source, r.promoName, r.cashier, r.remark]));
+
+  await Promise.all([loadSale(), loadMember(), loadEmployee(), loadInventory(), loadGifts()]);
 }

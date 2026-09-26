@@ -1,0 +1,378 @@
+import { get, must, money, esc, dt, unwrap } from '../api.js';
+import { paginate, bindPager } from '../common-ui.js';
+import { segHtml, bindSeg } from '../ui-polish.js';   // V4.26.4 统一分段控件
+
+/** 报表中心（P1-1）：商品销售明细 / 会员消费报表 / 员工业绩报表 三 Tab + CSV 导出 */
+export async function render(view) {
+  view.innerHTML = `
+    <div class="doc-tools" style="margin-bottom:14px;border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow)">
+      <!-- V4.26.4：四个报表主切换改用统一 .seg 分段控件（选中态由组件重绘管理） -->
+      <span id="rpSeg"></span>
+      <span class="muted" style="margin-left:auto;font-size:11.5px">口径：已完成订单 · 支持区间/关键词/分类筛选 · 一键导出 CSV（Excel 可直接打开）</span>
+    </div>
+
+    <div id="tab-sale">
+      <div class="card" style="padding-bottom:14px">
+        <h3>商品销售明细 </h3>
+        <div class="bar">
+          <input type="date" id="sdFrom"> <span class="muted">至</span> <input type="date" id="sdTo">
+          <input id="sdKw" placeholder="商品名称/条码" style="width:160px">
+          <select id="sdCat" style="width:150px"><option value="">全部分类</option></select>
+          <button class="btn pri" id="sdGo">查询</button>
+          <button class="btn" id="sdCsv">⬇ CSV 导出</button>
+        </div>
+        <div id="sdBody" class="pg-host"></div>
+      </div>
+    </div>
+
+    <div id="tab-member" style="display:none">
+      <div class="card">
+        <h3>会员消费报表 </h3>
+        <div class="bar">
+          <input type="date" id="mbFrom"> <span class="muted">至</span> <input type="date" id="mbTo">
+          <button class="btn pri" id="mbGo">查询</button>
+          <button class="btn" id="mbCsv">⬇ CSV 导出</button>
+        </div>
+        <div id="mbSum"></div>
+        <div id="mbBody"></div>
+      </div>
+    </div>
+
+    <div id="tab-employee" style="display:none">
+      <div class="card">
+        <h3>员工业绩报表 </h3>
+        <div class="bar">
+          <input type="date" id="emFrom"> <span class="muted">至</span> <input type="date" id="emTo">
+          <select id="emCashier" style="width:150px"><option value="">全部收银员</option></select>
+          <button class="btn pri" id="emGo">查询</button>
+          <button class="btn" id="emCsv">⬇ CSV 导出</button>
+        </div>
+        <div id="emBody"></div>
+      </div>
+    </div>
+
+    <div id="tab-inventory" style="display:none">
+      <div class="card">
+        <h3>进销存报表 </h3>
+        <div class="bar">
+          <input type="date" id="ivFrom"> <span class="muted">至</span> <input type="date" id="ivTo">
+          <input id="ivKw" placeholder="商品名称/条码" style="width:160px">
+          <select id="ivCat" style="width:150px"><option value="">全部分类</option></select>
+          <button class="btn pri" id="ivGo">查询</button>
+          <button class="btn" id="ivCsv">⬇ CSV 导出</button>
+          <span class="muted">期初=区间起始日前累计净入；期末=期初+入库−出库（stock_flows 全量流水）</span>
+        </div>
+        <div id="ivBody"></div>
+      </div>
+    </div>
+
+    <div id="tab-gift" style="display:none">
+      <div class="card">
+        <h3>🎁 赠送记录 <span class="muted" style="font-size:11.5px">含手工赠品与促销自动赠品（均为 0 元真实出库，扣批次库存）</span></h3>
+        <div class="bar">
+          <input type="date" id="gfFrom"> <span class="muted">至</span> <input type="date" id="gfTo">
+          <button class="btn pri" id="gfGo">查询</button>
+          <button class="btn" id="gfCsv">⬇ CSV 导出</button>
+        </div>
+        <div id="gfSum"></div>
+        <div id="gfBody"></div>
+      </div>
+    </div>`;
+
+  /* ── Tab 切换（V4.26.4：改用 .seg 分段控件） ── */
+  const tabs = { sale: 'tab-sale', member: 'tab-member', employee: 'tab-employee', inventory: 'tab-inventory', gift: 'tab-gift' };
+  const RP_TABS = [
+    { k: 'sale', t: '🛒 商品销售明细' }, { k: 'member', t: '👥 会员消费报表' },
+    { k: 'employee', t: '🧑‍💼 员工业绩报表' }, { k: 'inventory', t: '📦 进销存报表' },
+    { k: 'gift', t: '🎁 赠送记录' },
+  ];
+  function drawTabs(cur) {
+    const host = view.querySelector('#rpSeg'); if (!host) return;
+    host.innerHTML = segHtml(RP_TABS, cur);
+    bindSeg(host, k => { drawTabs(k); switchTab(k); });
+  }
+  function switchTab(k) {
+    Object.entries(tabs).forEach(([key, id]) => view.querySelector('#' + id).style.display = key === k ? '' : 'none');
+  }
+  drawTabs('sale');
+
+  /* ── CSV 导出（客户端生成，BOM 头保证 Excel 中文不乱码）── */
+  function csvDownload(name, headers, rows) {
+    const q = v => {
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const csv = '\ufeff' + [headers.map(q).join(','), ...rows.map(r => r.map(q).join(','))].join('\r\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  /* ── 筛选数据源：分类 / 收银员 ── */
+  (async () => {
+    try {
+      const c = unwrap(await get('/products/categories'));
+      const items = Array.isArray(c) ? c : (c?.items || []);
+      const opts = '<option value="">全部分类</option>' +
+        items.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('');
+      view.querySelector('#sdCat').innerHTML = opts;
+      view.querySelector('#ivCat').innerHTML = opts;
+    } catch { /* 无分类不阻塞 */ }
+    try {
+      const e = unwrap(await get('/auth/employees?size=100'));
+      const items = Array.isArray(e) ? e : (e?.items || []);
+      view.querySelector('#emCashier').innerHTML = '<option value="">全部收银员</option>' +
+        items.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('');
+    } catch { /* 无员工不阻塞 */ }
+  })();
+
+  /* ═══ 商品销售明细 ═══ */
+  let sdRows = [];
+  let sdTotal = {};
+  let sdPage = 1;
+  function drawSale() {   // 用缓存 sdRows 重画（翻页不重新请求）
+    const pg = paginate(sdRows, sdPage, 10);
+    sdPage = pg.page;
+    const t = sdTotal;
+    const max = Math.max(...sdRows.map(r => Number(r.revenue)), 0);
+    view.querySelector('#sdBody').innerHTML = sdRows.length ? `
+      <table><thead><tr><th>#</th><th>商品</th><th>分类</th><th class="num">销量</th><th class="num">单数</th>
+        <th class="num">销售额</th><th class="num">成本</th><th class="num">毛利</th><th class="num">毛利率</th><th class="num">占比</th></tr></thead>
+      <tbody>${pg.slice.map((r, i) => `<tr>
+        <td class="num muted">${(pg.page - 1) * 10 + i + 1}</td>
+        <td>${esc(r.name)}</td><td>${esc(r.category_name)}</td>
+        <td class="num">${Number(r.qty)}</td><td class="num">${r.orderCount}</td>
+        <td class="num"><b>${money(r.revenue)}</b></td>
+        <td class="num">${money(r.cost)}</td>
+        <td class="num" style="color:${Number(r.profit) < 0 ? 'var(--warn)' : 'inherit'}">${money(r.profit)}</td>
+        <td class="num">${Number(r.revenue) ? (Number(r.profit) / Number(r.revenue) * 100).toFixed(1) + '%' : '—'}</td>
+        <td class="num">${Number(t.revenue) ? (Number(r.revenue) / Number(t.revenue) * 100).toFixed(1) + '%' : '—'}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="4" class="num">合计 ${sdRows.length} 项</td>
+        <td class="num">${t.orderCount}</td><td class="num">${money(t.revenue)}</td><td class="num">${money(t.cost)}</td>
+        <td class="num">${money(t.profit)}</td><td colspan="2"></td></tr></tfoot></table>
+      <div class="bar muted" style="margin-top:6px">Top1 销售额 ${money(max)}（柱状占比示意）</div>
+      ${pg.bar}`
+      : '<div class="empty">无数据：请调整日期区间或筛选条件</div>';
+    bindPager(view.querySelector('#sdBody'), p => { sdPage = p; drawSale(); });
+  }
+  async function loadSale() {
+    const p = new URLSearchParams();
+    const from = view.querySelector('#sdFrom').value, to = view.querySelector('#sdTo').value;
+    const kw = view.querySelector('#sdKw').value.trim(), cat = view.querySelector('#sdCat').value;
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
+    if (kw) p.set('keyword', kw);
+    if (cat) p.set('categoryId', cat);
+    const d = await must(get('/reports/sale-detail?' + p));
+    sdRows = d.items || [];
+    sdTotal = d.total || {};
+    sdPage = 1;
+    drawSale();
+  }
+  view.querySelector('#sdGo').onclick = loadSale;
+  view.querySelector('#sdKw').addEventListener('keydown', e => { if (e.key === 'Enter') loadSale(); });
+  view.querySelector('#sdCsv').onclick = () => csvDownload('商品销售明细.csv',
+    ['商品', '分类', '销量', '单数', '销售额', '成本', '毛利'],
+    sdRows.map(r => [r.name, r.category_name, Number(r.qty), r.orderCount, Number(r.revenue), Number(r.cost), Number(r.profit)]));
+
+  /* ═══ 会员消费报表 ═══ */
+  let mbRows = [];
+  let mbPage = 1;
+  function drawMember() {
+    const pg = paginate(mbRows, mbPage, 10);
+    mbPage = pg.page;
+    view.querySelector('#mbBody').innerHTML = mbRows.length ? `
+      <table><thead><tr><th>会员</th><th>等级</th><th class="num">消费次数</th><th class="num">消费额</th>
+        <th class="num">毛利</th><th class="num">储值余额</th><th class="num">分红余额</th><th class="num">积分</th><th>最近消费</th></tr></thead>
+      <tbody>${pg.slice.map(r => `<tr>
+        <td>${esc(r.name || r.card_no)}<div class="muted" style="font-size:11px">${esc(r.phone || '')} · ${esc(r.card_no)}</div></td>
+        <td>${esc(r.level_name)}</td>
+        <td class="num">${r.orderCount}</td><td class="num"><b>${money(r.salesTotal)}</b></td>
+        <td class="num">${money(r.profitTotal)}</td>
+        <td class="num">${money(r.balance)}</td><td class="num">${money(r.dividendBalance)}</td>
+        <td class="num">${r.points}</td><td>${dt(r.last_active_date)}</td></tr>`).join('')}</tbody></table>
+      ${pg.bar}`
+      : '<div class="empty">无数据：该区间内无会员消费</div>';
+    bindPager(view.querySelector('#mbBody'), p => { mbPage = p; drawMember(); });
+  }
+  async function loadMember() {
+    const p = new URLSearchParams();
+    const from = view.querySelector('#mbFrom').value, to = view.querySelector('#mbTo').value;
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
+    const d = await must(get('/reports/member?' + p));
+    mbRows = d.items || [];
+    mbPage = 1;
+    const s = d.summary || {};
+    view.querySelector('#mbSum').innerHTML = `
+      <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">
+        <div class="kpi"><div class="t">新增会员</div><div class="v">${s.newMembers ?? 0}</div></div>
+        <div class="kpi"><div class="t">活跃会员</div><div class="v">${s.activeMembers ?? 0}</div></div>
+        <div class="kpi"><div class="t">会员消费占比</div><div class="v">${Number(s.memberRatio ?? 0).toFixed(1)}%</div></div>
+        <div class="kpi"><div class="t">会员销售额</div><div class="v">${money(s.memberSales)}</div></div>
+      </div>`;
+    drawMember();
+  }
+  view.querySelector('#mbGo').onclick = loadMember;
+  view.querySelector('#mbCsv').onclick = () => csvDownload('会员消费报表.csv',
+    ['会员', '卡号', '手机', '等级', '消费次数', '消费额', '毛利', '储值余额', '分红余额', '积分'],
+    mbRows.map(r => [r.name || r.card_no, r.card_no, r.phone, r.level_name, r.orderCount,
+      Number(r.salesTotal), Number(r.profitTotal), Number(r.balance), Number(r.dividendBalance), r.points]));
+
+  /* ═══ 员工业绩报表 ═══ */
+  let emRows = [];
+  let emPage = 1;
+  function drawEmployee() {
+    const pg = paginate(emRows, emPage, 10);
+    emPage = pg.page;
+    view.querySelector('#emBody').innerHTML = emRows.length ? `
+      <table><thead><tr><th>收银员</th><th class="num">单数</th><th class="num">应急单</th><th class="num">货值</th>
+        <th class="num">促销</th><th class="num">销售额</th><th class="num">毛利</th><th class="num">客单价</th>
+        <th class="num">退款单</th><th class="num">退款额</th></tr></thead>
+      <tbody>${pg.slice.map(r => `<tr>
+        <td>${esc(r.name)}<div class="muted" style="font-size:11px">${esc(r.emp_no)}</div></td>
+        <td class="num">${r.orderCount}</td><td class="num">${r.emergencyCount}</td>
+        <td class="num">${money(r.goodsTotal)}</td><td class="num">${money(r.promoTotal)}</td>
+        <td class="num"><b>${money(r.salesTotal)}</b></td><td class="num">${money(r.profitTotal)}</td>
+        <td class="num">${money(r.avgTicket)}</td>
+        <td class="num" style="color:${Number(r.refundCount) ? 'var(--warn)' : 'inherit'}">${r.refundCount}</td>
+        <td class="num" style="color:${Number(r.refundTotal) ? 'var(--warn)' : 'inherit'}">${money(r.refundTotal)}</td></tr>`).join('')}</tbody></table>
+      ${pg.bar}`
+      : '<div class="empty">无数据：该区间内无收银记录</div>';
+    bindPager(view.querySelector('#emBody'), p => { emPage = p; drawEmployee(); });
+  }
+  async function loadEmployee() {
+    const p = new URLSearchParams();
+    const from = view.querySelector('#emFrom').value, to = view.querySelector('#emTo').value;
+    const csh = view.querySelector('#emCashier').value;
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
+    if (csh) p.set('cashierId', csh);
+    const d = await must(get('/reports/employee?' + p));
+    emRows = d.items || [];
+    emPage = 1;
+    drawEmployee();
+  }
+  view.querySelector('#emGo').onclick = loadEmployee;
+  view.querySelector('#emCsv').onclick = () => csvDownload('员工业绩报表.csv',
+    ['工号', '姓名', '单数', '应急单', '货值', '促销', '销售额', '毛利', '客单价', '退款单', '退款额'],
+    emRows.map(r => [r.emp_no, r.name, r.orderCount, r.emergencyCount, Number(r.goodsTotal),
+      Number(r.promoTotal), Number(r.salesTotal), Number(r.profitTotal), Number(r.avgTicket),
+      r.refundCount, Number(r.refundTotal)]));
+
+  /* ═══ 进销存报表 ═══ */
+  let ivRows = [];
+  let ivTotal = {};
+  let ivPage = 1;
+  function drawInventory() {
+    const pg = paginate(ivRows, ivPage, 10);
+    ivPage = pg.page;
+    const t = ivTotal;
+    view.querySelector('#ivBody').innerHTML = ivRows.length ? `
+      <table><thead><tr><th>#</th><th>商品</th><th>分类</th>
+        <th class="num">期初</th><th class="num">入库</th><th class="num">出库</th><th class="num">期末</th>
+        <th class="num">销售单数</th><th class="num">销售额</th><th class="num">销售成本</th><th class="num">毛利</th><th class="num">毛利率</th></tr></thead>
+      <tbody>${pg.slice.map((r, i) => {
+        const endQty = Number(r.open_qty) + Number(r.in_qty) - Number(r.out_qty);
+        return `<tr>
+        <td class="num muted">${(pg.page - 1) * 10 + i + 1}</td>
+        <td>${esc(r.name)}<div class="muted" style="font-size:11px">${esc(r.base_unit || '')}</div></td>
+        <td>${esc(r.category_name)}</td>
+        <td class="num">${Number(r.open_qty)}</td>
+        <td class="num" style="color:var(--ok)">+${Number(r.in_qty)}</td>
+        <td class="num" style="color:var(--warn)">-${Number(r.out_qty)}</td>
+        <td class="num"><b>${endQty}</b></td>
+        <td class="num">${r.sale_orders}</td>
+        <td class="num"><b>${money(r.sale_amount)}</b></td>
+        <td class="num">${money(r.sale_cost)}</td>
+        <td class="num" style="color:${Number(r.sale_profit) < 0 ? 'var(--warn)' : 'inherit'}">${money(r.sale_profit)}</td>
+        <td class="num">${Number(r.sale_amount) ? (Number(r.sale_profit) / Number(r.sale_amount) * 100).toFixed(1) + '%' : '—'}</td></tr>`;
+      }).join('')}</tbody>
+      <tfoot><tr><td colspan="4" class="num">合计 ${ivRows.length} 项</td>
+        <td class="num">${t.inQty}</td><td class="num">${t.outQty}</td>
+        <td class="num">${Number(t.openQty) + Number(t.inQty) - Number(t.outQty)}</td>
+        <td class="num">${t.saleOrders}</td><td class="num">${money(t.saleAmount)}</td>
+        <td class="num">${money(t.saleCost)}</td><td class="num">${money(t.saleProfit)}</td><td></td></tr></tfoot></table>
+      ${pg.bar}`
+      : '<div class="empty">无数据：该区间内无销售且无库存流水（或调整日期/筛选条件）</div>';
+    bindPager(view.querySelector('#ivBody'), p => { ivPage = p; drawInventory(); });
+  }
+  async function loadInventory() {
+    const p = new URLSearchParams();
+    const from = view.querySelector('#ivFrom').value, to = view.querySelector('#ivTo').value;
+    const kw = view.querySelector('#ivKw').value.trim(), cat = view.querySelector('#ivCat').value;
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
+    if (kw) p.set('keyword', kw);
+    if (cat) p.set('categoryId', cat);
+    const d = await must(get('/reports/inventory?' + p));
+    ivRows = d.items || [];
+    ivTotal = d.total || {};
+    ivPage = 1;
+    drawInventory();
+  }
+  view.querySelector('#ivGo').onclick = loadInventory;
+  view.querySelector('#ivKw').addEventListener('keydown', e => { if (e.key === 'Enter') loadInventory(); });
+  view.querySelector('#ivCsv').onclick = () => csvDownload('进销存报表.csv',
+    ['商品', '分类', '期初', '入库', '出库', '期末', '销售单数', '销售额', '销售成本', '毛利', '毛利率'],
+    ivRows.map(r => [r.name, r.category_name, Number(r.open_qty), Number(r.in_qty), Number(r.out_qty),
+      Number(r.open_qty) + Number(r.in_qty) - Number(r.out_qty), r.sale_orders,
+      Number(r.sale_amount), Number(r.sale_cost), Number(r.sale_profit),
+      Number(r.sale_amount) ? (Number(r.sale_profit) / Number(r.sale_amount) * 100).toFixed(1) + '%' : '']));
+
+  /* ── V4.28.9 🎁 赠送记录（手工赠品 + 促销自动赠品，均为 0 元真实出库） ── */
+  let gfRows = [];
+  async function loadGifts() {
+    const from = view.querySelector('#gfFrom').value || '';
+    const to = view.querySelector('#gfTo').value || '';
+    const qs = new URLSearchParams(); if (from) qs.set('from', from); if (to) qs.set('to', to);
+    const d = await must(get('/reports/gifts' + (qs.toString() ? '?' + qs.toString() : '')));
+    gfRows = d.rows || [];
+    const s = d.summary || {};
+    view.querySelector('#gfSum').innerHTML = `<div class="bar" style="flex-wrap:wrap">
+      <span class="pill" style="background:#fff6e5;color:#c07f00">赠送 ${Number(s.times || 0)} 行次</span>
+      <span class="pill" style="background:#e8f5ec;color:#2f7d4f">合计 ${Number(s.qtyTotal || 0)} 件</span>
+      <span class="pill" style="background:#fdeeee;color:#c0392b">成本合计 ¥${money(s.costTotal)}</span>
+      <span class="pill gray">涉及 ${Number(s.kinds || 0)} 种商品</span></div>`;
+    const pg = paginate(gfRows, 1, 15);
+    view.querySelector('#gfBody').innerHTML = gfRows.length ? `
+      <table><thead><tr><th>时间</th><th>单号</th><th>商品</th><th class="num">数量</th>
+        <th class="num">成本</th><th>来源</th><th>活动</th><th>收银员</th><th>备注</th></tr></thead>
+      <tbody>${pg.slice.map(r => `<tr>
+        <td>${dt(r.created_at)}</td>
+        <td class="mono">${esc(r.order_no)}</td>
+        <td>${esc(r.productName || '—')}</td>
+        <td class="num">${Number(r.qty)}</td>
+        <td class="num">${money(r.cost)}</td>
+        <td><span class="tag ${String(r.source) === '促销自动' ? 'o' : 'b'}">${esc(r.source)}</span></td>
+        <td>${esc(r.promoName || '—')}</td>
+        <td>${esc(r.cashier || '—')}</td>
+        <td class="l muted" style="font-size:12px">${esc(r.remark || '')}</td>
+      </tr>`).join('')}</tbody></table>${pg.bar}` : '<div class="empty">所选区间暂无赠送记录</div>';
+    bindPager(view.querySelector('#gfBody'), p => {
+      const pg2 = paginate(gfRows, p, 15);
+      // 简单重绘：复用上面结构（数据量小直接整页渲染）
+      view.querySelector('#gfBody').innerHTML = gfRows.length ? (() => {
+        const rows2 = pg2.slice.map(r => `<tr>
+          <td>${dt(r.created_at)}</td><td class="mono">${esc(r.order_no)}</td>
+          <td>${esc(r.productName || '—')}</td><td class="num">${Number(r.qty)}</td>
+          <td class="num">${money(r.cost)}</td>
+          <td><span class="tag ${String(r.source) === '促销自动' ? 'o' : 'b'}">${esc(r.source)}</span></td>
+          <td>${esc(r.promoName || '—')}</td><td>${esc(r.cashier || '—')}</td>
+          <td class="l muted" style="font-size:12px">${esc(r.remark || '')}</td></tr>`).join('');
+        return `<table><thead><tr><th>时间</th><th>单号</th><th>商品</th><th class="num">数量</th>
+          <th class="num">成本</th><th>来源</th><th>活动</th><th>收银员</th><th>备注</th></tr></thead><tbody>${rows2}</tbody></table>${pg2.bar}`;
+      })() : '';
+    });
+  }
+  view.querySelector('#gfGo').onclick = loadGifts;
+  view.querySelector('#gfCsv').onclick = () => csvDownload('赠送记录.csv',
+    ['时间', '单号', '商品', '条码', '数量', '成本', '来源', '活动', '收银员', '备注'],
+    gfRows.map(r => [dt(r.created_at), r.order_no, r.productName, r.barcode, Number(r.qty), Number(r.cost),
+      r.source, r.promoName, r.cashier, r.remark]));
+
+  await Promise.all([loadSale(), loadMember(), loadEmployee(), loadInventory(), loadGifts()]);
+}

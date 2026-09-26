@@ -1,0 +1,10 @@
+ultralytics>=8.3.0
+psycopg2-binary>=2.9
+Pillow>=10.0
+numpy>=1.24
+onnx>=1.15
+onnxruntime>=1.17
+# GPU 训练需先装 CUDA 版 PyTorch（按服务器 CUDA 版本选择）：
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# 可选 GPU 推理加速：
+#   pip install onnxruntime-gpu

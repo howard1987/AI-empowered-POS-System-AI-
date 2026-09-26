@@ -105,6 +105,31 @@ export function parseClassify(output: Float32Array, classes: Record<string, { na
   return [{ productId: cls.productId ?? null, name: cls.name, count: 1, conf: output[best] }];
 }
 
+/** V4.27.1 · YOLO26 端到端（NMS-free）输出解析：[1,max_det,6] 行 = [x1,y1,x2,y2,conf,cls]（letterbox 640 系）
+ *  判定条件：dims[2]===6 且 N<1000（标准 detect 输出 N 为网格锚点数 ≥2100，YOLO26 导出 max_det 默认 300）。
+ *  端到端模型已内置去重，此处仍做轻量 NMS 兜底（同 cls IoU>0.45，防极端重复框）。 */
+export function parseEndToEnd(
+  dims: number[], output: Float32Array,
+  classes: Record<string, { name: string; productId?: number }>,
+  minConf = 0.25, iouTh = 0.45,
+): { x1: number; y1: number; x2: number; y2: number; conf: number; cls: number }[] {
+  const n = dims[1];
+  const rows: { x1: number; y1: number; x2: number; y2: number; conf: number; cls: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const o = i * 6;
+    const conf = output[o + 4];
+    if (conf < minConf) continue;
+    rows.push({ x1: output[o], y1: output[o + 1], x2: output[o + 2], y2: output[o + 3], conf, cls: Math.round(output[o + 5]) });
+  }
+  rows.sort((a, b) => b.conf - a.conf);
+  const keep: typeof rows = [];
+  for (const b of rows) {
+    const overlap = keep.some(k => k.cls === b.cls && iou(k, b) > iouTh);
+    if (!overlap) keep.push(b);
+  }
+  return keep;
+}
+
 /** 检测模式：输入 [1,4+nc,N] 或 [1,N,4+nc]（YOLOv8），阈值过滤 + NMS（IoU 0.45） */
 export function parseDetect(
   dims: number[], output: Float32Array,
@@ -162,8 +187,25 @@ export function toOrig(bbox: number[], scale: number, padX: number, padY: number
           Math.round(bbox[2] / scale), Math.round(bbox[3] / scale)];
 }
 
-/* ── 主入口：完整推理 ── */
+/* ── 主入口：完整推理（V4.27.1 增加并发限流：多收银台同时识别时排队，防 CPU/显存抖动） ── */
+const MAX_CONC = Math.max(1, Number(process.env.AI_INFER_MAX_CONCURRENCY) || 2);
+let active = 0;
+const waiters: (() => void)[] = [];
+async function withInferSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (active >= MAX_CONC) await new Promise<void>(r => waiters.push(r));
+  active++;
+  try { return await fn(); } finally {
+    active--;
+    const w = waiters.shift();
+    if (w) w();
+  }
+}
+
 export async function runDetection(model: AiModelMeta, imageBase64: string, minConf = 0.25): Promise<DetResult> {
+  return withInferSlot(() => runDetectionOnce(model, imageBase64, minConf));
+}
+
+async function runDetectionOnce(model: AiModelMeta, imageBase64: string, minConf = 0.25): Promise<DetResult> {
   const t0 = Date.now();
   try {
     const { rgb, w, h } = await decodeImage(imageBase64);
@@ -182,6 +224,15 @@ export async function runDetection(model: AiModelMeta, imageBase64: string, minC
     let boxes: DetBox[];
     if (mode === 'classify' || dims.length === 2) {
       boxes = parseClassify(tensor.data as Float32Array, classes);
+    } else if (dims.length === 3 && dims[2] === 6 && dims[1] < 1000) {
+      // V4.27.1 YOLO26 端到端（NMS-free）输出 [1,max_det,6]；标准 detect 输出 N≥2100 不可能 <1000
+      boxes = parseEndToEnd(dims, tensor.data as Float32Array, classes, minConf).map(b => ({
+        productId: classes[String(b.cls)]?.productId ?? null,
+        name: classes[String(b.cls)]?.name || `类别${b.cls}`,
+        count: 1,
+        conf: b.conf,
+        bbox: toOrig([b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1], scale, padX, padY),
+      }));
     } else {
       boxes = parseDetect(dims, tensor.data as Float32Array, classes, minConf).map(b => ({
         ...b,
@@ -193,4 +244,24 @@ export async function runDetection(model: AiModelMeta, imageBase64: string, minC
   } catch (e: any) {
     return { ok: false, err: e?.message || String(e), boxes: [], latencyMs: Date.now() - t0, lowConf: false };
   }
+}
+
+/** V4.27.1 启动预热（Q10 热加载配套）：进程启动即后台加载激活检测模型 + 多件定位模型的 session，
+ *  首次收银识别不再吃"百 ms 级冷加载"。热加载本身已由 sessions Map 保证（同文件只 load 一次，
+ *  模型切换/激活时 clearSessionCache 定向失效），不存在每请求重复加载。 */
+export async function prewarmModels(): Promise<void> {
+  try {
+    const { q } = await import('../common/db');
+    const rows = await q(`SELECT file_path, metrics FROM ai_models WHERE is_active AND task='detect' LIMIT 1`);
+    if (rows.length) {
+      const m = rows[0];
+      await loadSession(String(m.file_path)).catch(() => {});
+    }
+    const cfg = await q(`SELECT value FROM system_settings WHERE setting_key='ai.seg.model_id'`);
+    const segId = Number(cfg[0]?.value ?? 0);
+    if (segId > 0) {
+      const s = await q(`SELECT file_path FROM ai_models WHERE id=$1`, [segId]);
+      if (s.length) await loadSession(String(s[0].file_path)).catch(() => {});
+    }
+  } catch { /* DB 未就绪等场景静默：首次请求时仍会懒加载 */ }
 }

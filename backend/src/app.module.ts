@@ -44,6 +44,7 @@ import { ChainModule } from './modules/chain.module';        // V5.0.0 连锁：
 import { SyncModule } from './modules/sync.module';          // V5.0.0 连锁：同步层（批次4A）
 import { ReturnChainModule } from './modules/return-chain.module'; // V5.0.0 连锁：跨店退货/往来/差异单（批次4B）
 import { MemberChainModule } from './modules/member-chain.module'; // V5.0.0 连锁：会员连锁 跨店资产/镜像（批次5）
+import { ArchiveJob } from './modules/archive.job';   // V4.28.5 🟠-3 流水/识别日志归档任务
 
 @Controller()
 class HealthController {
@@ -110,6 +111,7 @@ class HealthController {
     { provide: APP_GUARD, useClass: AuthGuard },      // 全局鉴权（@Public 例外）
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_INTERCEPTOR, useClass: WrapInterceptor },
+    ArchiveJob,                                       // V4.28.5：每日 03:40 流水/识别日志归档（ops.archive.* 可配）
   ],
 })
 export class AppModule {}

@@ -111,6 +111,122 @@ class ReportsController {
     return { target: target > 0 ? target : null, days: days2, channels };
   }
 
+  /** V4.28.9 赠送记录（报表中心）：识别口径 = 赠品行 line_remark 前缀「赠品」——
+   *  ① 手工赠品（收银台"设为赠品"，0 元 + 店长授权 + 审计留痕）；
+   *  ② 消费后奖励自动赠品（促销规则配 giftProductId，结账事务内自动出库）。
+   *  二者均为真实出库（FIFO 扣批 + 库存流水 + 成本入账）。 */
+  @RequirePerms('report.view.all')
+  @Get('gifts')
+  async gifts(@Query('from') from?: string, @Query('to') to?: string,
+              @Query('storeId') storeId?: string) {
+    const rs = resolveReportStores(storeId);
+    const p1: any[] = [from || null, to || null];
+    const rows = await q(
+      `SELECT si.id, o.order_no, o.created_at, o.store_id, st.name AS "storeName",
+              p.name AS "productName", p.barcode,
+              si.qty, si.line_cost AS "cost",
+              si.line_remark AS "remark",
+              CASE WHEN si.line_remark LIKE '赠品(消费后奖励)%' THEN '促销自动'
+                   ELSE '手工赠品' END AS "source",
+              e.name AS "cashier",
+              COALESCE(pr.name, '') AS "promoName"
+         FROM sale_items si
+         JOIN sales_orders o ON o.id = si.order_id AND o.status = '已完成'
+         LEFT JOIN products p ON p.id = si.product_id
+         LEFT JOIN stores st ON st.id = o.store_id
+         LEFT JOIN employees e ON e.id = o.cashier_id
+         LEFT JOIN promotions pr ON pr.id = si.promo_id
+        WHERE si.line_remark LIKE '赠品%'
+          AND ($1::date IS NULL OR o.created_at::date >= $1::date)
+          AND ($2::date IS NULL OR o.created_at::date <= $2::date)${this.sf(rs, p1, 'o.store_id')}
+        ORDER BY o.created_at DESC LIMIT 300`, p1);
+    const sum = await q(
+      `SELECT count(*)::int AS "times", COALESCE(SUM(si.qty),0) AS "qtyTotal",
+              COALESCE(SUM(si.line_cost),0) AS "costTotal",
+              count(DISTINCT si.product_id)::int AS "kinds"
+         FROM sale_items si
+         JOIN sales_orders o ON o.id = si.order_id AND o.status = '已完成'
+        WHERE si.line_remark LIKE '赠品%'
+          AND ($1::date IS NULL OR o.created_at::date >= $1::date)
+          AND ($2::date IS NULL OR o.created_at::date <= $2::date)${this.sf(rs, p1, 'o.store_id')}`, p1);
+    return { rows, summary: sum[0] || { times: 0, qtyTotal: 0, costTotal: 0, kinds: 0 } };
+  }
+
+  /** 优惠券明细·库存看板（V5.0）：每种券 入库/在库/已发/已核销/已过期/作废 + 核销率 + 让利金额 */
+  @RequirePerms('report.view.all')
+  @Get('coupons-stock')
+  async couponsStock(@Query('storeId') storeId?: string, @Query('keyword') keyword?: string) {
+    const rs = resolveReportStores(storeId);
+    const p: any[] = [];
+    const kw = (keyword || '').trim();
+    const filter = this.sf(rs, p, 'cp.store_id') +
+      (kw ? ` AND (cp.name ILIKE '%'||$${p.length + 1}||'%' OR cp.code ILIKE '%'||$${p.length + 1}||'%')` : '');
+    if (kw) p.push(kw);
+    const rows = await q(
+      `SELECT cp.id, cp.code, cp.name, cp.type, cp.threshold, cp.discount,
+              cp.total_qty, cp.issued_qty, cp.per_member, cp.status,
+              cp.total_qty - cp.issued_qty AS in_stock,
+              count(mc.id) FILTER (WHERE mc.status='未使用')::int AS unused_count,
+              count(mc.id) FILTER (WHERE mc.status='已使用')::int AS used_count,
+              count(mc.id) FILTER (WHERE mc.status='已过期')::int AS expired_count,
+              count(mc.id) FILTER (WHERE mc.status='已作废')::int AS voided_count
+         FROM coupons cp LEFT JOIN member_coupons mc ON mc.coupon_id = cp.id
+        WHERE 1=1 ${filter}
+        GROUP BY cp.id ORDER BY cp.id DESC`, p);
+    const out = rows.map((r: any) => {
+      const used = Number(r.used_count || 0);
+      const issued = Number(r.issued_qty || 0);
+      const face = Number(r.discount || 0);
+      const thr = Number(r.threshold || 0);
+      let benefit = 0;
+      if (r.type === '满减券') benefit = used * face;
+      else if (r.type === '折扣券') benefit = used * thr * (1 - face);
+      // 兑换券/次卡价值在消费中体现，报表占位 0
+      return {
+        ...r,
+        redeem_rate: issued > 0 ? Math.round((used / issued) * 1000) / 10 : 0,
+        benefit_amount: r2(benefit),
+      };
+    });
+    return out;
+  }
+
+  /** 优惠券明细·出入库流水（V5.0）：按券/会员/经手人/动作/单据号/时间筛选，全链路可追溯 */
+  @RequirePerms('report.view.all')
+  @Get('coupon-stock-log')
+  async couponStockLog(@Query('storeId') storeId?: string,
+                       @Query('coupon') coupon?: string, @Query('memberId') memberId?: string,
+                       @Query('operatorId') operatorId?: string, @Query('moveType') moveType?: string,
+                       @Query('docNo') docNo?: string, @Query('from') from?: string, @Query('to') to?: string,
+                       @Query('page') page = '1', @Query('size') size = '50') {
+    const rs = resolveReportStores(storeId);
+    const p: any[] = [];
+    const f = this.sf(rs, p, 'l.store_id');
+    const and: string[] = [];
+    if (coupon) { and.push(`(cp.code ILIKE '%'||$${p.length + 1}||'%' OR cp.name ILIKE '%'||$${p.length + 1}||'%' OR cp.id::text=$${p.length + 1})`); p.push(coupon); }
+    if (memberId) { and.push(`l.member_id=$${p.length + 1}`); p.push(Number(memberId)); }
+    if (operatorId) { and.push(`l.operator_id=$${p.length + 1}`); p.push(Number(operatorId)); }
+    if (moveType) { and.push(`l.move_type=$${p.length + 1}`); p.push(moveType); }
+    if (docNo) { and.push(`l.related_doc_no ILIKE '%'||$${p.length + 1}||'%'`); p.push(docNo); }
+    if (from) { and.push(`l.created_at::date >= $${p.length + 1}`); p.push(from); }
+    if (to) { and.push(`l.created_at::date <= $${p.length + 1}`); p.push(to); }
+    const where = (and.length ? ' AND ' + and.join(' AND ') : '') + (f || '');
+    const pg = Math.max(1, Number(page) || 1);
+    const sz = Math.min(200, Math.max(1, Number(size) || 50));
+    const rows = await q(
+      `SELECT l.id, l.created_at, l.move_type, l.qty, l.stock_after, l.related_doc_no, l.remark,
+              cp.code AS coupon_code, cp.name AS coupon_name, cp.type AS coupon_type,
+              m.name AS member_name, m.phone AS member_phone, e.name AS operator_name
+         FROM coupon_stock_log l
+         JOIN coupons cp ON cp.id = l.coupon_id
+         LEFT JOIN members m ON m.id = l.member_id
+         LEFT JOIN employees e ON e.id = l.operator_id
+        WHERE 1=1 ${where}
+        ORDER BY l.id DESC LIMIT $${p.length + 1} OFFSET $${p.length + 2}`, [...p, sz, (pg - 1) * sz]);
+    const tot = await q1(`SELECT count(*)::int AS n FROM coupon_stock_log l WHERE 1=1 ${where}`, p);
+    return { rows, total: tot?.n || 0, page: pg, size: sz };
+  }
+
   /** 经营看板（14.6.3）：日/周/月/季切换；批次6：storeId 维度 */
   @RequirePerms('report.view.all')
   @Get('dashboard')
@@ -124,7 +240,9 @@ class ReportsController {
     const curFilter = this.sf(rs, pc, 'store_id');
     const pc2: any[] = [unit];
     const periodFilter = this.sf(rs, pc2, 'store_id');
-    const tc: any[] = [unit];
+    // trend 查询按 CURRENT_DATE-6 固定近 7 天，SQL 内不含 date_trunc($1)，
+    // 故 tc 不能像 pc/pc2 那样预置 [unit]，否则全门店(sf 不追加占位符)时参数数 > 占位符数
+    const tc: any[] = [];
     const trendFilter = this.sf(rs, tc, 'o.store_id');
     const cc: any[] = [];
     const catFilter = this.sf(rs, cc, 'o.store_id');

@@ -1,0 +1,28 @@
+<!--
+  超市收银系统 · 服务端 Windows 服务定义（WinSW 包装器）
+  安装后：开机自启、崩溃 5 秒自动重启、全程无窗口；日志滚动写入 {app}\logs
+  %BASE% = 本文件所在目录（{app}\service）
+-->
+<service>
+  <id>pos-server</id>
+  <name>超市收银系统服务端</name>
+  <description>超市收银系统后端与内置数据库：开机自启、异常自动重启。管理：任务栏托盘「服务端管理器」或 services.msc</description>
+  <executable>%BASE%\..\runtime\node.exe</executable>
+  <arguments>"%BASE%\..\backend\scripts\server-up.mjs" up</arguments>
+  <workingdirectory>%BASE%\..\backend</workingdirectory>
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>false</delayedAutoStart>
+  <onfailure action="restart" delay="5 sec"/>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="none"/>
+  <resetfailure>1 hour</resetfailure>
+  <stopexecutable>%BASE%\..\runtime\node.exe</stopexecutable>
+  <stoparguments>"%BASE%\..\backend\scripts\server-up.mjs" stop</stoparguments>
+  <stoptimeout>30 sec</stoptimeout>
+  <log mode="roll-by-size">
+    <logPath>%BASE%\..\logs</logPath>
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>4</keepFiles>
+  </log>
+  <env name="NODE_ENV" value="production"/>
+</service>

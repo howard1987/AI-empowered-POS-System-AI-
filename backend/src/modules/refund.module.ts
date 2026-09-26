@@ -255,7 +255,62 @@ export class RefundService {
       }
     }
 
-    await cx(c, `UPDATE sale_refunds SET status='已退款', employee_id=$2 WHERE id=$1`, [refundId, user.sub]);
+    // ── V4.28.4 P1-11 分红回冲：退款按比例冲减该订单带来的会员分红计提 ──
+    //    归属期 = 订单日次日计提的分红期（每日分红计提昨日净利；补跑容差查其后 4 天内最近一期）；
+    //    冲减额 = 该会员该期计提额 × 退款占比，跨多次部分退款累计不超计提额；再以当前余额封顶
+    //    （分红已花掉则冲完即止，不产生负债）。落 dividend_records('冲减'，负额) +
+    //    回写 sale_refunds.dividend_reversed（字段预留至此接通）。失败不阻断退款主链路。
+    let clawback = 0;
+    if (order.member_id && refundRatio > 0) {
+      try {
+        const orderDate = order.created_at ? String(order.created_at).slice(0, 10) : '';
+        if (orderDate) {
+          const nd = new Date(orderDate + 'T00:00:00Z'); nd.setUTCDate(nd.getUTCDate() + 1);
+          const from = nd.toISOString().slice(0, 10);
+          nd.setUTCDate(nd.getUTCDate() + 4);
+          const period = (await cx(c,
+            `SELECT id FROM dividend_periods WHERE biz_date >= $1 AND biz_date <= $2 ORDER BY biz_date LIMIT 1`,
+            [from, nd.toISOString().slice(0, 10)]))[0];
+          if (period) {
+            const memberId = Number(order.member_id);
+            const acc = (await cx(c,
+              `SELECT COALESCE(SUM(amount),0) AS s FROM dividend_records
+                WHERE member_id=$1 AND period_id=$2 AND record_type='计提' AND amount > 0`,
+              [memberId, Number(period.id)]))[0];
+            const rev = (await cx(c,
+              `SELECT COALESCE(SUM(amount),0) AS s FROM dividend_records
+                WHERE member_id=$1 AND period_id=$2 AND record_type='冲减'`,
+              [memberId, Number(period.id)]))[0];
+            const accrued = Math.round(Number(acc.s) * 100);      // 分
+            const already = -Math.round(Number(rev.s) * 100);      // 已冲减累计（存负额）
+            const target = Math.round(accrued * refundRatio);
+            clawback = Math.max(0, Math.min(target, accrued - already)) / 100;
+            if (clawback > 0) {
+              const ab = (await cx(c,
+                `SELECT dividend_balance FROM member_accounts WHERE member_id=$1 FOR UPDATE`, [memberId]))[0];
+              const balance = Number(ab?.dividend_balance ?? 0);
+              if (balance < clawback) clawback = Math.max(0, balance);   // 余额不足：冲到零为止
+            }
+            if (clawback > 0) {
+              await cx(c,
+                `INSERT INTO dividend_records (store_id, member_id, period_id, record_type, amount, ref_type, ref_id, operator_id, remark)
+                 VALUES (${Number(rf.store_id)},$1,$2,'冲减',$3,'sale_refund',$4,$5,$6)`,
+                [memberId, Number(period.id), -clawback, refundId, user.sub,
+                 `退款回冲 ${String(rf.refund_no)}（占比 ${(refundRatio * 100).toFixed(1)}%）`]);
+              await cx(c,
+                `UPDATE member_accounts SET dividend_balance = dividend_balance - $2,
+                    dividend_cumulative = dividend_cumulative - $2, updated_at = now()
+                  WHERE member_id=$1`, [memberId, clawback]);
+            }
+          }
+        }
+      } catch (e: any) {
+        console.error('[分红回冲] 失败（不阻断退款）：', e?.message);
+        clawback = 0;
+      }
+    }
+    await cx(c, `UPDATE sale_refunds SET status='已退款', employee_id=$2, dividend_reversed=$3 WHERE id=$1`,
+      [refundId, user.sub, clawback]);
 
     // ── V4.13.1 支付状态机同步（CAS）：累计退款逐分比对——满额 unpaid/ paid→refunded，部分→part_refunded ──
     const refundedAgg = await cx(c,

@@ -192,9 +192,9 @@ async function saveCache(storeId: number, provider: string, city: string, days: 
   }
 }
 
-async function readCache(storeId: number): Promise<{ days: WxDay[]; fetchedAt: Date | null; provider: string | null }> {
+async function readCache(storeId: number): Promise<{ days: WxDay[]; fetchedAt: Date | null; provider: string | null; city: string | null }> {
   const rows = await q<any>(
-    `SELECT forecast_date, temp_max, temp_min, cond_text, cond_code, precip_mm, wind_max, provider, fetched_at
+    `SELECT forecast_date, temp_max, temp_min, cond_text, cond_code, precip_mm, wind_max, provider, city, fetched_at
        FROM weather_cache WHERE store_id=$1 AND forecast_date >= CURRENT_DATE
       ORDER BY forecast_date LIMIT 4`, [storeId]);
   return {
@@ -211,6 +211,7 @@ async function readCache(storeId: number): Promise<{ days: WxDay[]; fetchedAt: D
     })),
     fetchedAt: rows[0]?.fetched_at ? new Date(rows[0].fetched_at) : null,
     provider: rows[0]?.provider || null,
+    city: rows[0]?.city || null,
   };
 }
 
@@ -226,20 +227,37 @@ export async function getWeather(storeId = 1): Promise<{
   if (!enabled) return { ...empty, note: '天气因素未开启（设置-AI赋能-天气因素接入）' };
   if (!city) return { ...empty, note: '未配置天气城市（设置-AI赋能-天气城市）' };
 
-  const cache = await readCache(storeId).catch(() => ({ days: [] as WxDay[], fetchedAt: null as Date | null, provider: null as string | null }));
-  const fresh = cache.days.length > 0 && cache.fetchedAt != null
+  const key = String(await setting('ai.weather.qweather_key', '') || '').trim();
+  // V4.16.6：Host 规范化——用户常漏填 https:// 前缀（k85rk….qweatherapi.com），缺 scheme 时 fetch 直接抛错静默回落 open-meteo
+  let host = String(await setting('ai.weather.qweather_host', 'https://devapi.qweather.com') || 'https://devapi.qweather.com').trim();
+  if (host && !/^https?:\/\//i.test(host)) host = 'https://' + host;
+
+  const cache = await readCache(storeId).catch(() => ({ days: [] as WxDay[], fetchedAt: null as Date | null, provider: null as string | null, city: null as string | null }));
+  // V4.28.9 配置感知：城市变更，或（配置了和风 key 但缓存仍是 Open-Meteo 拉）→ 缓存视为过期，
+  // 且绕过 1 小时缓存与 30 分钟节流——否则改配置后首页一直吃旧缓存（安装版首测实证）。
+  const cfgChanged = (!!cache.city && cache.city !== city)
+    || (!!key && cache.provider === 'open-meteo');
+  const fresh = !cfgChanged && cache.days.length > 0 && cache.fetchedAt != null
     && (Date.now() - cache.fetchedAt.getTime()) < 3600_000;
-  if (fresh || Date.now() - lastFetchAt < 1800_000) {
+  const throttle = cfgChanged ? 60_000 : 1_800_000;   // 配置变更后 1 分钟最多重试一次外网，其余场景维持原 30 分钟节流
+  if (!cfgChanged && (fresh || Date.now() - lastFetchAt < 1800_000)) {
     const days = cache.days;
     return { ...empty, provider: cache.provider || 'cache', city, stale: !fresh && days.length === 0 ? false : !fresh,
              days, factors: factorsOf(days, await getCalibration()), fetchedAt: cache.fetchedAt?.toISOString() ?? null,
              note: fresh ? undefined : (days.length ? '使用缓存（稍后自动重试拉取）' : '天气服务暂不可用，稍后自动重试') };
   }
+  if (Date.now() - lastFetchAt < throttle) {
+    // 刚按当前配置试过外网（成功或失败）：节流窗口内先返回现状，不连击外网
+    return { ...empty, provider: cache.days.length ? (cache.provider || 'cache') : '', city, stale: true,
+             days: cache.days, factors: factorsOf(cache.days), fetchedAt: cache.fetchedAt?.toISOString() ?? null,
+             note: '配置已更新，外网重试稍后自动进行（1 分钟内不重复请求）' };
+  }
+  if (cfgChanged) {
+    // 清掉与当前配置不符的旧缓存行（旧城市/旧源），防旧行反复展示与误判
+    await q(`DELETE FROM weather_cache WHERE store_id=$1 AND (city IS DISTINCT FROM $2 OR provider='open-meteo' AND $3<>'')`,
+      [storeId, city, key]).catch(() => { /* 清理失败不影响主流程 */ });
+  }
 
-  const key = String(await setting('ai.weather.qweather_key', '') || '').trim();
-  // V4.16.6：Host 规范化——用户常漏填 https:// 前缀（k85rk….qweatherapi.com），缺 scheme 时 fetch 直接抛错静默回落 open-meteo
-  let host = String(await setting('ai.weather.qweather_host', 'https://devapi.qweather.com') || 'https://devapi.qweather.com').trim();
-  if (host && !/^https?:\/\//i.test(host)) host = 'https://' + host;
   let provider = 'open-meteo', days: WxDay[] | null = null;
   if (key) {
     const geo = await geocodeQWeather(city, key, host);
@@ -250,11 +268,14 @@ export async function getWeather(storeId = 1): Promise<{
     const geo = await geocodeOpenMeteo(city);
     if (geo) days = await fetchOpenMeteo(geo.lat, geo.lng);
   }
+  // V4.28.9：配了 key 却没拉到 → 明示回落原因（多为例行 key/专属 Host 不匹配，而非网络问题）
+  const qwFailed = !!key && provider === 'open-meteo';
 
   if (days?.length) {
     lastFetchAt = Date.now();
     await saveCache(storeId, provider, city, days).catch(() => { /* 落库失败不影响返回 */ });
-    return { ...empty, provider, city, stale: false, days, factors: factorsOf(days, await getCalibration()), fetchedAt: new Date().toISOString() };
+    return { ...empty, provider, city, stale: false, days, factors: factorsOf(days, await getCalibration()), fetchedAt: new Date().toISOString(),
+             note: qwFailed ? '和风天气拉取失败，已回落 Open-Meteo（请检查 API Key 与控制台专属 API Host）' : undefined };
   }
   // 拉取失败：静默降级读缓存旧值
   lastFetchAt = Date.now(); // 防连击外网

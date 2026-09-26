@@ -22,6 +22,7 @@ import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { storeFilter, assertStoreAllowed, chainEnabled, resetChainCache, hqStoreId } from '../common/scope';
 import { curStore } from '../common/context';
 import { checkPasswordPolicy } from '../common/password-policy';
+import { enqueueSync } from '../common/outbox';   // V4.28.2 P0-5 门店台账上行
 
 /** 门店内置角色模板（不含超级管理员 —— 超管只属于总部） */
 const TEMPLATE_ROLE_NAMES = ['店长', '收银员', '库管', '财务'];
@@ -126,7 +127,8 @@ class ChainStoreController {
     const cnt = await q1<{ n: string }>(`SELECT count(*)::text AS n FROM stores s WHERE ${where.join(' AND ')}`, params);
     const rows = await q(
       `SELECT s.id, s.name, s.store_no, s.org_type, s.parent_id, s.region, s.franchise,
-              s.address, s.phone, s.business_hours AS "businessHours", s.status,
+              s.address, s.phone, s.contact_person AS "contactPerson",
+              s.business_hours AS "businessHours", s.status,
               s.open_date, s.close_date, s.remark, s.node_code, s.sync_enabled, s.last_sync_at,
               mgr.name AS "mgrName",
               (SELECT count(*)::int FROM employees e WHERE e.store_id = s.id AND e.status = '在职') AS "empCount",
@@ -205,12 +207,12 @@ class ChainStoreController {
       if (dup.rows?.length) throw new BizException(40003, `门店编码 ${storeNo} 已存在`);
 
       const ins = await c.query(
-        `INSERT INTO stores (name, address, phone, business_hours, status, store_no, org_type,
+        `INSERT INTO stores (name, address, phone, contact_person, business_hours, status, store_no, org_type,
                              parent_id, region, franchise, open_date, remark, node_code, node_secret, sync_enabled)
-         VALUES ($1,$2,$3,COALESCE($4,'07:30-22:00'),COALESCE($5,1),$6,$7,$8,$9,COALESCE($10,'直营'),
-                 COALESCE($11::date, CURRENT_DATE),$12,$13,$14,COALESCE($15,true))
+         VALUES ($1,$2,$3,$4,COALESCE($5,'07:30-22:00'),COALESCE($6,1),$7,$8,$9,$10,COALESCE($11,'直营'),
+                 COALESCE($12::date, CURRENT_DATE),$13,$14,$15,COALESCE($16,true))
          RETURNING id`,
-        [name, b?.address || null, b?.phone || null, b?.businessHours || null,
+        [name, b?.address || null, b?.phone || null, b?.contactPerson || null, b?.businessHours || null,
           b?.status === undefined || b?.status === null ? 1 : Number(b.status),
           storeNo, orgType, b?.parentId || null, b?.region || null, b?.franchise || null,
           b?.openDate || null, b?.remark || null, genNodeCode(storeNo), genNodeSecret(),
@@ -236,7 +238,8 @@ class ChainStoreController {
     if (!cur) throw new BizException(40404, '门店不存在', 404);
 
     const patch: Record<string, any> = {
-      name: b?.name, address: b?.address, phone: b?.phone, business_hours: b?.businessHours,
+      name: b?.name, address: b?.address, phone: b?.phone, contact_person: b?.contactPerson,
+      business_hours: b?.businessHours,
       region: b?.region, franchise: b?.franchise, remark: b?.remark,
       open_date: b?.openDate, close_date: b?.closeDate,
       mgr_employee_id: b?.mgrEmployeeId, sync_enabled: b?.syncEnabled,
@@ -778,6 +781,9 @@ class StoreProductController {
     if (listed && cur.is_forced_off) throw new BizException(40003, '该商品已被总部强制停售，门店不可上架');
     await q(`UPDATE store_products SET is_listed=$3, version = version + 1, updated_by=$4, updated_at=now()
               WHERE store_id=$1 AND product_id=$2`, [sid, pid, listed, user.sub]);
+    // V4.28.2 P0-5：本店上下架台账上行（总部 store_products 镜像；总部/单店节点 no-op）
+    await enqueueSync(null, 'store_product', pid,
+      { productId: pid, isListed: listed, minStock: Number(cur.min_stock ?? 0) });
     await audit(sid, user.sub, '商品', listed ? 'product.list' : 'product.unlist', 'product', pid, { listed });
     return { productId: pid, isListed: listed };
   }
@@ -788,12 +794,16 @@ class StoreProductController {
   async stockParams(@Param('id') id: string, @Body() b: any, @CurrentUser() user: AuthUser) {
     const pid = Number(id);
     const sid = curStore();
-    const cur = await q1<any>(`SELECT 1 FROM store_products WHERE store_id=$1 AND product_id=$2`, [sid, pid]);
+    const cur = await q1<any>(`SELECT is_listed FROM store_products WHERE store_id=$1 AND product_id=$2`, [sid, pid]);
     if (!cur) throw new BizException(40404, '本店没有该商品', 404);
     await q(`UPDATE store_products SET min_stock=$3, max_stock=$4, updated_by=$5, updated_at=now()
               WHERE store_id=$1 AND product_id=$2`,
       [sid, pid, b?.minStock === undefined || b?.minStock === '' ? null : Number(b.minStock),
         b?.maxStock === undefined || b?.maxStock === '' ? null : Number(b.maxStock), user.sub]);
+    // V4.28.2 P0-5：补货参数上行（总部台账镜像 min_stock；上下架状态保持本店现值）
+    await enqueueSync(null, 'store_product', pid,
+      { productId: pid, isListed: cur.is_listed !== false,
+        minStock: b?.minStock === undefined || b?.minStock === '' ? 0 : Number(b.minStock) });
     return { productId: pid, minStock: b?.minStock ?? null, maxStock: b?.maxStock ?? null };
   }
 

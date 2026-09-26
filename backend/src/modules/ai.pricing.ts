@@ -34,6 +34,25 @@ export class AiPricingController {
     const staleDays = Number(await getSetting('ai.pricing.stale_days', 60) ?? 60);
     const staleQty = Number(await getSetting('ai.pricing.stale_qty', 30) ?? 30);
     const minMargin = Number(await getSetting('ai.pricing.min_margin', 0.05) ?? 0.05);
+    // V4.28.6：临期档位允许低于进价（去化优先）——开=临期建议不设成本底线；滞销类始终维持成本底线
+    const expiryBelowCost = String(await getSetting('ai.pricing.expiry_below_cost', true)) !== 'false';
+    // V4.28.7：临期折扣档位统一读「临期自动折扣档位」（promo.expiry_auto_discount，[{days,pct}]，
+    //  pct 为百分数 80=8 折；营销与线上组同一键，收银自动折扣与 AI 调价建议共用一份数据源）。
+    //  非法/未配置回落内置默认档；pct<=0 或 >=100 的档位丢弃防 0 元/负价。
+    let tiers: { maxDays: number; rate: number }[] = [];
+    try {
+      const raw = await getSetting('promo.expiry_auto_discount', null);
+      const arr = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(arr)) {
+        tiers = arr
+          .map((t: any) => ({ maxDays: Number(t?.days), rate: Number(t?.pct) / 100 }))
+          .filter(t => Number.isFinite(t.maxDays) && t.maxDays >= 0 && t.rate > 0 && t.rate < 1)
+          .sort((a, b) => a.maxDays - b.maxDays);
+      }
+    } catch { /* 格式错误回落默认档 */ }
+    if (!tiers.length) tiers = [{ maxDays: 1, rate: 0.7 }, { maxDays: 3, rate: 0.8 }];
+    /** 命中最先满足 days≤maxDays 的档；超出全部档位按最深折扣兜底 */
+    const rateFor = (days: number) => (tiers.find(t => days <= t.maxDays) ?? tiers[tiers.length - 1]).rate;
 
     // ── 临期：在库批次剩余保质期 ≤ 阈值，按批次聚到商品 ──
     const exp = await q(
@@ -63,15 +82,16 @@ export class AiPricingController {
                              AND b.expiry_date <= CURRENT_DATE + $4::int)
         ORDER BY ic.qty_total DESC LIMIT 200`, [u.storeId, staleQty, staleDays, expiryDays]);
 
-    const rateFor = (days: number) => days <= 7 ? 0.5 : days <= 15 ? 0.7 : 0.85;
     const suggestions: any[] = [];
     const seen = new Set<number>();
-    const push = (r: any, type: string, reason: string, rate: number, daysLeft: number | null) => {
+    const push = (r: any, type: string, reason: string, rate: number, daysLeft: number | null, belowCostOk = false) => {
       const productId = Number(r.product_id);
       if (seen.has(productId)) return;
       const sellPrice = Number(r.sell_price);
       const lastCost = Number(r.last_cost ?? 0);
-      const floor = lastCost > 0 ? Math.round(lastCost * (1 + minMargin) * 100) / 100 : 1;
+      // V4.28.6：belowCostOk（临期档位）→ 不设成本底线，仅保底 0.01 元防 0 元价；滞销类维持进价×(1+min_margin)
+      const floor = belowCostOk ? 0.01
+        : (lastCost > 0 ? Math.round(lastCost * (1 + minMargin) * 100) / 100 : 1);
       let suggested = Math.round(sellPrice * rate * 100) / 100;
       if (suggested < floor) suggested = floor;
       if (suggested >= sellPrice) return;          // 无降价空间（已低于底线或折扣不划算）
@@ -87,13 +107,15 @@ export class AiPricingController {
     };
     for (const r of exp as any[]) {
       const days = Number(r.days_left);
-      push(r, 'expiry', `临期 ${days} 天（批次 ${String(r.nearest_expiry).slice(0, 10)}）`, rateFor(days), days);
+      push(r, 'expiry', `临期 ${days} 天（批次 ${String(r.nearest_expiry).slice(0, 10)}）` + (expiryBelowCost ? '·可低于进价' : ''),
+        rateFor(days), days, expiryBelowCost);
     }
     for (const r of stale as any[]) {
       push(r, 'stale', `滞销：${staleDays} 天无销售 · 在库 ${r.stock} 件`, 0.8, null);
     }
     return {
-      thresholds: { expiryDays, staleDays, staleQty, minMargin },
+      thresholds: { expiryDays, staleDays, staleQty, minMargin,
+                    expiryTiers: tiers.map(t => ({ maxDays: t.maxDays, rate: Math.round(t.rate * 100) })) },
       count: suggestions.length,
       impactTotal: Math.round(suggestions.reduce((s, x) => s + x.impact, 0) * 100) / 100,
       suggestions,

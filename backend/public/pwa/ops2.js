@@ -395,9 +395,15 @@ View.transferNew = function (v) {
 /* ═══════════ AI 训练采集（9 章：采集任务 → 扫码选品 → 拍照样本 → 提交待审核） ═══════════ */
 View.aiCollect = function (v) {
   v.innerHTML = `
-    <button class="btn ok" id="aiFree" style="width:100%;margin-bottom:12px">📸 随手拍采集（免任务 · 选商品拍照即入库）</button>
+    <button class="btn ok" id="aiBatch" style="width:100%;margin-bottom:8px">📸 多商品同拍采集（一次最多 10 个 · 识别即采）</button>
+    <div class="hint" style="margin-bottom:12px">把几个商品平铺进画面拍一张：逐件核对（绿=自动命中 / 黄=点候选确认 / 红=扫码搜索指定）后入样本库。<b>采集无需店长放权</b>，提交后由店长/管理员后台审核。多换摆放组合多拍，样本越多样识别越准。</div>
+    <button class="btn ghost" id="aiFree" style="width:100%;margin-bottom:12px">📸 随手拍采集（单商品 · 6 角度精拍）</button>
     <div class="sec">AI 训练采集任务（随手拍样本 → 店长审核 → 训练）</div>
     <div id="aiList"><div class="empty">加载中…</div></div>`;
+  $('#aiBatch').onclick = () => {
+    if (window.AiBatchCollect) AiBatchCollect.open();
+    else toast('多品同拍组件未加载，请刷新页面');
+  };
   $('#aiFree').onclick = () => push('随手拍采集', View.aiFree);
   const box = $('#aiList');
   async function load() {

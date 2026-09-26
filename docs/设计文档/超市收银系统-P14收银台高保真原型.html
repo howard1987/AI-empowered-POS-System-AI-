@@ -1,0 +1,1291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>收银台 · P14 高保真原型 V4.18.0</title>
+<style>
+:root{
+  --green:#1a7f5c; --green-d:#146348; --green-l:#e7f4ee;
+  --ink:#1f2937; --muted:#6b7280; --line:#e5e7eb; --bg:#f3f5f7;
+  --dark:#182b26; --amber:#b45309; --amber-l:#fef3c7;
+  --red:#b91c1c; --red-l:#fee2e2; --blue:#1d4ed8;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  color:var(--ink);background:var(--bg);overflow:hidden;font-size:14px;}
+button{font-family:inherit;cursor:pointer;border:none;background:none;}
+input,select{font-family:inherit;font-size:14px;}
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-thumb{background:#c9d1d8;border-radius:6px;}
+
+/* ========== 顶栏 ========== */
+#topbar{height:54px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;padding:0 14px;flex:none;}
+.tb-brand{font-size:17px;font-weight:700;color:var(--green-d);white-space:nowrap;}
+.tb-brand small{font-weight:500;color:var(--muted);font-size:12px;margin-left:6px;}
+.ver-chip{font-size:11px;background:var(--green-l);color:var(--green-d);border:1px solid #c6e3d6;padding:1px 8px;border-radius:10px;white-space:nowrap;}
+.lamp-wrap{display:flex;align-items:center;gap:10px;background:#f8fafc;border:1px solid var(--line);border-radius:20px;padding:5px 12px;}
+.lamp{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer;user-select:none;}
+.lamp .dot{width:11px;height:11px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 2px #dcfce7;}
+.lamp.red .dot{background:#ef4444;box-shadow:0 0 0 2px var(--red-l);animation:blink 1.2s infinite;}
+.lamp.yellow .dot{background:#f59e0b;box-shadow:0 0 0 2px var(--amber-l);}
+@keyframes blink{50%{opacity:.35}}
+.btn-selfcheck{font-size:12px;color:var(--green-d);border:1px solid #c6e3d6;background:var(--green-l);border-radius:14px;padding:3px 10px;}
+.tb-actions{margin-left:auto;display:flex;align-items:center;gap:8px;}
+.tb-btn{font-size:13px;color:var(--ink);border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 12px;white-space:nowrap;}
+.tb-btn:hover{border-color:var(--green);color:var(--green-d);}
+.tb-btn.warn{color:var(--red);border-color:#f3c4c4;}
+.badge-red{background:var(--red);color:#fff;border-radius:9px;font-size:10px;padding:0 5px;margin-left:4px;}
+.tb-user{display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;}
+.tb-user b{font-size:13px;}
+.tb-user span{font-size:11px;color:var(--muted);}
+.tb-time{font-size:16px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;}
+
+/* 离线黄条 */
+#offlineBar{display:none;background:linear-gradient(90deg,#f59e0b,#d97706);color:#fff;font-size:13px;
+  padding:7px 16px;align-items:center;gap:14px;flex:none;}
+#offlineBar b{font-size:13.5px;}
+#offlineBar .pill{background:rgba(255,255,255,.22);border-radius:12px;padding:1px 10px;font-size:12px;}
+
+/* ========== 主体双栏 ========== */
+#main{display:flex;height:calc(100% - 54px);}
+#leftCol{flex:1.15;min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--line);background:#fff;}
+#rightCol{flex:1;min-width:390px;max-width:560px;display:flex;flex-direction:column;background:var(--bg);}
+
+/* 左栏：搜索 */
+#searchRow{display:flex;gap:8px;padding:10px 12px 8px;flex:none;}
+.search-box{flex:1;display:flex;align-items:center;gap:8px;background:#f4f6f8;border:2px solid var(--line);border-radius:10px;padding:0 12px;height:48px;}
+.search-box:focus-within{border-color:var(--green);background:#fff;}
+.search-box svg{flex:none;}
+.search-box input{flex:1;border:none;outline:none;background:none;font-size:16px;height:100%;}
+.btn-scan{height:48px;display:flex;align-items:center;gap:6px;background:var(--green);color:#fff;border-radius:10px;padding:0 14px;font-size:14px;font-weight:600;}
+.btn-scan:active{background:var(--green-d);}
+.mini-btn{height:48px;border:1px solid var(--line);background:#fff;border-radius:10px;padding:0 14px;font-size:14px;color:var(--ink);}
+.mini-btn:hover{border-color:var(--green);color:var(--green-d);}
+/* 搜索联想 */
+#sugList{position:absolute;z-index:30;left:12px;right:12px;top:66px;background:#fff;border:1px solid var(--line);
+  border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.10);max-height:300px;overflow:auto;display:none;}
+.sug-item{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid #f1f3f5;cursor:pointer;font-size:14.5px;}
+.sug-item:hover{background:var(--green-l);}
+.sug-item .pinyin{font-size:11px;color:var(--muted);background:#f1f3f5;border-radius:6px;padding:1px 6px;}
+.sug-item.out{color:#b6bcc3;}
+.sug-item.out .price{color:#b6bcc3;font-weight:400;}
+.sug-item .tag-out{font-size:11px;color:var(--red);margin-left:auto;}
+.sug-item .price{margin-left:auto;font-weight:600;color:var(--green-d);}
+.sug-item.out .price{color:#b6bcc3;font-weight:400;}
+
+/* 分类 chips */
+#catRow{display:flex;gap:8px;padding:2px 12px 8px;overflow-x:auto;flex:none;}
+.cat-chip{flex:none;padding:8px 16px;border-radius:18px;background:#f1f3f5;color:var(--muted);font-size:14px;border:1px solid transparent;}
+.cat-chip.on{background:var(--green-l);color:var(--green-d);border-color:#b9e0cf;font-weight:600;}
+
+/* 快捷格 */
+#quickSec{flex:none;padding:0 12px 6px;}
+.sec-label{font-size:12px;color:var(--muted);margin-bottom:5px;display:flex;align-items:center;gap:6px;}
+#quickGrid{display:grid;grid-template-columns:repeat(8,1fr);gap:8px;}
+.q-item{background:var(--green-l);border:1px solid #cde8db;border-radius:10px;padding:8px 4px;text-align:center;cursor:pointer;transition:transform .05s;}
+.q-item:active{transform:scale(.96);}
+.q-item .n{font-size:12.5px;font-weight:600;color:var(--green-d);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.q-item .p{font-size:12px;color:var(--muted);margin-top:2px;}
+.q-item.out{background:#f1f3f5;border-color:var(--line);cursor:not-allowed;}
+.q-item.out .n{color:#b6bcc3;}
+
+/* 商品宫格 */
+#prodGrid{flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:4px 12px 14px;align-content:start;}
+.p-card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 12px 10px;cursor:pointer;position:relative;display:flex;flex-direction:column;min-height:88px;transition:box-shadow .1s;}
+.p-card:hover{box-shadow:0 3px 12px rgba(26,127,92,.12);border-color:#cde8db;}
+.p-card:active{transform:scale(.98);}
+.p-card .n{font-size:14px;font-weight:600;line-height:1.35;}
+.p-card .bar{font-size:11px;color:var(--muted);margin-top:2px;font-variant-numeric:tabular-nums;}
+.p-card .prow{margin-top:auto;display:flex;align-items:baseline;gap:6px;padding-top:6px;}
+.p-card .price{font-size:17px;font-weight:700;color:var(--green-d);}
+.p-card .unit{font-size:11px;color:var(--muted);}
+.p-card .mem{font-size:10.5px;background:var(--amber-l);color:var(--amber);border-radius:6px;padding:0 5px;}
+.p-card .stock{position:absolute;top:8px;right:8px;font-size:10.5px;border-radius:6px;padding:0 5px;background:#f1f3f5;color:var(--muted);}
+.p-card .stock.low{background:var(--amber-l);color:var(--amber);}
+.p-card.out{opacity:.55;cursor:pointer;background:#f8f9fa;}
+.p-card.out .price{color:#b6bcc3;}
+.p-card .soldout{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--red);font-weight:600;letter-spacing:2px;pointer-events:none;}
+
+/* ========== 右栏 ========== */
+/* 会员卡 */
+#memCard{margin:10px 12px 8px;background:linear-gradient(135deg,#fff,#f0faf5);border:1px solid #cde8db;border-radius:12px;padding:10px 14px;display:flex;align-items:center;gap:12px;flex:none;cursor:pointer;}
+#memCard .avatar{width:40px;height:40px;border-radius:50%;background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;flex:none;}
+#memCard .mi{flex:1;min-width:0;}
+#memCard .mi b{font-size:14.5px;}
+#memCard .mi .lv{font-size:10.5px;background:var(--amber-l);color:var(--amber);border-radius:6px;padding:0 5px;margin-left:6px;}
+#memCard .mi .stats{display:flex;gap:14px;margin-top:3px;font-size:12px;color:var(--muted);}
+#memCard .mi .stats b{color:var(--ink);font-size:12.5px;}
+#memCard .no-mem{text-align:center;flex:1;}
+#memCard .no-mem b{color:var(--muted);font-weight:500;font-size:14px;}
+.mem-ops{display:flex;gap:6px;flex:none;}
+.mem-ops button{font-size:12px;border:1px solid #c6e3d6;color:var(--green-d);background:#fff;border-radius:8px;padding:6px 10px;white-space:nowrap;}
+.mem-ops button:hover{background:var(--green-l);}
+
+/* 购物车 */
+#cartHead{display:flex;align-items:center;padding:0 14px 6px;flex:none;}
+#cartHead b{font-size:14px;color:var(--ink);}
+#cartHead .cnt{color:var(--muted);font-weight:400;font-size:12.5px;margin-left:6px;}
+#cartHead button{margin-left:auto;font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:7px;padding:4px 10px;background:#fff;}
+#cartHead button:hover{color:var(--red);border-color:#f3c4c4;}
+#cartList{flex:1;overflow-y:auto;padding:0 12px;min-height:0;}
+.cart-row{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:7px;}
+.cart-row .cn{flex:1;min-width:0;}
+.cart-row .cn .nm{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cart-row .cn .sub{font-size:11.5px;color:var(--muted);margin-top:2px;display:flex;gap:6px;align-items:center;}
+.snap-tag{font-size:10px;background:#eef2ff;color:var(--blue);border-radius:5px;padding:0 4px;}
+.snap-tag:hover::after{content:"价格快照：不受后台调价影响";position:absolute;background:#1f2937;color:#fff;font-size:11px;padding:4px 8px;border-radius:6px;margin-left:4px;white-space:nowrap;cursor:default;}
+.qty-box{display:flex;align-items:center;gap:2px;flex:none;}
+.qty-box button{width:30px;height:34px;border:1px solid var(--line);border-radius:7px;font-size:16px;color:var(--ink);background:#fafbfc;}
+.qty-box input{width:44px;height:34px;text-align:center;border:1px solid var(--line);border-radius:7px;font-size:14.5px;font-weight:600;}
+.qty-box input:focus{border-color:var(--green);outline:none;}
+.cart-row .amt{width:76px;text-align:right;font-size:15px;font-weight:700;flex:none;font-variant-numeric:tabular-nums;}
+.cart-row .price-lbl{cursor:pointer;border-bottom:1px dashed #c9d1d8;}
+.cart-row .del{width:30px;height:34px;color:#c2c9d0;font-size:15px;border-radius:7px;flex:none;}
+.cart-row .del:hover{color:var(--red);background:var(--red-l);}
+#cartEmpty{padding:60px 0;text-align:center;color:#b6bcc3;font-size:14px;}
+#cartEmpty svg{display:block;margin:0 auto 12px;}
+
+/* 防抖撤销条 */
+#debounceBar{display:none;margin:0 12px 8px;background:var(--amber-l);border:1px solid #f1d38a;border-radius:10px;padding:8px 12px;font-size:13px;color:var(--amber);align-items:center;gap:10px;flex:none;}
+#debounceBar button{font-size:12.5px;color:#fff;background:var(--amber);border-radius:7px;padding:4px 10px;}
+
+/* 合计分层 */
+#sumBox{flex:none;background:#fff;border-top:1px solid var(--line);padding:8px 14px 6px;}
+.sum-line{display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);padding:1.5px 0;}
+.sum-line .v{font-variant-numeric:tabular-nums;color:var(--ink);}
+.sum-line.save .v{color:var(--green-d);font-weight:600;}
+.sum-line.hint{color:#9aa3ad;font-size:12px;}
+.sum-line.hint .v{color:var(--amber);}
+#payBar{flex:none;display:flex;align-items:stretch;gap:10px;background:var(--dark);padding:10px 14px;}
+#payBar .due{flex:1;color:#fff;display:flex;flex-direction:column;justify-content:center;}
+#payBar .due small{font-size:11.5px;opacity:.75;}
+#payBar .due .num{font-size:34px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums;letter-spacing:.5px;}
+#payBar .due .num em{font-style:normal;font-size:17px;font-weight:600;margin-right:2px;}
+#btnPay{width:172px;border-radius:12px;background:var(--green);color:#fff;font-size:19px;font-weight:700;letter-spacing:6px;}
+#btnPay:active{background:var(--green-d);}
+#btnPay small{display:block;font-size:10.5px;font-weight:400;letter-spacing:1px;opacity:.8;margin-top:2px;}
+
+/* ========== 弹窗 ========== */
+.mask{position:fixed;inset:0;background:rgba(15,25,22,.45);z-index:60;display:none;align-items:center;justify-content:center;}
+.mask.show{display:flex;}
+.modal{background:#fff;border-radius:16px;width:520px;max-width:94vw;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.25);}
+.modal-head{display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);flex:none;}
+.modal-head b{font-size:16px;}
+.modal-head .x{margin-left:auto;font-size:18px;color:var(--muted);width:32px;height:32px;border-radius:8px;}
+.modal-head .x:hover{background:#f1f3f5;color:var(--ink);}
+.modal-body{padding:14px 18px;overflow-y:auto;}
+.modal-foot{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:10px;flex:none;}
+.btn{border-radius:10px;padding:12px 18px;font-size:15px;font-weight:600;}
+.btn.pri{background:var(--green);color:#fff;flex:1;}
+.btn.pri:active{background:var(--green-d);}
+.btn.plain{border:1px solid var(--line);color:var(--muted);background:#fff;}
+.btn.pri:disabled{background:#c4cdc9;cursor:not-allowed;}
+
+/* 结算弹窗 */
+#payModal .modal{width:640px;}
+#payDueTop{background:var(--dark);border-radius:12px;color:#fff;padding:12px 18px;display:flex;align-items:center;margin-bottom:12px;}
+#payDueTop .n{font-size:32px;font-weight:800;font-variant-numeric:tabular-nums;}
+#payDueTop .n em{font-style:normal;font-size:16px;margin-right:2px;font-weight:600;}
+#payDueTop .d{margin-left:auto;font-size:12px;opacity:.75;text-align:right;line-height:1.5;}
+.pay-tabs{display:flex;gap:8px;margin-bottom:12px;}
+.pay-tab{flex:1;border:1.5px solid var(--line);border-radius:10px;padding:11px 0;text-align:center;font-size:15px;font-weight:600;color:var(--muted);background:#fafbfc;}
+.pay-tab.on{border-color:var(--green);color:var(--green-d);background:var(--green-l);}
+.pay-tab.dis{opacity:.45;cursor:not-allowed;}
+.pay-pane{display:none;}
+.pay-pane.on{display:block;}
+/* 现金 */
+.cash-quick{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px;}
+.cash-quick button{border:1px solid var(--line);border-radius:9px;padding:11px 0;font-size:15px;font-weight:600;color:var(--ink);background:#fff;}
+.cash-quick button:hover{border-color:var(--green);color:var(--green-d);}
+.cash-in{display:flex;align-items:center;gap:10px;background:#f4f6f8;border-radius:10px;padding:10px 14px;}
+.cash-in label{font-size:13px;color:var(--muted);flex:none;}
+.cash-in input{flex:1;font-size:24px;font-weight:700;border:none;background:none;outline:none;text-align:right;font-variant-numeric:tabular-nums;}
+.change-box{display:flex;align-items:center;justify-content:space-between;background:var(--green-l);border:1px solid #c6e3d6;border-radius:10px;padding:10px 16px;margin-top:10px;}
+.change-box span{font-size:14px;color:var(--green-d);}
+.change-box b{font-size:30px;color:var(--green-d);font-variant-numeric:tabular-nums;}
+.change-box b.neg{color:var(--red);font-size:20px;}
+/* 扫码 */
+.scan-pane{text-align:center;padding:8px 0 4px;}
+.scan-pane .ph{border:2px dashed #c6e3d6;border-radius:12px;padding:22px 10px;color:var(--green-d);font-size:14.5px;background:#f6fcf9;}
+.scan-pane input{margin-top:12px;width:100%;height:48px;border:1.5px solid var(--line);border-radius:10px;padding:0 14px;font-size:16px;text-align:center;letter-spacing:1px;}
+.scan-note{font-size:12px;color:var(--muted);margin-top:8px;}
+/* 组合 */
+.combo-row{display:flex;gap:10px;margin-bottom:8px;}
+.combo-cell{flex:1;border:1px solid var(--line);border-radius:10px;padding:8px 12px;}
+.combo-cell label{font-size:12px;color:var(--muted);display:block;margin-bottom:4px;}
+.combo-cell input{width:100%;border:none;background:none;font-size:20px;font-weight:700;outline:none;text-align:right;font-variant-numeric:tabular-nums;}
+.combo-cell.auto{background:#f4f6f8;}
+.combo-err{font-size:12.5px;color:var(--red);min-height:18px;margin-top:2px;}
+/* 券区 */
+.coupon-sec{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px;}
+.coupon-sec .t{font-size:13px;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px;}
+.coupon-sec .t .n{color:var(--green-d);}
+.coupon-item{display:flex;align-items:center;gap:10px;border:1px dashed #c6e3d6;background:#f6fcf9;border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:13px;cursor:pointer;}
+.coupon-item.on{border-style:solid;border-color:var(--green);background:var(--green-l);}
+.coupon-item .cv{margin-left:auto;color:var(--red);font-weight:700;}
+.coupon-code-row{display:flex;gap:8px;margin-top:6px;}
+.coupon-code-row input{flex:1;height:38px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font-size:13px;}
+.coupon-code-row button{font-size:13px;border:1px solid var(--line);border-radius:8px;padding:0 14px;background:#fafbfc;}
+/* 抹零与开关行 */
+.opt-row{display:flex;align-items:center;gap:10px;padding:8px 2px;font-size:13.5px;border-top:1px dashed var(--line);margin-top:8px;}
+.opt-row .r{margin-left:auto;display:flex;align-items:center;gap:8px;}
+.opt-row .tag-p15{font-size:10px;color:#b6bcc3;border:1px solid var(--line);border-radius:6px;padding:0 5px;}
+.opt-row button.mr{font-size:12.5px;border:1px solid var(--line);border-radius:7px;padding:4px 10px;color:var(--muted);}
+.opt-row button.mr.on{background:var(--green-l);border-color:#c6e3d6;color:var(--green-d);}
+.switch{width:38px;height:22px;border-radius:12px;background:#d6dbe0;position:relative;transition:.15s;flex:none;}
+.switch.on{background:var(--green);}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.15s;}
+.switch.on::after{left:18px;}
+/* 成功页 */
+#paySuccess{display:none;text-align:center;padding:14px 0 4px;}
+#paySuccess .ok-ic{width:64px;height:64px;border-radius:50%;background:var(--green-l);margin:0 auto 12px;display:flex;align-items:center;justify-content:center;}
+#paySuccess h3{font-size:19px;color:var(--green-d);}
+#paySuccess .big{font-size:38px;font-weight:800;color:var(--green-d);margin:8px 0;font-variant-numeric:tabular-nums;}
+#paySuccess .big em{font-style:normal;font-size:18px;}
+#paySuccess .ch-line{font-size:14px;color:var(--muted);margin-bottom:10px;}
+#paySuccess .ch-line b{color:var(--ink);font-size:18px;font-variant-numeric:tabular-nums;}
+.print-channel{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);background:#f4f6f8;border-radius:14px;padding:4px 12px;margin:2px 4px;}
+.print-channel .dot{width:8px;height:8px;border-radius:50%;background:var(--green);}
+
+/* 挂单/挂起/会员/设置弹窗行 */
+.list-row{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;}
+.list-row .li{flex:1;min-width:0;}
+.list-row .li b{font-size:14px;}
+.list-row .li .s{font-size:12px;color:var(--muted);margin-top:2px;}
+.list-row .ops{display:flex;gap:6px;flex:none;}
+.list-row .ops button{font-size:12.5px;border:1px solid var(--line);border-radius:7px;padding:5px 12px;background:#fff;}
+.list-row .ops button:hover{border-color:var(--green);color:var(--green-d);}
+.list-row.stale{opacity:.55;background:#fafbfc;}
+.list-row.stale .stale-tag{font-size:10.5px;color:var(--amber);background:var(--amber-l);border-radius:6px;padding:1px 6px;margin-left:6px;}
+.form-row{margin-bottom:12px;}
+.form-row label{display:block;font-size:13px;color:var(--muted);margin-bottom:5px;}
+.form-row input,.form-row select{width:100%;height:44px;border:1.5px solid var(--line);border-radius:10px;padding:0 12px;font-size:15px;outline:none;}
+.form-row input:focus,.form-row select:focus{border-color:var(--green);}
+.hint-box{font-size:12px;color:var(--muted);background:#f8fafc;border-left:3px solid var(--green);padding:8px 12px;border-radius:0 8px 8px 0;margin-top:4px;}
+
+/* 锁屏 */
+#lockScreen{position:fixed;inset:0;background:linear-gradient(160deg,#12241f,#1d3a31);z-index:100;display:none;align-items:center;justify-content:center;color:#fff;}
+#lockScreen.show{display:flex;}
+.lock-card{text-align:center;width:300px;}
+.lock-avatar{width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,.12);margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;}
+.lock-card b{font-size:18px;}
+.lock-card .role{font-size:12px;opacity:.7;margin:2px 0 18px;}
+.pin-dots{display:flex;gap:12px;justify-content:center;margin-bottom:20px;}
+.pin-dots i{width:13px;height:13px;border-radius:50%;border:2px solid rgba(255,255,255,.5);}
+.pin-dots i.f{background:#fff;border-color:#fff;}
+.pin-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.pin-pad button{height:58px;border-radius:12px;background:rgba(255,255,255,.09);color:#fff;font-size:21px;font-weight:600;}
+.pin-pad button:active{background:rgba(255,255,255,.22);}
+.pin-pad button.ctl{font-size:14px;}
+.lock-tip{font-size:12px;opacity:.55;margin-top:14px;}
+.lock-err{font-size:12.5px;color:#fca5a5;min-height:18px;margin-bottom:8px;}
+.lock-frozen{font-size:14px;color:#fbbf24;margin-bottom:8px;min-height:20px;}
+
+/* Toast */
+#toastBox{position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;}
+.toast{background:#1f2937;color:#fff;font-size:13.5px;border-radius:10px;padding:10px 18px;box-shadow:0 6px 20px rgba(0,0,0,.22);animation:tin .18s;max-width:78vw;}
+.toast.ok{background:var(--green-d);}
+.toast.err{background:var(--red);}
+.toast.warn{background:var(--amber);}
+@keyframes tin{from{opacity:0;transform:translateY(-8px)}}
+
+/* 演示控制 */
+#demoPanel{position:fixed;left:10px;bottom:10px;z-index:90;font-size:12px;}
+#demoPanel .dp{background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.12);overflow:hidden;width:172px;}
+#demoPanel .dp-h{background:#1f2937;color:#fff;padding:6px 10px;font-size:12px;display:flex;align-items:center;cursor:pointer;}
+#demoPanel .dp-h span{margin-left:auto;opacity:.7;}
+#demoPanel .dp-b{padding:8px;display:none;flex-direction:column;gap:6px;}
+#demoPanel.open .dp-b{display:flex;}
+#demoPanel .dp-b button{border:1px solid var(--line);border-radius:7px;padding:6px 8px;font-size:12px;background:#fafbfc;text-align:left;}
+#demoPanel .dp-b button:hover{border-color:var(--green);color:var(--green-d);}
+
+/* 手机竖屏单栏示意 */
+@media (max-width:900px){
+  #main{flex-direction:column;}
+  #leftCol{flex:none;height:46%;border-right:none;border-bottom:1px solid var(--line);}
+  #rightCol{max-width:none;min-width:0;flex:1;}
+  #quickGrid{grid-template-columns:repeat(4,1fr);}
+  #prodGrid{grid-template-columns:repeat(3,1fr);}
+}
+</style>
+</head>
+<body>
+
+<!-- 顶栏 -->
+<div id="topbar">
+  <div class="tb-brand">惠民超市 · 收银台<small>线下收银专用</small></div>
+  <span class="ver-chip">V4.18.0 原型</span>
+  <div class="lamp-wrap" id="lampWrap">
+    <div class="lamp" data-dev="scanner"><i class="dot"></i>扫码枪</div>
+    <div class="lamp" data-dev="scale"><i class="dot"></i>电子秤</div>
+    <div class="lamp" data-dev="printer"><i class="dot"></i>小票机</div>
+    <div class="lamp" data-dev="drawer"><i class="dot"></i>钱箱</div>
+  </div>
+  <button class="btn-selfcheck" id="btnSelfcheck">一键自检</button>
+  <div class="tb-actions">
+    <button class="tb-btn" id="btnPending">挂起单<span class="badge-red" id="pendingCnt">1</span></button>
+    <button class="tb-btn" id="btnReprint">补打上一单</button>
+    <button class="tb-btn" id="btnLock">锁屏</button>
+    <button class="tb-btn" id="btnSettings">收银设置</button>
+    <div class="tb-user"><b>王小美</b><span>店长 · 工号 001</span></div>
+    <div class="tb-time" id="clock">--:--</div>
+  </div>
+</div>
+
+<!-- 离线黄条 -->
+<div id="offlineBar">
+  <b>离线收银模式</b>
+  <span>现金记账 + 暂存补传 · 扫码扣款 / 原路退暂不可用</span>
+  <span class="pill">待补传 <b id="stagedCnt">0</b> 笔</span>
+  <span style="margin-left:auto;opacity:.85" id="netState">网络已断开</span>
+</div>
+
+<div id="main">
+  <!-- ============ 左栏：商品 ============ -->
+  <div id="leftCol">
+    <div id="searchRow">
+      <div class="search-box">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9aa3ad" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input id="searchInput" placeholder="扫码 / 商品名 / 拼音码（如 ysx）" autocomplete="off">
+      </div>
+      <button class="btn-scan" id="btnScanSim">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M3 12h18"/></svg>
+        扫码
+      </button>
+      <button class="mini-btn" id="btnPark">挂单</button>
+      <button class="mini-btn" id="btnUnpark">取单<span class="badge-red" id="parkCnt">2</span></button>
+    </div>
+    <div id="sugList"></div>
+
+    <div id="catRow"></div>
+
+    <div id="quickSec">
+      <div class="sec-label">快捷商品（按销量自动推荐，设置页可手动配置 8~12 格）</div>
+      <div id="quickGrid"></div>
+    </div>
+
+    <div class="sec-label" style="padding:2px 14px 0;">全部商品</div>
+    <div id="prodGrid"></div>
+  </div>
+
+  <!-- ============ 右栏：购物车 ============ -->
+  <div id="rightCol">
+    <div id="memCard"></div>
+
+    <div id="cartHead"><b>当前购物车</b><span class="cnt" id="cartCnt">0 件</span><button id="btnClear">清空</button></div>
+
+    <div id="debounceBar">
+      <span id="debounceTxt"></span>
+      <button id="btnUndoScan">撤销上一件</button>
+    </div>
+
+    <div id="cartList"></div>
+
+    <div id="sumBox"></div>
+
+    <div id="payBar">
+      <div class="due">
+        <small>应收合计（已含自动抹零）</small>
+        <div class="num"><em>¥</em><span id="dueNum">0.00</span></div>
+      </div>
+      <button id="btnPay">结 算<small>F2 · 触屏点按</small></button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 结算弹窗 ============ -->
+<div class="mask" id="payModal">
+  <div class="modal">
+    <div class="modal-head"><b>结算收款</b><button class="x" data-close="payModal">✕</button></div>
+    <div class="modal-body">
+      <div id="payDueTop">
+        <div class="n"><em>¥</em><span id="payDueNum">0.00</span></div>
+        <div class="d" id="payDueDetail"></div>
+      </div>
+
+      <div class="coupon-sec" id="couponSec">
+        <div class="t">优惠券 <span class="n" id="couponAvail"></span></div>
+        <div id="couponList"></div>
+        <div class="coupon-code-row">
+          <input id="couponCode" placeholder="券码手输兜底（如 F50-8821）">
+          <button id="btnCouponCode">核销</button>
+        </div>
+      </div>
+
+      <div class="pay-tabs" id="payTabs">
+        <button class="pay-tab on" data-pane="cash">现金</button>
+        <button class="pay-tab" data-pane="scan">扫码收款</button>
+        <button class="pay-tab" data-pane="combo">组合支付</button>
+      </div>
+
+      <div class="pay-pane on" id="pane-cash">
+        <div class="cash-quick" id="cashQuick"></div>
+        <div class="cash-in"><label>顾客实收</label><input id="cashInput" type="text" inputmode="decimal" placeholder="0.00"></div>
+        <div class="change-box"><span>找零</span><b id="changeNum">¥0.00</b></div>
+      </div>
+
+      <div class="pay-pane" id="pane-scan">
+        <div class="scan-pane">
+          <div class="ph" id="scanPh">顾客出示微信 / 支付宝付款码，扫码枪直接扫入即可<br><span style="font-size:12px;color:#6b7280">离线模式下此通道不可用（自动提示改现金记账）</span></div>
+          <input id="scanCodeInput" placeholder="或手动输入付款码（模拟：6228…）" inputmode="numeric">
+          <div class="scan-note">通道将按「设置 - 支付通道」适配扣款 · USERPAYING 自动轮询查单</div>
+        </div>
+      </div>
+
+      <div class="pay-pane" id="pane-combo">
+        <div class="combo-row">
+          <div class="combo-cell"><label>现金部分</label><input id="comboCash" type="text" inputmode="decimal" placeholder="0.00"></div>
+          <div class="combo-cell auto"><label>扫码部分（自动补余）</label><input id="comboScan" readonly placeholder="0.00"></div>
+        </div>
+        <div class="combo-err" id="comboErr"></div>
+        <div class="hint-box">退款时按各通道支付占比自动拆分：现金退现金、电子原路回（评审定稿 D1）。</div>
+      </div>
+
+      <div class="opt-row">
+        <span>自动抹零</span><span style="color:var(--muted);font-size:12px">去分（收银设置可选 到角 / 去角）</span>
+        <div class="r"><span id="roundingVal" style="color:var(--green-d);font-weight:600">-¥0.00</span></div>
+      </div>
+      <div class="opt-row">
+        <span>手动抹零</span><span style="color:var(--muted);font-size:12px">店长权限 · 留痕</span>
+        <div class="r"><button class="mr" id="btnManualRound">抹零至元</button></div>
+      </div>
+      <div class="opt-row">
+        <span>积分抵现</span><div class="r"><span class="tag-p15">P15</span></div>
+      </div>
+      <div class="opt-row">
+        <span>会员挂账（记账）</span><div class="r"><span class="tag-p15">P15</span></div>
+      </div>
+
+      <div id="paySuccess">
+        <div class="ok-ic">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#1a7f5c" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+        </div>
+        <h3>收款成功</h3>
+        <div class="big" id="successChange"></div>
+        <div class="ch-line" id="successLine"></div>
+        <div>
+          <span class="print-channel"><i class="dot"></i>小票打印：网口小票机（192.168.1.52）</span>
+          <span class="print-channel"><i class="dot"></i>钱箱已弹出</span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot" id="payFoot">
+      <button class="btn plain" data-close="payModal" style="flex:none">取消（ESC）</button>
+      <button class="btn pri" id="btnConfirmPay">确认收款</button>
+    </div>
+    <div class="modal-foot" id="successFoot" style="display:none">
+      <button class="btn plain" id="btnReprintThis" style="flex:1">补打小票</button>
+      <button class="btn pri" id="btnNewOrder">新的一单</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 挂单/取单弹窗 ============ -->
+<div class="mask" id="parkModal">
+  <div class="modal" style="width:480px">
+    <div class="modal-head"><b id="parkTitle">挂单列表</b><button class="x" data-close="parkModal">✕</button></div>
+    <div class="modal-body" id="parkList"></div>
+  </div>
+</div>
+
+<!-- ============ 挂起单弹窗 ============ -->
+<div class="mask" id="pendingModal">
+  <div class="modal" style="width:480px">
+    <div class="modal-head"><b>挂起单（半支付 / 扫码超时 90 秒自动转入）</b><button class="x" data-close="pendingModal">✕</button></div>
+    <div class="modal-body" id="pendingList"></div>
+  </div>
+</div>
+
+<!-- ============ 秒建会员弹窗 ============ -->
+<div class="mask" id="memberModal">
+  <div class="modal" style="width:400px">
+    <div class="modal-head"><b>秒建会员（不断流收银节奏）</b><button class="x" data-close="memberModal">✕</button></div>
+    <div class="modal-body">
+      <div class="form-row"><label>手机号</label><input id="newMemPhone" placeholder="11 位手机号" inputmode="numeric" maxlength="11"></div>
+      <div class="form-row"><label>姓名 / 称呼</label><input id="newMemName" placeholder="如：张姐"></div>
+      <div class="hint-box">建档后立即可充值、积分、享会员价；默认等级系数按普通会员。</div>
+    </div>
+    <div class="modal-foot"><button class="btn pri" id="btnCreateMember">建档并挂到本单</button></div>
+  </div>
+</div>
+
+<!-- ============ 收银设置弹窗（店长） ============ -->
+<div class="mask" id="settingsModal">
+  <div class="modal" style="width:440px">
+    <div class="modal-head"><b>⚙ 收银设置（店长面板）</b><button class="x" data-close="settingsModal">✕</button></div>
+    <div class="modal-body">
+      <div class="form-row"><label>快捷格数量（8~12）</label><input id="setQuick" type="number" value="8" min="8" max="12"></div>
+      <div class="form-row"><label>自动抹零方式</label><select id="setRound"><option>去分（86.54 → 86.50）</option><option>到角四舍五入</option><option>去角（86.54 → 86.00）</option></select></div>
+      <div class="form-row"><label>收银锁屏闲置超时（分钟）</label><input id="setLockMin" type="number" value="5" min="1" max="30"></div>
+      <div class="form-row"><label>退货限额（元 / 单）</label><input type="number" value="200"></div>
+      <div class="form-row" style="display:flex;align-items:center;justify-content:space-between">
+        <label style="margin:0">重复扫防抖（2 秒内同码不重复加件）</label>
+        <div class="switch on" id="setDebounce"></div>
+      </div>
+      <div class="form-row" style="display:flex;align-items:center;justify-content:space-between">
+        <label style="margin:0">库存硬拦（账实不符时禁止售卖）</label>
+        <div class="switch" id="setHardStock"></div>
+      </div>
+      <div class="form-row" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0">
+        <label style="margin:0">语音播报（默认本机喇叭）</label>
+        <div class="switch on" id="setVoice"></div>
+      </div>
+      <div class="hint-box">库存硬拦默认<b>关</b>：账实不符是常态（未及时入库/退货未清点），默认容许负库存售卖（确认+留痕）；开启后超库存一律拒绝。留痕进「负库存清单」。</div>
+      <div class="hint-box">底层存 system_settings 同键 · 全部修改留痕进操作记录。</div>
+    </div>
+    <div class="modal-foot"><button class="btn pri" id="btnSaveSettings">保存</button></div>
+  </div>
+</div>
+
+<!-- ============ 改价弹窗 ============ -->
+<div class="mask" id="priceModal">
+  <div class="modal" style="width:380px">
+    <div class="modal-head"><b id="priceTitle">改价</b><button class="x" data-close="priceModal">✕</button></div>
+    <div class="modal-body">
+      <div class="form-row"><label id="priceLbl">新单价（元）</label><input id="priceInput" type="text" inputmode="decimal"></div>
+      <div class="hint-box" id="priceHint"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn plain" id="btnPriceDeny" style="display:none;flex:1">店长放行并留痕</button>
+      <button class="btn pri" id="btnPriceOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 负库存售卖确认弹窗 ============ -->
+<div class="mask" id="negModal">
+  <div class="modal" style="width:430px">
+    <div class="modal-head"><b>负库存售卖确认</b><button class="x" data-close="negModal">✕</button></div>
+    <div class="modal-body">
+      <div id="negTxt" style="font-size:14px;line-height:1.7;margin-bottom:10px"></div>
+      <div class="hint-box">账实不符常见于：货未及时入库、退货未清点、盘损未调账。收银不丢单——确认后按<b>负库存</b>成交并留痕，差异自动进「负库存清单」，请尽快入库 / 盘点校正。</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn plain" id="negCancel">取消</button>
+      <button class="btn pri" id="negOk" style="background:var(--amber)">按负库存继续卖（留痕）</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 负库存清单弹窗 ============ -->
+<div class="mask" id="negListModal">
+  <div class="modal" style="width:480px">
+    <div class="modal-head"><b>本班负库存清单（盘点线索）</b><button class="x" data-close="negListModal">✕</button></div>
+    <div class="modal-body" id="negListBody"></div>
+    <div class="hint-box" style="margin:0 18px 14px">交接班 / 日结时提示本班负库存笔数，驱动及时入库或盘盈调整——差异要暴露，不要掩盖。</div>
+  </div>
+</div>
+
+<!-- ============ 锁屏 ============ -->
+<div id="lockScreen">
+  <div class="lock-card">
+    <div class="lock-avatar">王</div>
+    <b>王小美</b>
+    <div class="role">店长 · 工号 001 · 收银台已锁定</div>
+    <div class="lock-err" id="lockErr"></div>
+    <div class="lock-frozen" id="lockFrozen"></div>
+    <div class="pin-dots" id="pinDots"><i></i><i></i><i></i><i></i></div>
+    <div class="pin-pad" id="pinPad">
+      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+      <button class="ctl" data-k="C">清除</button><button data-k="0">0</button><button class="ctl" data-k="OK">解锁</button>
+    </div>
+    <div class="lock-tip">工号密码 / PIN 秒解锁 · 购物车、挂单、设备连接原样保留 · 连错 5 次锁 5 分钟</div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toastBox"></div>
+
+<!-- 演示控制（评审用） -->
+<div id="demoPanel" class="open">
+  <div class="dp" >
+    <div class="dp-h" onclick="document.getElementById('demoPanel').classList.toggle('open')">演示控制（评审用）<span>▾</span></div>
+    <div class="dp-b">
+      <button id="dNet">切换断网 / 联网</button>
+      <button id="dScan">模拟扫码枪扫一码</button>
+      <button id="dPaper">模拟小票机缺纸</button>
+      <button id="dDrawer">模拟弹箱失败</button>
+      <button id="dNegList">本班负库存清单</button>
+      <button id="dReset">重置演示数据</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ================= 演示数据 ================= */
+const PRODUCTS = [
+  {id:1, name:"饮用水 550ml", pinyin:"ysx",  bar:"6901234500011", price:2.00, stock:120, cat:"饮料", quick:true},
+  {id:2, name:"饮用水 1.5L",  pinyin:"ysx",  bar:"6901234500028", price:3.50, minPrice:2.80, stock:3,   cat:"饮料", quick:true},
+  {id:3, name:"可乐 330ml",   pinyin:"kl",   bar:"6901234500035", price:3.00, stock:80,  cat:"饮料", quick:true},
+  {id:4, name:"冰红茶 500ml", pinyin:"hongcha",bar:"6901234500042",price:4.00, stock:0,   cat:"饮料"},
+  {id:5, name:"鲜牛奶 950ml", pinyin:"xn",   bar:"6901234500059", price:12.80, memPrice:11.80, stock:25, cat:"饮料", quick:true},
+  {id:6, name:"乐事薯片 原味", pinyin:"ls",  bar:"6901234500066", price:6.50, stock:40,  cat:"零食", quick:true},
+  {id:7, name:"奥利奥 夹心",  pinyin:"alo",  bar:"6901234500073", price:8.90, stock:60,  cat:"零食"},
+  {id:8, name:"洽洽瓜子",     pinyin:"qqgz", bar:"6901234500080", price:9.90, stock:2,   cat:"零食"},
+  {id:9, name:"抽纸 3包",     pinyin:"cz",   bar:"6901234500097", price:12.00, stock:35, cat:"日用", quick:true},
+  {id:10,name:"洗衣液 2kg",   pinyin:"xyy",  bar:"6901234500103", price:29.90, stock:18, cat:"日用", quick:true},
+  {id:11,name:"牙刷 软毛",    pinyin:"ysr",  bar:"6901234500110", price:4.50, stock:50,  cat:"日用"},
+  {id:12,name:"五常大米 5kg", pinyin:"wcdm", bar:"6901234500127", price:42.80, stock:12, cat:"粮油", quick:true},
+  {id:13,name:"调和油 5L",    pinyin:"thy",  bar:"6901234500134", price:65.00, stock:8,  cat:"粮油"},
+  {id:14,name:"生抽 500ml",   pinyin:"sq",   bar:"6901234500141", price:8.50, stock:30,  cat:"粮油"},
+  {id:15,name:"鸡蛋 30枚",    pinyin:"jd",   bar:"6901234500158", price:23.90, memPrice:22.50, stock:15, cat:"生鲜", quick:true},
+  {id:16,name:"五花肉 500g",  pinyin:"wr",   bar:"6901234500165", price:18.80, stock:10, cat:"生鲜"},
+];
+const CATS = ["全部","饮料","零食","日用","粮油","生鲜"];
+const PROMOS = [ // 满减：只取最高档
+  {name:"满100减10", threshold:100, cut:10},
+  {name:"满50减5",   threshold:50,  cut:5},
+];
+const DEFAULT_MEMBER = {name:"李女士", phone:"138****6688", level:"银卡", balance:328.50, dividend:12.40, points:2450};
+
+/* ================= 全局状态 ================= */
+let cart = [];            // {pid,name,price,qty,memPrice,origPrice}
+let member = null;        // 当前会员
+let curCat = "全部";
+let lastScan = {pid:0, t:0};
+let manualRoundOff = 0;
+let couponUsed = null;
+let lastSale = null;      // {total,cash,change,payType}
+let stagedTrades = 0;     // 离线暂存笔数
+let offline = false;
+let pendingOrders = 1;    // 挂起单
+let parkedOrders = [
+  {t:"09:12", n:3, amt:26.30, mem:"张姐", stale:false},
+  {t:"昨天 17:46", n:6, amt:88.00, mem:"", stale:true},
+];
+const DEV_STATE = {scanner:"green", scale:"green", printer:"green", drawer:"green"};
+const $ = id => document.getElementById(id);
+const fmt = n => n.toFixed(2);
+
+/* ================= 工具 ================= */
+function toast(msg, type){
+  const el = document.createElement("div");
+  el.className = "toast" + (type ? " " + type : "");
+  el.textContent = msg;
+  $("toastBox").appendChild(el);
+  setTimeout(()=>{ el.style.opacity = "0"; el.style.transition = "opacity .3s"; setTimeout(()=>el.remove(), 320); }, 2600);
+}
+function minPriceOf(p){ return p.minPrice != null ? p.minPrice : Math.max(0.5, Math.round(p.price * 0.6 * 100) / 100); }
+function openModal(id){ $(id).classList.add("show"); }
+function closeModal(id){ $(id).classList.remove("show"); }
+document.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", ()=> closeModal(b.dataset.close)));
+document.querySelectorAll(".mask").forEach(m => m.addEventListener("click", e => { if(e.target === m) m.classList.remove("show"); }));
+
+/* ================= 顶栏时钟 ================= */
+function tick(){
+  const d = new Date();
+  $("clock").textContent = String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0");
+}
+setInterval(tick, 1000); tick();
+
+/* ================= 设备灯 ================= */
+function renderLamps(){
+  document.querySelectorAll("#lampWrap .lamp").forEach(l => {
+    l.classList.remove("red","yellow");
+    const s = DEV_STATE[l.dataset.dev];
+    if(s !== "green") l.classList.add(s);
+  });
+}
+function selfcheck(){
+  const names = {scanner:"扫码枪", scale:"电子秤", printer:"小票机", drawer:"钱箱"};
+  Object.keys(DEV_STATE).forEach((k,i) => {
+    DEV_STATE[k] = "yellow";
+    renderLamps();
+    setTimeout(()=>{ DEV_STATE[k] = "green"; renderLamps(); }, 500 + i * 350);
+  });
+  setTimeout(()=> toast("自检完成：4 台设备全部在线（网口 / 串口指纹已记忆）", "ok"), 2100);
+}
+$("btnSelfcheck").addEventListener("click", selfcheck);
+document.querySelectorAll("#lampWrap .lamp").forEach(l => {
+  l.addEventListener("click", ()=>{
+    const s = DEV_STATE[l.dataset.dev];
+    if(s === "green"){ toast(l.textContent.trim() + "：在线"); return; }
+    // 一键重连（网口免手势直连；串口 WebSerial 需一次点击）
+    l.classList.remove("red","yellow"); l.classList.add("yellow"); renderLamps();
+    setTimeout(()=>{
+      DEV_STATE[l.dataset.dev] = "green"; renderLamps();
+      toast(l.textContent.trim() + " 重连成功（指纹记忆端口）", "ok");
+    }, 900);
+  });
+});
+
+/* ================= 商品渲染 ================= */
+function renderCats(){
+  $("catRow").innerHTML = CATS.map(c =>
+    `<button class="cat-chip${c===curCat?" on":""}" data-cat="${c}">${c}</button>`).join("");
+  document.querySelectorAll(".cat-chip").forEach(b => b.addEventListener("click", ()=>{ curCat = b.dataset.cat; renderCats(); renderProducts(); }));
+}
+function pCardHtml(p){
+  const out = p.stock <= 0, low = p.stock > 0 && p.stock <= 5;
+  const memTag = p.memPrice ? `<span class="mem">会员价 ¥${fmt(p.memPrice)}</span>` : "";
+  return `<div class="p-card${out?" out":""}" data-id="${p.id}">
+    ${out ? '<div class="soldout">沽清</div>' : ""}
+    <span class="stock${low?" low":""}">${out ? "库存 0" : (low ? "仅剩 " + p.stock : "库存 " + p.stock)}</span>
+    <div class="n">${p.name}</div><div class="bar">${p.bar} · ${p.pinyin}</div>
+    <div class="prow"><span class="price">¥${fmt(p.memPrice && member ? p.memPrice : p.price)}</span><span class="unit">/${p.cat==="生鲜"?"份":"件"}</span>${memTag}</div>
+  </div>`;
+}
+function renderProducts(){
+  const list = PRODUCTS.filter(p => curCat === "全部" || p.cat === curCat);
+  $("prodGrid").innerHTML = list.map(pCardHtml).join("");
+  document.querySelectorAll(".p-card").forEach(c => c.addEventListener("click", ()=>{
+    const p = PRODUCTS.find(x => x.id === +c.dataset.id);
+    tryAdd(p, 1, "grid");
+  }));
+}
+function renderQuick(){
+  const qs = PRODUCTS.filter(p => p.quick);
+  $("quickGrid").innerHTML = qs.map(p => {
+    const out = p.stock <= 0;
+    return `<div class="q-item${out?" out":""}" data-id="${p.id}">
+      <div class="n">${p.name.replace(/\s/g,"")}</div><div class="p">¥${fmt(p.price)}</div></div>`;
+  }).join("");
+  document.querySelectorAll(".q-item").forEach(q => q.addEventListener("click", ()=>{
+    const p = PRODUCTS.find(x => x.id === +q.dataset.id);
+    tryAdd(p, 1, "quick");
+  }));
+}
+
+/* ================= 搜索（拼音码） ================= */
+const searchInput = $("searchInput");
+searchInput.addEventListener("input", ()=>{
+  const kw = searchInput.value.trim().toLowerCase();
+  const sug = $("sugList");
+  if(!kw){ sug.style.display = "none"; return; }
+  const hits = PRODUCTS.filter(p => p.name.toLowerCase().includes(kw) || p.pinyin.includes(kw) || p.bar.includes(kw));
+  if(!hits.length){ sug.style.display = "none"; return; }
+  sug.innerHTML = hits.slice(0,8).map(p => {
+    const out = p.stock <= 0;
+    const price = p.memPrice && member ? p.memPrice : p.price;
+    return `<div class="sug-item${out?" out":""}" data-id="${p.id}">
+      <span>${p.name}</span><span class="pinyin">${p.pinyin}</span>
+      <span class="tag-out">${out?"沽清":""}</span><span class="price">¥${fmt(price)}</span></div>`;
+  }).join("");
+  sug.style.display = "block";
+  document.querySelectorAll(".sug-item").forEach(s => s.addEventListener("click", ()=>{
+    const p = PRODUCTS.find(x => x.id === +s.dataset.id);
+    tryAdd(p, 1, "search"); searchInput.value = ""; sug.style.display = "none";
+  }));
+});
+searchInput.addEventListener("keydown", e => {
+  if(e.key === "Enter"){
+    const first = document.querySelector(".sug-item:not(.out)");
+    if(first){ const p = PRODUCTS.find(x => x.id === +first.dataset.id); tryAdd(p, 1, "search"); }
+    searchInput.value = ""; $("sugList").style.display = "none";
+  }
+});
+document.addEventListener("click", e => { if(!e.target.closest("#searchRow") && !e.target.closest("#sugList")) $("sugList").style.display = "none"; });
+
+/* ================= 购物车 ================= */
+/* ---- 库存与负库存（账实容错） ---- */
+let negSales = [];  // {t,name,stock,had,add}
+function timeStr(){ const d = new Date(); return String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0"); }
+function stockShort(p, qty){
+  const exist = cart.find(l => l.pid === p.id && !l.gift);
+  const inCart = exist ? exist.qty : 0;
+  return { inCart, short: qty > p.stock - inCart };
+}
+function tryAdd(p, qty, src){
+  const s = stockShort(p, qty);
+  const hard = $("setHardStock").classList.contains("on");
+  if(s.short){
+    if(hard){
+      toast("库存硬拦已开启：" + p.name + " 账面仅剩 " + p.stock + " 件，不能超卖（可在收银设置关闭）", "err");
+      return;
+    }
+    // 默认放宽：确认后按负库存成交并留痕
+    askNegSale(p, qty, s.inCart, ()=> doAdd(p, qty, src, true));
+    return;
+  }
+  doAdd(p, qty, src, false);
+}
+let negCb = null;
+function askNegSale(p, qty, inCart, cb){
+  $("negTxt").innerHTML = "<b>" + p.name + "</b> 账面库存 " + p.stock + " 件（已在车 " + inCart + " 件），本次要加 <b>" + qty + "</b> 件，将超出账面 <b style='color:var(--red)'>" + (qty + inCart - p.stock) + "</b> 件。<br>是否按负库存继续售卖？";
+  negCb = cb;
+  openModal("negModal");
+}
+$("negOk").addEventListener("click", ()=>{ closeModal("negModal"); if(negCb) negCb(); negCb = null; });
+$("negCancel").addEventListener("click", ()=>{ negCb = null; closeModal("negModal"); });
+
+function doAdd(p, qty, src, neg){
+  if(neg){
+    negSales.unshift({t: timeStr(), name: p.name, stock: p.stock, had: stockShort(p, qty).inCart, add: qty});
+    toast("已按负库存售卖并留痕（账面库存 " + p.stock + "，差异进负库存清单）", "warn");
+  } else if(p.stock > 0 && p.stock <= 5){
+    toast("库存偏低：" + p.name + " 仅剩 " + p.stock + " 件", "warn");
+  }
+  // 防抖：同码 2 秒内连扫
+  const now = Date.now();
+  if(src === "scan" && lastScan.pid === p.id && now - lastScan.t < 2000){
+    showDebounce(p);
+    lastScan = {pid:p.id, t:now};
+    return;
+  }
+  lastScan = {pid:p.id, t: src === "scan" ? now : 0};
+  const effPrice = p.memPrice && member ? p.memPrice : p.price;
+  const line = cart.find(l => l.pid === p.id && !l.gift);
+  if(line){ line.qty += qty; line.price = effPrice; }   // 价格快照：行价按加车时点
+  else cart.push({pid:p.id, name:p.name, price:effPrice, origPrice:p.price, memPrice:p.memPrice||0, qty, minPrice:minPriceOf(p)});
+  renderCart();
+  if(!neg) toast("已加车：" + p.name + (p.memPrice && member ? "（会员价 ¥" + fmt(p.memPrice) + "）" : ""), "ok");
+}
+function showDebounce(p){
+  $("debounceTxt").textContent = "已加过「" + p.name + "」— 2 秒内连扫不重复加件（设置页可关闭）";
+  $("debounceBar").style.display = "flex";
+  clearTimeout(showDebounce._t);
+  showDebounce._t = setTimeout(()=> $("debounceBar").style.display = "none", 4000);
+}
+$("btnUndoScan").addEventListener("click", ()=>{
+  const l = cart[cart.length - 1];
+  if(l){ l.qty -= 1; if(l.qty <= 0) cart.pop(); renderCart(); toast("已撤销 1 件「" + l.name + "」", "ok"); }
+  $("debounceBar").style.display = "none";
+});
+
+function renderCart(){
+  const list = $("cartList");
+  if(!cart.length){
+    list.innerHTML = `<div id="cartEmpty">
+      <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#d3d9de" stroke-width="1.6"><circle cx="9" cy="21" r="1.5"/><circle cx="18" cy="21" r="1.5"/><path d="M2 3h3l2.6 12.4a1.5 1.5 0 0 0 1.5 1.1h9.4a1.5 1.5 0 0 0 1.4-1L22 7H6"/></svg>
+      扫码或点选商品开始收银</div>`;
+  } else {
+    list.innerHTML = cart.map((l,i) => {
+      const p = PRODUCTS.find(x => x.id === l.pid);
+      const isNeg = p && l.qty > p.stock;
+      return `
+      <div class="cart-row">
+        <div class="cn">
+          <div class="nm">${l.name}${l.gift ? '<span class="snap-tag" style="background:#fef3c7;color:#b45309">赠</span>' : ""}${isNeg ? '<span class="snap-tag" style="background:var(--red-l);color:var(--red)">负库存</span>' : ""}</div>
+          <div class="sub">
+            <span class="price-lbl" data-idx="${i}">¥${fmt(l.price)}</span>
+            ${l.memPrice ? `<span style="color:var(--amber)">会员价</span>` : `<span class="snap-tag">快照</span>`}
+            ${l.price < l.origPrice && !l.memPrice ? `<span style="text-decoration:line-through">¥${fmt(l.origPrice)}</span>` : ""}
+          </div>
+        </div>
+        <div class="qty-box">
+          <button data-act="dec" data-idx="${i}">−</button>
+          <input data-qty="${i}" value="${l.qty}" inputmode="numeric">
+          <button data-act="inc" data-idx="${i}">＋</button>
+        </div>
+        <div class="amt">¥${fmt(l.price * l.qty)}</div>
+        <button class="del" data-act="del" data-idx="${i}">✕</button>
+      </div>`;
+    }).join("");
+    list.querySelectorAll("[data-act]").forEach(b => b.addEventListener("click", ()=>{
+      const l = cart[+b.dataset.idx];
+      if(b.dataset.act === "inc"){
+        const p = PRODUCTS.find(x => x.id === l.pid);
+        if(p && l.qty + 1 > p.stock){
+          if($("setHardStock").classList.contains("on")){ toast("库存硬拦已开启：" + p.name + " 账面仅剩 " + p.stock + " 件，不能超卖", "err"); return; }
+          askNegSale(p, 1, l.qty, ()=>{ negSales.unshift({t:timeStr(), name:p.name, stock:p.stock, had:l.qty, add:1}); l.qty++; renderCart(); });
+          return;
+        }
+        l.qty++;
+      }
+      if(b.dataset.act === "dec"){ l.qty--; if(l.qty <= 0) cart.splice(+b.dataset.idx, 1); }
+      if(b.dataset.act === "del"){ cart.splice(+b.dataset.idx, 1); }
+      renderCart();
+    }));
+    list.querySelectorAll("[data-qty]").forEach(inp => inp.addEventListener("change", ()=>{
+      const l = cart[+inp.dataset.qty];
+      const v = parseInt(inp.value, 10);
+      if(!v || v <= 0){ renderCart(); return; }
+      const p = PRODUCTS.find(x => x.id === l.pid);
+      if(p && v > l.qty && v > p.stock){   // 只有加量才涉及超库存
+        if($("setHardStock").classList.contains("on")){ toast("库存硬拦已开启：" + p.name + " 账面仅剩 " + p.stock + " 件，不能超卖", "err"); renderCart(); return; }
+        askNegSale(p, v - l.qty, l.qty, ()=>{ negSales.unshift({t:timeStr(), name:p.name, stock:p.stock, had:l.qty, add:v-l.qty}); l.qty = v; renderCart(); });
+        return;
+      }
+      l.qty = v; renderCart();
+    }));
+    list.querySelectorAll(".price-lbl").forEach(s => s.addEventListener("click", ()=> openPriceModal(+s.dataset.idx)));
+  }
+  const cnt = cart.reduce((a,l)=>a+l.qty, 0);
+  $("cartCnt").textContent = cnt + " 件";
+  renderSummary();
+}
+
+/* ---- 合计分层（A1）---- */
+function calc(){
+  const subtotal = cart.reduce((a,l)=>a + l.price * l.qty, 0);
+  const memSave = cart.reduce((a,l)=> a + (l.memPrice ? (l.origPrice - l.memPrice) * l.qty : 0), 0);
+  let promo = null;
+  for(const pr of PROMOS){ if(subtotal >= pr.threshold && (!promo || pr.cut > promo.cut)) promo = pr; }
+  const couponCut = couponUsed ? couponUsed.cut : 0;
+  const beforeRound = subtotal - couponCut - (promo ? promo.cut : 0) - manualRoundOff;
+  const due = Math.max(0, Math.round(beforeRound * 10) / 10); // 自动去分
+  const roundOff = subtotal - couponCut - (promo ? promo.cut : 0) - due;
+  return {subtotal, memSave, promo, couponCut, due, roundOff: roundOff + manualRoundOff};
+}
+function renderSummary(){
+  const c = calc();
+  let html = `<div class="sum-line"><span>商品总额（${cart.length} 行）</span><span class="v">¥${fmt(c.subtotal)}</span></div>`;
+  if(c.memSave > 0) html += `<div class="sum-line save"><span>会员价已省</span><span class="v">-¥${fmt(c.memSave)}</span></div>`;
+  if(c.couponCut > 0) html += `<div class="sum-line save"><span>券抵扣（${couponUsed.name}）</span><span class="v">-¥${fmt(c.couponCut)}</span></div>`;
+  if(c.promo) html += `<div class="sum-line save"><span>满减（${c.promo.name} · 只取最高档）</span><span class="v">-¥${fmt(c.promo.cut)}</span></div>`;
+  if(!c.promo && c.subtotal > 0){
+    const next = PROMOS.find(p => p.threshold > c.subtotal);
+    if(next) html += `<div class="sum-line hint"><span>再买 ¥${fmt(next.threshold - c.subtotal)} 可用「${next.name}」</span></div>`;
+  }
+  if(c.roundOff > 0) html += `<div class="sum-line"><span>抹零</span><span class="v">-¥${fmt(c.roundOff)}</span></div>`;
+  $("sumBox").innerHTML = html;
+  $("dueNum").textContent = fmt(c.due);
+}
+
+/* ---- 改价（最低售价硬拦）---- */
+let priceIdx = -1;
+function openPriceModal(idx){
+  priceIdx = idx;
+  const l = cart[idx];
+  $("priceTitle").textContent = "改价：" + l.name;
+  $("priceLbl").textContent = "新单价（元） · 最低售价 ¥" + fmt(l.minPrice) + "（硬拦）";
+  $("priceInput").value = fmt(l.price);
+  $("priceHint").textContent = "";
+  $("btnPriceDeny").style.display = "none";
+  openModal("priceModal");
+}
+$("btnPriceOk").addEventListener("click", ()=>{
+  const l = cart[priceIdx]; if(!l) return;
+  const v = parseFloat($("priceInput").value);
+  if(!v || v <= 0){ $("priceHint").textContent = "请输入有效价格"; return; }
+  if(v < l.minPrice){
+    $("priceHint").innerHTML = `<span style="color:var(--red)">低于最低售价 ¥${fmt(l.minPrice)}（疑似低于成本），已硬拦。</span><br>确需放行：店长点「放行并留痕」。`;
+    $("btnPriceDeny").style.display = "block";
+    return;
+  }
+  l.price = v; l.origPrice = v;
+  closeModal("priceModal"); renderCart();
+  toast("已改价并留痕", "ok");
+});
+$("btnPriceDeny").addEventListener("click", ()=>{
+  const l = cart[priceIdx]; if(!l) return;
+  const v = parseFloat($("priceInput").value);
+  if(v && v > 0){ l.price = v; l.origPrice = v; closeModal("priceModal"); renderCart(); toast("店长放行改价 ¥" + fmt(v) + "，已留痕", "warn"); }
+});
+$("btnClear").addEventListener("click", ()=>{
+  if(!cart.length) return;
+  if(confirm("清空当前购物车？（挂单可先暂存）")){ cart = []; couponUsed = null; manualRoundOff = 0; renderCart(); }
+});
+
+/* ================= 会员 ================= */
+function renderMember(){
+  const m = $("memCard");
+  if(!member){
+    m.innerHTML = `<div class="avatar" style="background:#c4cdc9">?</div>
+      <div class="no-mem"><b>散客 · 点此挂会员（余额/待分红常驻展示）</b></div>
+      <div class="mem-ops"><button id="mBtnNew">秒建会员</button></div>`;
+  } else {
+    m.innerHTML = `<div class="avatar">${member.name[0]}</div>
+      <div class="mi"><b>${member.name}</b><span class="lv">${member.level}</span><span style="font-size:12px;color:var(--muted);margin-left:6px">${member.phone}</span>
+        <div class="stats"><span>余额 <b>¥${fmt(member.balance)}</b></span><span>待分红 <b>¥${fmt(member.dividend)}</b></span><span>积分 <b>${member.points}</b></span></div>
+      </div>
+      <div class="mem-ops"><button id="mBtnSwitch">换会员</button></div>`;
+  }
+  m.onclick = ()=> openModal("memberModal");
+  const nb = $("mBtnNew"); if(nb) nb.onclick = e => { e.stopPropagation(); openModal("memberModal"); };
+  const sw = $("mBtnSwitch"); if(sw) sw.onclick = e => { e.stopPropagation(); openModal("memberModal"); };
+  renderProducts(); renderCart();
+}
+$("btnCreateMember").addEventListener("click", ()=>{
+  const ph = $("newMemPhone").value.trim(), nm = $("newMemName").value.trim();
+  if(!/^1\d{10}$/.test(ph)){ toast("请输入 11 位手机号", "err"); return; }
+  member = {name: nm || "会员" + ph.slice(-4), phone: ph.slice(0,3) + "****" + ph.slice(-4), level:"普通", balance:0, dividend:0, points:0};
+  closeModal("memberModal"); renderMember();
+  $("newMemPhone").value = ""; $("newMemName").value = "";
+  toast("会员建档成功，已挂到本单", "ok");
+});
+
+/* ================= 结算 ================= */
+$("btnPay").addEventListener("click", openPay);
+function openPay(){
+  if(!cart.length){ toast("购物车为空", "warn"); return; }
+  const c = calc();
+  $("payDueNum").textContent = fmt(c.due);
+  $("payDueDetail").innerHTML = `商品总额 ¥${fmt(c.subtotal)}${c.memSave>0?` · 会员省 ¥${fmt(c.memSave)}`:""}${c.couponCut>0?` · 券 ¥${fmt(c.couponCut)}`:""}${c.promo?` · 满减 ¥${fmt(c.promo.cut)}`:""}${c.roundOff>0?` · 抹零 ¥${fmt(c.roundOff)}`:""}`;
+  // 弹窗打开 → 暂停全局扫码解析（评审定稿 I3）
+  $("paySuccess").style.display = "none"; $("payFoot").style.display = "flex"; $("successFoot").style.display = "none";
+  renderCoupons(); renderCashQuick(); paySuccessState = false;
+  $("cashInput").value = ""; $("changeNum").textContent = "¥0.00";
+  $("comboCash").value = ""; $("comboScan").value = ""; $("comboErr").textContent = "";
+  openModal("payModal");
+}
+function renderCoupons(){
+  const list = $("couponList");
+  const avail = member ? [
+    {name:"满50减5券", cut:5, cond:"满 50 可用"},
+    {name:"饮品类 8.8 折券", cut:0, cond:"饮品专享"},
+  ] : [];
+  $("couponAvail").textContent = member ? "会员 " + member.name + " 有 " + avail.length + " 张可用" : "挂会员后自动带出";
+  if(!member){ list.innerHTML = `<div style="font-size:12.5px;color:var(--muted)">扫会员码自动带可用券；散客可手输券码核销。</div>`; return; }
+  list.innerHTML = avail.map((cp,i) =>
+    `<div class="coupon-item" data-ci="${i}"><b>${cp.name}</b><span style="color:var(--muted);font-size:12px">${cp.cond}</span><span class="cv">${cp.cut?"-¥"+cp.cut:"折扣"}</span></div>`).join("");
+  document.querySelectorAll(".coupon-item").forEach(el => el.addEventListener("click", ()=>{
+    document.querySelectorAll(".coupon-item").forEach(x=>x.classList.remove("on"));
+    el.classList.add("on");
+    couponUsed = avail[+el.dataset.ci].cut ? avail[+el.dataset.ci] : null;
+    const c = calc();
+    $("payDueNum").textContent = fmt(c.due);
+    $("payDueDetail").innerHTML = `商品总额 ¥${fmt(c.subtotal)}${c.couponCut>0?` · 券 ¥${fmt(c.couponCut)}`:""}${c.promo?` · 满减 ¥${fmt(c.promo.cut)}`:""}`;
+    renderSummary(); renderCashQuick();
+    toast("已用券：" + avail[+el.dataset.ci].name, "ok");
+  }));
+}
+$("btnCouponCode").addEventListener("click", ()=>{
+  const code = $("couponCode").value.trim().toUpperCase();
+  if(!code){ toast("请输入券码", "warn"); return; }
+  if(code === "F50-8821"){
+    couponUsed = {name:"满50减5券（券码核销）", cut:5};
+    const c = calc(); $("payDueNum").textContent = fmt(c.due); renderSummary(); renderCashQuick();
+    toast("券码核销成功：满50减5", "ok");
+  } else {
+    toast("券码无效或已核销（50044 / 50045）", "err");
+  }
+});
+/* 现金快捷 */
+function renderCashQuick(){
+  const c = calc();
+  const opts = [c.due, 50, 100, 200].filter((v,i,a)=>a.indexOf(v)===i);
+  $("cashQuick").innerHTML = opts.map(v=>`<button data-cv="${v}">¥${v % 1 === 0 ? v : fmt(v)}</button>`).join("");
+  document.querySelectorAll("#cashQuick button").forEach(b => b.addEventListener("click", ()=>{
+    $("cashInput").value = (+b.dataset.cv).toFixed(2); updateChange();
+  }));
+}
+function updateChange(){
+  const c = calc();
+  const v = parseFloat($("cashInput").value) || 0;
+  const diff = v - c.due;
+  const el = $("changeNum");
+  el.className = diff < -0.005 ? "neg" : "";
+  el.textContent = diff < -0.005 ? "还差 ¥" + fmt(-diff) : "¥" + fmt(Math.max(0, diff));
+}
+$("cashInput").addEventListener("input", updateChange);
+/* 组合支付 */
+$("comboCash").addEventListener("input", ()=>{
+  const c = calc();
+  const cash = parseFloat($("comboCash").value) || 0;
+  const rest = c.due - cash;
+  $("comboScan").value = rest > 0 ? fmt(rest) : "0.00";
+  $("comboErr").textContent = cash > c.due ? "现金部分不能超过应收，请改用纯现金" : "";
+  $("comboErr").style.color = "var(--red)";
+});
+/* 抹零 */
+$("btnManualRound").addEventListener("click", function(){
+  manualRoundOff = Math.max(0, calc().due - Math.floor(calc().due)); // 手动抹零至元（店长权限）
+  this.classList.add("on"); this.textContent = "已抹零 -¥" + fmt(manualRoundOff);
+  const c = calc(); $("payDueNum").textContent = fmt(c.due); renderSummary(); renderCashQuick();
+  toast("手动抹零 -¥" + fmt(manualRoundOff) + "（店长权限，已留痕）", "warn");
+});
+/* 支付方式 Tab */
+document.querySelectorAll(".pay-tab").forEach(t => t.addEventListener("click", ()=>{
+  if(t.classList.contains("dis")) return;
+  document.querySelectorAll(".pay-tab").forEach(x=>x.classList.remove("on"));
+  t.classList.add("on");
+  document.querySelectorAll(".pay-pane").forEach(p=>p.classList.remove("on"));
+  $("pane-" + t.dataset.pane).classList.add("on");
+}));
+
+/* ---- 确认收款 ---- */
+let paySuccessState = false;
+$("btnConfirmPay").addEventListener("click", ()=>{
+  if(paySuccessState) return;
+  const c = calc();
+  const tab = document.querySelector(".pay-tab.on").dataset.pane;
+  if(tab === "cash"){
+    const paid = parseFloat($("cashInput").value) || 0;
+    if(paid < c.due - 0.005){ toast("实收不足应收，请补足或改组合支付", "err"); return; }
+    finishPay({type:"现金", cash:paid, change:paid - c.due, online:false});
+  } else if(tab === "scan"){
+    if(offline){ toast("离线模式扫码扣款不可用，请改现金记账（不阻塞收银）", "warn"); return; }
+    const code = $("scanCodeInput").value.trim();
+    if(code.length < 8){ toast("请扫顾客付款码", "warn"); return; }
+    finishPay({type:"扫码（微信）", cash:0, change:0, online:true});
+  } else {
+    const cash = parseFloat($("comboCash").value) || 0;
+    if(cash <= 0 || cash >= c.due){ $("comboErr").textContent = "请输入 0 ~ 应收之间的现金金额"; return; }
+    finishPay({type:"组合（现金 ¥" + fmt(cash) + " + 扫码 ¥" + fmt(c.due - cash) + "）", cash, change:0, online:true});
+  }
+});
+function finishPay(pay){
+  const c = calc();
+  paySuccessState = true;
+  lastSale = {total:c.due, ...pay, lines: cart.length};
+  if(pay.online === false && offline){ stagedTrades++; $("stagedCnt").textContent = stagedTrades; }
+  $("paySuccess").style.display = "block";
+  $("payFoot").style.display = "none";
+  $("successFoot").style.display = "flex";
+  $("successChange").innerHTML = pay.change > 0 ? `<em>¥</em>${fmt(pay.change)}` : `<em style="font-size:22px">¥</em>${fmt(c.due)}`;
+  $("successLine").innerHTML = pay.change > 0
+    ? `应收 ¥${fmt(c.due)} · 实收 ¥${fmt(pay.cash)} · ${pay.type}`
+    : `实收 ¥${fmt(c.due)} · ${pay.type}` + (pay.online===false && offline ? " · <span style='color:var(--amber)'>已暂存，联网自动补传</span>" : "");
+  // 收现金 → 弹钱箱（E1：失败时 toast 明示 + 留痕）
+  if(pay.cash > 0){
+    setTimeout(()=> toast("收现弹钱箱成功（ESC p）", "ok"), 300);
+  }
+  speech("收款成功" + (pay.change > 0 ? "，找零 " + pay.change.toFixed(2) + " 元" : ""));
+}
+$("btnNewOrder").addEventListener("click", ()=>{
+  cart = []; couponUsed = null; manualRoundOff = 0;
+  closeModal("payModal"); renderCart();
+  $("btnManualRound").classList.remove("on"); $("btnManualRound").textContent = "抹零至元";
+  $("btnReprint").textContent = "补打上一单";
+  toast("新的一单，欢迎下次光临", "ok");
+});
+$("btnReprintThis").addEventListener("click", ()=> toast("已补打小票（打印通道：网口小票机）", "ok"));
+$("btnReprint").addEventListener("click", ()=>{
+  if(!lastSale){ toast("暂无上一单记录", "warn"); return; }
+  toast("已补打上一单小票（¥" + fmt(lastSale.total) + " · 网口小票机）", "ok");
+});
+function speech(t){ /* 语音播报占位：默认本机喇叭，P15 接蓝牙音箱 */ }
+
+/* ================= 挂单 / 取单 ================= */
+$("btnPark").addEventListener("click", ()=>{
+  if(!cart.length){ toast("购物车为空，无可挂单", "warn"); return; }
+  const d = new Date();
+  parkedOrders.unshift({t:String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0"), n:cart.length,
+    amt:calc().due, mem:member ? member.name : "", stale:false});
+  $("parkCnt").textContent = parkedOrders.length;
+  cart = []; couponUsed = null; renderCart();
+  toast("已挂单，购物车已清空（离线可用）", "ok");
+});
+$("btnUnpark").addEventListener("click", ()=>{
+  $("parkTitle").textContent = "挂单列表（取单即上车 · 支持搜索单号/会员）";
+  $("parkList").innerHTML = parkedOrders.length ? parkedOrders.map((o,i)=>`
+    <div class="list-row${o.stale?" stale":""}">
+      <div class="li"><b>${o.mem ? o.mem + " · " : ""}${o.n} 件 ¥${fmt(o.amt)}</b>
+        <div class="s">${o.t}${o.stale ? '<span class="stale-tag">超 24h · 建议清理</span>' : ""}</div></div>
+      <div class="ops"><button data-pk="${i}">取回</button><button data-pdel="${i}">删除</button></div>
+    </div>`).join("") : `<div style="text-align:center;color:#b6bcc3;padding:30px 0">暂无挂单</div>`;
+  $("parkList").querySelectorAll("[data-pk]").forEach(b => b.addEventListener("click", ()=>{
+    cart = []; renderCart(); parkedOrders.splice(+b.dataset.pk, 1);
+    $("parkCnt").textContent = parkedOrders.length;
+    closeModal("parkModal"); toast("已取回挂单（价格按挂单时快照）", "ok");
+  }));
+  $("parkList").querySelectorAll("[data-pdel]").forEach(b => b.addEventListener("click", ()=>{
+    parkedOrders.splice(+b.dataset.pdel, 1);
+    $("parkCnt").textContent = parkedOrders.length;
+    $("btnUnpark").click();
+  }));
+  openModal("parkModal");
+});
+/* 挂起单（半支付/超时） */
+$("btnPending").addEventListener("click", ()=>{
+  $("pendingList").innerHTML = pendingOrders ? `
+    <div class="list-row">
+      <div class="li"><b>微信 USERPAYING · ¥23.40</b><div class="s">11:02 顾客扫码后未完成 · 90 秒自动转挂起</div></div>
+      <div class="ops"><button id="pendQuery">查单续付</button><button id="pendRelease">查实未付并释放</button></div>
+    </div>
+    <div class="hint-box">半支付恢复：启动收银台与支付异常时自动查漏卡单（USERPAYING / PENDING），查到款自动补小票续流程；查不到引导重扫或现金（P15 全自动，本原型演示入口）。</div>` : "";
+  const q = $("pendQuery"); if(q) q.onclick = ()=>{ closeModal("pendingModal"); toast("已查单：顾客已付款 ¥23.40，自动补小票并完成订单", "ok"); };
+  const r = $("pendRelease"); if(r) r.onclick = ()=>{ pendingOrders = 0; $("pendingCnt").style.display = "none"; closeModal("pendingModal"); toast("通道确认未支付，单据已释放", "ok"); };
+  openModal("pendingModal");
+});
+
+/* ================= 锁屏 ================= */
+let pinBuf = "", pinErr = 0, frozen = false;
+$("btnLock").addEventListener("click", lockScreen);
+function lockScreen(){
+  pinBuf = ""; pinErr = 0; frozen = false;
+  $("lockErr").textContent = ""; $("lockFrozen").textContent = "";
+  renderPin();
+  $("lockScreen").classList.add("show");
+}
+function renderPin(){
+  $("pinDots").innerHTML = [0,1,2,3].map(i=>`<i class="${i < pinBuf.length ? "f" : ""}"></i>`).join("");
+}
+$("pinPad").addEventListener("click", e => {
+  const k = e.target.dataset.k; if(!k || frozen) return;
+  if(k === "C"){ pinBuf = ""; renderPin(); return; }
+  if(k === "OK"){
+    if(pinBuf === "1234"){
+      $("lockScreen").classList.remove("show");
+      toast("已解锁 · 购物车 / 挂单 / 设备连接原样保留", "ok");
+    } else {
+      pinErr++; pinBuf = ""; renderPin();
+      $("lockErr").textContent = "PIN 错误（已错 " + pinErr + " / 5 次）";
+      if(pinErr >= 5){
+        frozen = true;
+        let s = 10; // 演示 10 秒（实际 5 分钟）
+        $("lockFrozen").textContent = "已锁定，请等待或由店长解锁（演示 10 秒）";
+        const tm = setInterval(()=>{
+          s--; $("lockFrozen").textContent = "已锁定 " + s + " 秒（实际 5 分钟）";
+          if(s <= 0){ clearInterval(tm); frozen = false; pinErr = 0; $("lockErr").textContent = ""; $("lockFrozen").textContent = ""; }
+        }, 1000);
+      }
+    }
+    return;
+  }
+  if(pinBuf.length < 4){ pinBuf += k; renderPin(); }
+});
+
+/* ================= 收银设置 ================= */
+$("btnSettings").addEventListener("click", ()=> openModal("settingsModal"));
+$("btnSaveSettings").addEventListener("click", ()=>{
+  closeModal("settingsModal");
+  toast("收银设置已保存并留痕（system_settings 同键）", "ok");
+});
+document.querySelectorAll(".switch").forEach(s => s.addEventListener("click", ()=> s.classList.toggle("on")));
+
+/* ================= 全局扫码监听（HID 枪） ================= */
+let scanBuf = "", scanTimer = null;
+document.addEventListener("keydown", e => {
+  // 弹窗打开 → 暂停全局扫码解析（I3）
+  const modalOpen = document.querySelector(".mask.show");
+  if(modalOpen || $("lockScreen").classList.contains("show")) return;
+  // 输入框聚焦时不走全局收码（搜索框有自己的联想/回车逻辑）
+  if(e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  if(e.key === "Enter" && scanBuf.length >= 6){
+    const code = scanBuf;
+    const p = PRODUCTS.find(x => x.bar === code);
+    scanBuf = "";
+    if(p){ tryAdd(p, 1, "scan"); } else { toast("条码未建档：" + code + "（可走开放键临时行，P15）", "warn"); }
+    return;
+  }
+  if(/^[0-9]$/.test(e.key)){
+    scanBuf += e.key;
+    clearTimeout(scanTimer);
+    scanTimer = setTimeout(()=> scanBuf = "", 120); // HID 枪高速连发特征
+  }
+});
+$("btnScanSim").addEventListener("click", ()=>{
+  const p = PRODUCTS[Math.floor(Math.random() * PRODUCTS.length)];
+  tryAdd(p, 1, "scan");
+});
+
+/* ================= 演示控制 ================= */
+$("dNet").addEventListener("click", ()=>{
+  offline = !offline;
+  $("offlineBar").style.display = offline ? "flex" : "none";
+  document.querySelector('[data-pane="scan"]').classList.toggle("dis", offline);
+  toast(offline ? "已切换：断网 → 进入离线收银模式（现金记账 + 暂存补传）" : "网络恢复：暂存单自动补传（client 单号幂等，防重复）", offline ? "warn" : "ok");
+});
+$("dScan").addEventListener("click", ()=> $("btnScanSim").click());
+$("dPaper").addEventListener("click", ()=>{
+  DEV_STATE.printer = "yellow"; renderLamps();
+  toast("小票机缺纸，请更换纸卷（黄灯提示 · 打印将自动降级重试）", "warn");
+  setTimeout(()=>{ DEV_STATE.printer = "green"; renderLamps(); toast("缺纸已恢复（演示）"); }, 6000);
+});
+$("dDrawer").addEventListener("click", ()=>{
+  toast("弹箱失败，请手动开箱（已自动记「无交易开钱箱」留痕）", "err");
+});
+$("dNegList").addEventListener("click", ()=>{
+  $("negListBody").innerHTML = negSales.length ? negSales.map(o => `
+    <div class="list-row">
+      <div class="li"><b>${o.name}</b>
+        <div class="s">${o.t} · 账面 ${o.stock} 件 · 车上 ${o.had} 件 → 卖至 <b style="color:var(--red)">${o.had + o.add}</b> 件（超 ${o.had + o.add - o.stock} 件）</div></div>
+    </div>`).join("") : `<div style="text-align:center;color:#b6bcc3;padding:26px 0">本班暂无负库存单</div>`;
+  openModal("negListModal");
+});
+$("dReset").addEventListener("click", ()=> location.reload());
+
+/* ================= 初始化 ================= */
+member = {...DEFAULT_MEMBER};   // 演示默认挂会员
+renderCats(); renderQuick(); renderProducts(); renderMember(); renderCart(); renderLamps();
+setTimeout(selfcheck, 600);
+</script>
+</body>
+</html>

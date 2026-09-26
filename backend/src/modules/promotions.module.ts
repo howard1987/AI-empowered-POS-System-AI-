@@ -3,6 +3,7 @@ import { q, q1, cx, r2, audit } from '../common/db';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { SettingsService } from './settings.module';
+import { couponStockAfter, logCoupon } from './coupons.module';   // V5.0 活动发券写入库流水
 
 /**
  * 促销引擎（T12，方案 5.4；V4.14.1 新增 定时打折/捆绑销售/消费后奖励/满件折扣）：
@@ -22,6 +23,28 @@ import { SettingsService } from './settings.module';
  */
 
 const PROMO_KINDS = ['满减', '折扣', '第二件半价', '特价', '定时打折', '捆绑销售', '消费后奖励', '满件折扣'];
+
+/** V4.28.9d 活动级数量约束统计：已参与订单次数（used）/ 指定会员参与次数（mine）。
+ *  口径：gift=该活动赠品行涉及的订单数（含收银端加行与后台兜底出库）；coupon=该活动发出的券张数。
+ *  ex 传执行器（事务内传 cx(c,·)，端点池查询传 q），使同一函数两个场景复用。 */
+async function activityUsage(ex: (sql: string, params?: any[]) => Promise<any[]>,
+                             promoId: number, rules: any, memberId?: number) {
+  const isGift = String(rules.rewardType) === 'gift';
+  const used = Number((await ex(
+    isGift
+      ? `SELECT COUNT(DISTINCT order_id)::int AS n FROM sale_items WHERE promo_id=$1 AND line_remark LIKE '赠品%'`
+      : `SELECT COUNT(*)::int AS n FROM member_coupons WHERE promo_id=$1`, [promoId]))[0]?.n ?? 0);
+  let mine = 0;
+  if (memberId) {
+    mine = Number((await ex(
+      isGift
+        ? `SELECT COUNT(DISTINCT si.order_id)::int AS n FROM sale_items si JOIN sales_orders so ON so.id=si.order_id
+            WHERE si.promo_id=$1 AND so.member_id=$2 AND si.line_remark LIKE '赠品%'`
+        : `SELECT COUNT(*)::int AS n FROM member_coupons WHERE promo_id=$1 AND member_id=$2`,
+      [promoId, memberId]))[0]?.n ?? 0);
+  }
+  return { used, mine };
+}
 
 function scopeMatchProduct(scope: any, p: any): boolean {
   if (!scope) return true;
@@ -63,8 +86,19 @@ function validateRules(kind: string, rules: any) {
     if (!(Number(rules.threshold) > 0)) throw new BizException(40003, '消费后奖励需 rules.threshold > 0（消费满多少元）');
     if (!['coupon', 'gift'].includes(String(rules.rewardType))) throw new BizException(40003, '消费后奖励需 rules.rewardType = coupon（发购物券）或 gift（赠商品）');
     if (rules.rewardType === 'coupon' && !(Number(rules.couponTemplateId) > 0)) throw new BizException(40003, '发券奖励需 rules.couponTemplateId（券模板 ID）');
+    if (rules.rewardType === 'coupon' && !(Number(rules.couponQty ?? 1) >= 1)) throw new BizException(40003, '每单发券张数须 ≥ 1（rules.couponQty）');
     if (rules.rewardType === 'gift' && !String(rules.giftName || '').trim()) throw new BizException(40003, '赠品奖励需 rules.giftName（赠品名称）');
-  } else if (kind === '满件折扣') {
+    // V4.28.9d 活动级数量约束（可选，0/空 = 不限）
+    for (const k of ['totalLimit', 'perMemberLimit'] as const) {
+      const v = Number(rules[k] ?? 0);
+      if (!(Number.isInteger(v) && v >= 0)) throw new BizException(40003, `rules.${k} 须为 ≥0 整数（0=不限）`);
+    }
+  }
+  // V4.28.9e 会员专享开关（所有活动类型通用）：true=非会员不参与；false/空=人人可享
+  if (rules.memberOnly !== undefined && rules.memberOnly !== null && typeof rules.memberOnly !== 'boolean') {
+    throw new BizException(40003, 'rules.memberOnly 须为布尔值（true=会员专享）');
+  }
+  if (kind === '满件折扣') {
     if (!(Number(rules.minQty) >= 2)) throw new BizException(40003, '满件折扣需 rules.minQty ≥ 2（满多少件）');
     const rate = Number(rules.rate);
     if (!(rate > 0 && rate < 1)) throw new BizException(40003, '满件折扣需 rules.rate ∈ (0,1)，如 0.8 = 8 折');
@@ -74,15 +108,20 @@ function validateRules(kind: string, rules: any) {
 }
 
 /** 促销引擎入口：在行计价（会员价/等级折扣/手工改价）之后调用，原地修改 lines */
-export async function applyPromotions(c: any, storeId: number, lines: any[]) {
+export async function applyPromotions(c: any, storeId: number, lines: any[], memberId?: number) {
   for (const ln of lines) { ln.promoId = null; ln.promoAlloc = 0; ln.linePromoDisc = 0; }
   const settings = new SettingsService();
   const takeBest = (await settings.getNum('promo.take_best', 1)) === 1;
   const stackLayers = (await settings.getNum('promo.stack_layers', 1)) === 1;
 
-  const promos: any[] = await cx(c,
+  const all: any[] = await cx(c,
     `SELECT * FROM promotions
       WHERE store_id=$1 AND status='进行中' AND start_at <= now() AND end_at >= now()`, [storeId]);
+  // ── V4.28.9e 会员专享开关（rules.memberOnly）：勾选后非会员（无会员 ID）一律不参与本活动。
+  //    此处一处过滤即覆盖行级（特价/第二件半价/定时打折）、范围级（满件折扣/捆绑销售）
+  //    与整单级（满减/折扣）全部层级；会员价/等级折扣属商品会员权益，与本开关无关。──
+  const mid = Number(memberId) || 0;
+  const promos = all.filter(p => !p?.rules?.memberOnly || mid > 0);
   if (!promos.length) return { promoAmount: 0, orderPromoId: null };
 
   // ── 1. 行级：特价 / 第二件半价 / 定时打折（同层取一，默认取对顾客更优） ──
@@ -123,6 +162,49 @@ export async function applyPromotions(c: any, storeId: number, lines: any[]) {
       ln.promoId = chosen.id;
       ln.linePromoDisc = chosen.discount;
       lineDiscountTotal = r2(lineDiscountTotal + chosen.discount);
+    }
+  }
+
+  // ── 1.2 V4.28.7 临期自动折扣层（「临期自动折扣档位」promo.expiry_auto_discount 真正落地）：
+  //    对未命中其它行级促销、且存在在库临期批次的商品行，按档位自动折价——剩余天数 ≤ days 的
+  //    所有档中取折扣最深（pct 最小）。与门店促销互斥（促销优先、临期兜底，防双重折扣）；
+  //    低于进价由 sales.floor_guard_expiry_exempt 结算豁免协同。开关 promo.expiry_auto.enabled（默认关）。
+  if ((await settings.getBool('promo.expiry_auto.enabled', false))) {
+    let tiers: { days: number; pct: number }[] = [];
+    try {
+      const raw = await settings.getVal('promo.expiry_auto_discount');
+      const arr = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(arr)) {
+        tiers = arr
+          .map((t: any) => ({ days: Number(t?.days), pct: Number(t?.pct) }))
+          .filter((t: any) => Number.isFinite(t.days) && t.days >= 0 && t.pct > 0 && t.pct < 100)
+          .sort((a: any, b: any) => a.days - b.days);
+      }
+    } catch { /* 档位格式异常：跳过临期层，不影响正常促销 */ }
+    const eligible = lines.filter((ln: any) => !ln.promoId && !ln.linePromoDisc && ln.lineAmount > 0);
+    if (tiers.length && eligible.length) {
+      const pids = [...new Set(eligible.map((ln: any) => Number(ln.p.id)))];
+      const er = await cx(c,
+        `SELECT product_id, MIN(expiry_date - CURRENT_DATE) AS days_left
+           FROM batches WHERE store_id=$1 AND status='在库' AND remain_qty > 0
+             AND expiry_date >= CURRENT_DATE AND product_id = ANY($2::bigint[])
+          GROUP BY product_id`, [storeId, pids]);
+      const daysLeft = new Map<number, number>(er.map((r: any) => [Number(r.product_id), Number(r.days_left)]));
+      for (const ln of eligible) {
+        const days = daysLeft.get(Number(ln.p.id));
+        if (days === undefined) continue;                  // 无在库临期批次
+        // 区间归属：档位按 days 升序排，命中第一个 days_left ≤ days 的档（= 剩余天数落入的区间）。
+        // 常规配置（越临期折越深）下即最深档；剩余天数超出全部档位 → 不自动折扣
+        const hit = tiers.find((t: any) => days <= t.days);
+        if (!hit) continue;
+        const pct = hit.pct;
+        const disc = r2(ln.lineAmount * (1 - pct / 100));
+        if (disc <= 0) continue;
+        ln.lineAmount = r2(ln.lineAmount - disc);
+        ln.linePromoDisc = disc;
+        ln.expiryAuto = { daysLeft: days, pct };            // 留痕标记（随行流水/小票备注可查）
+        lineDiscountTotal = r2(lineDiscountTotal + disc);
+      }
     }
   }
 
@@ -248,8 +330,13 @@ export async function applyPromotions(c: any, storeId: number, lines: any[]) {
 }
 
 /** V4.14.1 消费后奖励：结账事务内调用——按进行中的「消费后奖励」活动给会员发购物券 / 登记赠品。
- *  发券受券模板总量池 / 每人限领约束；赠品追加到订单备注留痕（店员现场赠送）。返回发放清单供前端播报。 */
-export async function grantPostCheckoutRewards(c: any, storeId: number, memberId: number, payable: number, orderId: number) {
+ *  发券受券模板总量池 / 每人限领约束。
+ *  V4.28.9 赠品出库修复：规则配置 giftProductId（赠品商品）时，结账事务内自动追加 0 元赠品行
+ *  并完成真实出库（FIFO 扣批 → sale_items/sale_item_batches → stock_flows('sale') →
+ *  inventory_current 扣减 → 主单成本/利润同步），报表中心「赠送记录」可查；
+ *  未配置 giftProductId 的老活动维持原口径（订单备注留痕，店员现场手工加赠品行）。 */
+export async function grantPostCheckoutRewards(c: any, storeId: number, memberId: number, payable: number,
+                                               orderId: number, operatorId?: number) {
   if (!memberId || !(payable > 0)) return [];
   const promos = await cx(c,
     `SELECT * FROM promotions
@@ -262,19 +349,133 @@ export async function grantPostCheckoutRewards(c: any, storeId: number, memberId
     if (String(rules.rewardType) === 'coupon' && Number(rules.couponTemplateId) > 0) {
       const cp = await cx(c, `SELECT id, name, valid_days, per_member, total_qty, status FROM coupons WHERE id=$1`, [Number(rules.couponTemplateId)]);
       if (!cp.length || String(cp[0].status) !== '启用') continue;
+      // ── V4.28.9d 活动级数量约束：总发放次数 / 单会员参与次数（0=不限）──
+      const usage = await activityUsage((s, p) => cx(c, s, p), pr.id, rules, memberId);
+      if (Number(rules.totalLimit) > 0 && usage.used >= Number(rules.totalLimit)) continue;
+      if (Number(rules.perMemberLimit) > 0 && usage.mine >= Number(rules.perMemberLimit)) continue;
       const totalIssued = await cx(c, `SELECT count(*)::int AS n FROM member_coupons WHERE coupon_id=$1`, [cp[0].id]);
       if (Number(cp[0].total_qty) > 0 && Number(totalIssued[0].n) >= Number(cp[0].total_qty)) continue;
       const mine = await cx(c, `SELECT count(*)::int AS n FROM member_coupons WHERE coupon_id=$1 AND member_id=$2`, [cp[0].id, memberId]);
       if (Number(cp[0].per_member) > 0 && Number(mine[0].n) >= Number(cp[0].per_member)) continue;
+      // 每单发券张数（默认 1）；受券模板总量池 / 每人限领余量截断
+      let n = Math.max(1, Number(rules.couponQty) || 1);
+      if (Number(cp[0].total_qty) > 0) n = Math.min(n, Number(cp[0].total_qty) - Number(totalIssued[0].n));
+      if (Number(cp[0].per_member) > 0) n = Math.min(n, Number(cp[0].per_member) - Number(mine[0].n));
+      if (n <= 0) continue;
       const exp = new Date(Date.now() + Number(cp[0].valid_days || 30) * 86400000).toISOString().slice(0, 10);
-      const ins = await cx(c,
-        `INSERT INTO member_coupons (coupon_id, member_id, expire_at) VALUES ($1,$2,$3) RETURNING id`,
-        [cp[0].id, memberId, exp]);
-      out.push({ promoId: pr.id, type: 'coupon', name: cp[0].name, memberCouponId: Number(ins[0].id) });
+      const ids: number[] = [];
+      for (let i = 0; i < n; i++) {
+        const ins = await cx(c,
+          `INSERT INTO member_coupons (coupon_id, member_id, expire_at, promo_id, operator_id, issue_source) VALUES ($1,$2,$3,$4,$5,'活动') RETURNING id`,
+          [cp[0].id, memberId, exp, pr.id, null]);
+        const mcId = Number(ins[0].id);
+        // V4.28.9f：券码回填（与手动发券/领券同口径 MC+8 位），否则自动发出的券无券码、
+        // 收银台「输券码核销」与会员持券展示都查不到 → 消费后奖励发券沦为死活动
+        await cx(c,
+          `UPDATE member_coupons SET code='MC'||lpad(id::text,8,'0') WHERE id=$1 AND code IS NULL`, [mcId]);
+        ids.push(mcId);
+      }
+      // V5.0 活动自动发券 → 发放出库流水（系统发起，operator 留空）
+      const sa = await couponStockAfter(c, Number(cp[0].id));
+      await logCoupon(c, { storeId: Number(storeId), couponId: Number(cp[0].id), moveType: '发放出库', qty: 0,
+        memberId: Number(memberId), operatorId: null, docNo: 'PROMO-' + pr.id, stockAfter: sa,
+        remark: `活动「${pr.name}」自动发券 ${n} 张` });
+      out.push({ promoId: pr.id, type: 'coupon', name: cp[0].name, memberCouponId: ids[0], qty: n });
     } else if (String(rules.rewardType) === 'gift' && String(rules.giftName || '').trim()) {
-      await cx(c, `UPDATE sales_orders SET remark = COALESCE(remark,'') || $2 WHERE id=$1`,
-        [orderId, `｜消费后奖励赠品：${String(rules.giftName)}（活动#${pr.id}）`]);
-      out.push({ promoId: pr.id, type: 'gift', name: String(rules.giftName) });
+      const giftName = String(rules.giftName).trim();
+      const giftQty = Math.max(1, Number(rules.giftQty) || 1);
+      let issued = false;
+      if (Number(rules.giftProductId) > 0) {
+        // ── V4.28.9 幂等防重（核心）：按数量对齐——收银端 0 元赠品行已够 giftQty → 视为已发放，绝不再出库
+        //    （杜绝「收银端加行 + 后台自动出库」双份扣库存）；不足 → 只补差量（V4.28.9b：保证发放数量
+        //    与后台设置严格一致）。识别口径：同商品 + 0 元 + 备注「赠品」前缀。──
+        const giftCap = Math.max(1, Number(rules.giftQty) || 1);
+        const existed = await cx(c,
+          `SELECT COALESCE(SUM(qty),0) AS gq FROM sale_items
+            WHERE order_id=$1 AND product_id=$2 AND unit_price=0 AND line_remark LIKE '赠品%'`,
+          [orderId, Number(rules.giftProductId)]);
+        const haveQty = Number(existed[0]?.gq ?? 0);
+        if (haveQty >= giftCap) {
+          out.push({ promoId: pr.id, type: 'gift', name: giftName, already: true });
+          continue;
+        }
+        // V4.28.9c：需确认的活动（needConfirm）订单上没有赠品行 = 收银员/顾客明确选择「否」→
+        // 兜底不再补发（尊重现场决定）；普通活动无行才补差量（保证必有出库）。
+        if (rules.needConfirm) {
+          out.push({ promoId: pr.id, type: 'gift', name: giftName, skipped: true });
+          continue;
+        }
+        // V4.28.9d 活动级数量约束：总发放次数 / 单会员参与次数（本单已有赠品行=已参与，不再拦）
+        if (haveQty === 0) {
+          const usage = await activityUsage((s, p) => cx(c, s, p), pr.id, rules, memberId);
+          if (Number(rules.totalLimit) > 0 && usage.used >= Number(rules.totalLimit)) continue;
+          if (Number(rules.perMemberLimit) > 0 && usage.mine >= Number(rules.perMemberLimit)) continue;
+        }
+        try {
+          const gp = await cx(c,
+            `SELECT id, name, sell_price, base_unit, track_inventory, biz_mode, supplier_default_id
+               FROM products WHERE id=$1 AND deleted_at IS NULL`, [Number(rules.giftProductId)]);
+          if (gp.length) {
+            const p = gp[0];
+            let remaining = giftCap - haveQty;
+            const allocs: { batchId: number; qty: number; cost: number }[] = [];
+            if (p.track_inventory) {
+              const batches = await cx(c,
+                `SELECT id, remain_qty, inbound_cost FROM batches
+                  WHERE store_id=$1 AND product_id=$2 AND status='在库' AND remain_qty > 0
+                  ORDER BY expiry_date NULLS LAST, inbound_date, id FOR UPDATE`, [storeId, p.id]);
+              for (const b of batches) {
+                if (remaining <= 0) break;
+                const take = Math.min(Number(b.remain_qty), remaining);
+                await cx(c,
+                  `UPDATE batches SET remain_qty = remain_qty - $2,
+                      status = CASE WHEN remain_qty - $2 <= 0 THEN '售罄' ELSE status END WHERE id=$1`,
+                  [b.id, take]);
+                allocs.push({ batchId: Number(b.id), qty: take, cost: Number(b.inbound_cost) });
+                remaining -= take;
+              }
+            }
+            const needQty = giftCap - haveQty;   // V4.28.9b：只补差量（收银端已发放的不重复出库）
+            const outQty = p.track_inventory ? needQty - remaining : needQty;
+            if (outQty > 0) {
+              const lineCost = r2(allocs.reduce((s, a) => s + a.qty * a.cost, 0));
+              const remark = `赠品(消费后奖励):${giftName}` + (remaining > 0 ? `（在库不足实出 ${outQty}/${giftCap}）` : '');
+              const si = await cx(c,
+                `INSERT INTO sale_items (order_id, product_id, unit_name, qty, unit_price, origin_price,
+                                        line_amount, line_cost, line_profit, price_changed, line_remark, promo_id,
+                                        supplier_id, biz_mode)
+                 VALUES ($1,$2,$3,$4,0,$5,0,$6,$7,true,$8,$9,$10,$11) RETURNING id`,
+                [orderId, p.id, p.base_unit || '件', outQty, Number(p.sell_price),
+                 lineCost, r2(-lineCost), remark, pr.id, p.supplier_default_id ?? null, p.biz_mode ?? '购销']);
+              for (const a of allocs) {
+                await cx(c, `INSERT INTO sale_item_batches (sale_item_id, batch_id, qty) VALUES ($1,$2,$3)`,
+                  [Number(si[0].id), a.batchId, a.qty]);
+                await cx(c,
+                  `INSERT INTO stock_flows (store_id, product_id, batch_id, direction, qty, unit_cost, ref_type, ref_id, ref_item_id, employee_id)
+                   VALUES ($1,$2,$3,'出库',$4,$5,'sale',$6,$7,$8)`,
+                  [storeId, p.id, a.batchId, a.qty, a.cost, orderId, Number(si[0].id), operatorId ?? null]);
+              }
+              if (p.track_inventory) {
+                await cx(c,
+                  `UPDATE inventory_current SET qty_total = qty_total - $2, updated_at=now()
+                    WHERE store_id=$1 AND product_id=$3`, [storeId, outQty, p.id]);
+              }
+              // 主单口径同步：0 元收入不进货值，成本/利润按赠品行调整（保持 cost = goods - profit 恒等式）
+              await cx(c,
+                `UPDATE sales_orders SET cost_amount = cost_amount + $2, profit_amount = profit_amount - $2 WHERE id=$1`,
+                [orderId, lineCost]);
+              issued = true;
+              out.push({ promoId: pr.id, type: 'gift', name: giftName, autoIssued: true, qty: outQty });
+            }
+          }
+        } catch { /* 赠品出库失败不阻断收银：回落备注留痕口径 */ }
+      }
+      if (!issued) {
+        // 未配置赠品商品 / 自动出库失败：维持原口径（订单备注留痕，店员现场手工加赠品行）
+        await cx(c, `UPDATE sales_orders SET remark = COALESCE(remark,'') || $2 WHERE id=$1`,
+          [orderId, `｜消费后奖励赠品：${giftName}（活动#${pr.id}）`]);
+        out.push({ promoId: pr.id, type: 'gift', name: giftName });
+      }
     }
   }
   return out;
@@ -329,6 +530,41 @@ class PromotionsService {
 @Controller('promotions')
 class PromotionsController {
   private svc = new PromotionsService();
+
+  /** V4.28.9 收银端促销赠品查询（登录即可）：单笔预估金额 amount ≥ 门槛的进行中「消费后奖励-送赠品」活动清单。
+   *  收银台据此自动添加 0 元促销赠品行（满足条件自动价格为 0，走正常出库通道）。
+   *  V4.28.9d：传 memberId 时按活动级约束过滤——总发放次数已满 / 该会员参与次数已满的活动不再返回
+   *  （收银台不提示、不自动加行；服务端发放时二次校验兜底并发）。 */
+  @Get('active-gifts')
+  async activeGifts(@Query('amount') amount?: string, @Query('memberId') memberId?: string, @CurrentUser() user?: AuthUser) {
+    const amt = Number(amount) || 0;
+    const mid = Number(memberId) || 0;
+    const rows = await q(
+      `SELECT id, name, rules FROM promotions
+        WHERE store_id=$1 AND status='进行中' AND kind='消费后奖励'
+          AND start_at <= now() AND end_at >= now()`, [user!.storeId]);
+    const list = rows.map((r: any) => {
+      const rules = (r.rules && typeof r.rules === 'object') ? r.rules : {};
+      return {
+        id: Number(r.id), name: r.name, rules,
+        threshold: Number(rules.threshold || 0),
+        rewardType: String(rules.rewardType || ''),
+        giftName: String(rules.giftName || ''),
+        giftProductId: Number(rules.giftProductId) || null,
+        giftQty: Math.max(1, Number(rules.giftQty) || 1),
+        needConfirm: !!rules.needConfirm,   // V4.28.9c：贵重赠品需收银员确认后才发放（默认自动）
+      };
+    }).filter(x => x.rewardType === 'gift' && x.giftProductId > 0 && amt >= x.threshold);
+    const out = [];
+    for (const x of list) {
+      const usage = await activityUsage((s, p) => q(s, p), x.id, x.rules, mid || undefined);
+      if (Number(x.rules.totalLimit) > 0 && usage.used >= Number(x.rules.totalLimit)) continue;
+      if (mid && Number(x.rules.perMemberLimit) > 0 && usage.mine >= Number(x.rules.perMemberLimit)) continue;
+      delete (x as any).rules;
+      out.push(x);
+    }
+    return out;
+  }
 
   @RequirePerms('promo.manage')
   @Post()

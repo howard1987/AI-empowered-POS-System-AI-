@@ -11,6 +11,7 @@ import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { storePrice } from './store-price.service';   // V4.26.5 门店覆盖价（价签按门店）
+import { assertStoreAllowed } from '../common/scope'; // V4.28.6 跨店设备审批范围校验
 import * as os from 'os';
 
 /** V4.18.7b 系统驱动 RAW 直发（USB 已装 Windows 驱动的小票机，如 POS-80）：
@@ -901,31 +902,42 @@ class DeviceEventsController {
 @Controller('pos-devices')
 class PosDevicesController {
 
-  /** 授权设备列表（待授权优先）。V4.25.1：查看无需 sys.settings，审批/状态/删除仍限管理员 */
+  /** 授权设备列表（待授权优先）。V4.25.1：查看无需 sys.settings，审批/状态/删除仍限管理员。
+   *  V4.28.6：总部视角可见全部门店的设备（带门店名），防跨店误授权——审批仍校验设备归属在操作者范围内； */
   @Get()
   async list(@CurrentUser() user: AuthUser, @Query('status') status?: string) {
-    const conds = ['d.store_id=$1']; const params: any[] = [user.storeId];
+    const seeAll = user.perms.includes('*') || user.perms.includes('hq.store.view');
+    const conds: string[] = []; const params: any[] = [];
+    if (!seeAll) { conds.push(`d.store_id=$1`); params.push(user.storeId); }
     if (status && ['待授权', '已授权', '已停用'].includes(status)) { params.push(status); conds.push(`d.status=$${params.length}`); }
     const rows = await q(
-      `SELECT d.*, a.name AS approved_by_name
-         FROM pos_devices d LEFT JOIN employees a ON a.id = d.approved_by
-        WHERE ${conds.join(' AND ')} ORDER BY (d.status='待授权') DESC, d.last_seen_at DESC NULLS LAST, d.id DESC`, params);
+      `SELECT d.*, a.name AS approved_by_name, s.name AS store_name
+         FROM pos_devices d
+         LEFT JOIN employees a ON a.id = d.approved_by
+         LEFT JOIN stores s ON s.id = d.store_id
+        WHERE ${conds.length ? conds.join(' AND ') : 'TRUE'}
+        ORDER BY (d.status='待授权') DESC, d.last_seen_at DESC NULLS LAST, d.id DESC`, params);
     return rows.map((r: any) => ({
       id: Number(r.id), deviceCode: r.device_code, deviceName: r.device_name, ua: r.ua,
       status: r.status, approvedAt: r.approved_at, approvedByName: r.approved_by_name,
+      storeId: Number(r.store_id), storeName: r.store_name || `门店#${r.store_id}`,
       lastSeenAt: r.last_seen_at, lastIp: r.last_ip, createdAt: r.created_at,
     }));
   }
 
-  /** 审批通过（可同时命名，如「1号收银机」） */
+  /** 审批通过（可同时命名，如「1号收银机」）。
+   *  V4.28.6：总部可审批跨店设备（先 assertStoreAllowed 校验归属在操作者范围内），门店账号仍限本店。 */
   @Post(':id/approve')
   @RequirePerms('sys.settings')
   async approve(@Param('id', ParseIntPipe) id: number, @Body() b: { name?: string }, @CurrentUser() user: AuthUser) {
+    const dev = await q1<any>(`SELECT store_id, device_code FROM pos_devices WHERE id=$1`, [id]);
+    if (!dev) throw new BizException(41004, '设备不存在', 404);
+    assertStoreAllowed(Number(dev.store_id), '该收银机设备');
     const r = await q1<any>(
       `UPDATE pos_devices SET status='已授权', approved_by=$2, approved_at=now(),
               device_name=COALESCE(NULLIF($3,''), device_name)
-       WHERE id=$1 AND store_id=$4 RETURNING id, device_code, status`,
-      [id, user.sub, String(b?.name || '').trim().slice(0, 60), user.storeId]);
+       WHERE id=$1 RETURNING id, device_code, status`,
+      [id, user.sub, String(b?.name || '').trim().slice(0, 60)]);
     if (!r) throw new BizException(41004, '设备不存在', 404);
     await audit(user.storeId, user.sub, '系统', 'pos_device.approve', 'pos_device', id, { code: r.device_code });
     return { id: Number(r.id), deviceCode: r.device_code, status: r.status };
@@ -936,21 +948,26 @@ class PosDevicesController {
   @RequirePerms('sys.settings')
   async setStatus(@Param('id', ParseIntPipe) id: number, @Body() b: { status: string }, @CurrentUser() user: AuthUser) {
     if (!['待授权', '已授权', '已停用'].includes(String(b?.status || ''))) throw new BizException(40003, '状态仅支持 待授权/已授权/已停用');
+    const dev = await q1<any>(`SELECT store_id FROM pos_devices WHERE id=$1`, [id]);
+    if (!dev) throw new BizException(41004, '设备不存在', 404);
+    assertStoreAllowed(Number(dev.store_id), '该收银机设备');   // V4.28.6 同审批口径
     const r = await q1<any>(
-      `UPDATE pos_devices SET status=$2, approved_by=$3, approved_at=now() WHERE id=$1 AND store_id=$4 RETURNING id, status`,
-      [id, b.status, user.sub, user.storeId]);
+      `UPDATE pos_devices SET status=$2, approved_by=$3, approved_at=now() WHERE id=$1 RETURNING id, status`,
+      [id, b.status, user.sub]);
     if (!r) throw new BizException(41004, '设备不存在', 404);
     await audit(user.storeId, user.sub, '系统', 'pos_device.status', 'pos_device', id, { status: b.status });
     return { id: Number(r.id), status: r.status };
   }
 
-  /** 删除登记（误登记/设备退役；删除后该设备再登录会重新登记为待授权） */
+  /** 删除登记（误登记/设备退役；删除后该设备再登录会重新登记为待授权）。V4.28.6 同审批口径支持跨店 */
   @Delete(':id')
   @RequirePerms('sys.settings')
   async remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
-    const r = await q1<any>(`DELETE FROM pos_devices WHERE id=$1 AND store_id=$2 RETURNING id, device_code`, [id, user.storeId]);
-    if (!r) throw new BizException(41004, '设备不存在', 404);
-    await audit(user.storeId, user.sub, '系统', 'pos_device.delete', 'pos_device', id, { code: r.device_code });
+    const dev = await q1<any>(`SELECT store_id, device_code FROM pos_devices WHERE id=$1`, [id]);
+    if (!dev) throw new BizException(41004, '设备不存在', 404);
+    assertStoreAllowed(Number(dev.store_id), '该收银机设备');
+    await q(`DELETE FROM pos_devices WHERE id=$1`, [id]);
+    await audit(user.storeId, user.sub, '系统', 'pos_device.delete', 'pos_device', id, { code: dev.device_code });
     return { ok: true };
   }
 }

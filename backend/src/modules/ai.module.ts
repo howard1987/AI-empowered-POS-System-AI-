@@ -13,10 +13,14 @@ import { BizException } from '../common/http';
 import { q, q1, r2, tx, audit, seqLock } from '../common/db';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join, basename } from 'path';
-import { runDetection, clearSessionCache } from './ai.detect';
+import { runDetection, clearSessionCache, prewarmModels } from './ai.detect';
 import { matchSamples } from './ai.sample-match';
 import { recognizeWithVL } from './ai.vl';
 import { embSearch, embSearchMulti, embEnabled, embMinConf, embTopK, embMargin, embStrictConf, embModelReady, embMultiEnabled, embMultiMinConf, embStatus, embIndexStore, embIndexOne } from './ai.emb';
+import { trackFrame, trackEnabled, stableFrames } from './ai.track';
+import { segmentItems } from './ai.seg';
+import { segmentItemsYolo } from './ai.seg.yolo';
+import { autotrainStatus, autotrainRun, autotrainTick, autotrainBusy, autotrainEnvCheck, autotrainEnvSetup, autotrainEnvJob } from './ai.autotrain';
 import { AiModelsController } from './ai.models';
 import { AiOcrController, AiSignatureController } from './ai.ocr';
 import { uploadsFilePath, saveUploadImage } from '../common/uploads';
@@ -56,13 +60,15 @@ async function enrichCandidates(storeId: number, candidates: any[]): Promise<any
   if (!ids.length) return candidates;
   try {
     const rows = await q(
-      `SELECT p.id, p.sell_price, p.base_unit AS unit, p.spec, COALESCE(c.name,'未分类') AS category,
-              COALESCE((SELECT SUM(si.qty) FROM sale_items si
-                         JOIN sales_orders so ON so.id=si.order_id
-                         AND so.status IN ('已完成','部分退款') AND so.created_at >= CURRENT_DATE - 30
-                        WHERE si.product_id=p.id),0) AS freq30
-         FROM products p LEFT JOIN categories c ON c.id=p.category_id
-        WHERE p.id = ANY($1::bigint[])`, [ids]);
+      `SELECT p.id, p.sell_price, p.base_unit AS unit, p.spec, p.barcode,
+              p.weight_min_g, p.weight_max_g,
+              COALESCE(c.name,'未分类') AS category,
+            COALESCE((SELECT SUM(si.qty) FROM sale_items si
+                       JOIN sales_orders so ON so.id=si.order_id
+                       AND so.status IN ('已完成','部分退款') AND so.created_at >= CURRENT_DATE - 30
+                      WHERE si.product_id=p.id),0) AS freq30
+       FROM products p LEFT JOIN categories c ON c.id=p.category_id
+      WHERE p.id = ANY($1::bigint[])`, [ids]);
     const m = new Map(rows.map((r: any) => [Number(r.id), r]));
     const fwRow = await q(`SELECT value FROM system_settings WHERE setting_key='ai.rerank.freq_weight'`);
     const fw = Math.min(0.1, Math.max(0, Number(fwRow[0]?.value ?? 0.03) || 0));
@@ -73,6 +79,12 @@ async function enrichCandidates(storeId: number, candidates: any[]): Promise<any
       c.sellPrice = r.sell_price != null ? Number(r.sell_price) : null;
       c.unit = r.unit || '';
       c.spec = r.spec || '';
+      c.barcode = r.barcode || '';   // V4.27.1 Q5：候选确认须扫条码二次校验
+      // V4.27.1 Q7：生鲜单件重量期望区间（g），称重复核用
+      if (r.weight_min_g != null || r.weight_max_g != null) {
+        c.weightRange = { minG: r.weight_min_g != null ? Number(r.weight_min_g) : null,
+                          maxG: r.weight_max_g != null ? Number(r.weight_max_g) : null };
+      }
       c.freq = Math.round(Number(r.freq30) * 100) / 100;
       c._score = (c.conf ?? 0) + fw * Math.min(1, (c.freq ?? 0) / 100);
     }
@@ -153,6 +165,11 @@ export class AiController {
     let reshoot: { productIds: number[]; text: string } | null = null;
     /** V4.16.0 P6 多件分步拍引导：单张建议件数 / 已识别件数 / 待确认件数 / 是否建议补拍 */
     let guide: any = null;
+    /** V4.27.4 多品同拍采集：过三门槛自动命中的逐件明细（同品最高置信，≤10），供采集链路裁剪入样本库 */
+    let cropSamples: { productId: number; name: string; conf: number; cropBox: any }[] = [];
+    /** V4.27.5 采集纠错：逐件全量明细（含未命中件 + Top3 候选）——收银员手动纠错后可采，
+     *  尽量避免"未识别"整帧浪费；hit=true 的件为自动命中（免纠错直采）。 */
+    let cropDetail: { cropBox: any; hit: boolean; productId: number | null; name: string | null; conf: number | null; cands: { productId: number; name: string; conf: number }[] }[] = [];
 
     /* ── V4.11.2 M2 多件识别（方案 v3.2）：mode='multi' 时先试零训练轮廓分割 + 逐件 CLIP 检索；
      *    每件独立过三门槛 → 命中件按商品聚合计数（确认卡片多件同出），未决件给出候选卡片；
@@ -167,6 +184,7 @@ export class AiController {
           const strictConf = await embStrictConf(), margin = await embMargin();
           const counts = new Map<number, { productId: number; name: string; count: number; conf: number }>();
           const candCards = new Map<number, any>();
+          const cropHits: { productId: number; name: string; conf: number; cropBox: any }[] = [];   // V4.27.4 多品同拍采集：逐件命中明细
           let ambCrops = 0, lowCrops = 0;
           for (const crop of em.crops) {
             const g = gateClip(crop.candidates, minConf, strictConf, margin);
@@ -175,6 +193,7 @@ export class AiController {
               it.count += 1;
               it.conf = Math.max(it.conf, Math.round(g.hit.conf * 1000) / 1000);
               counts.set(g.hit.productId, it);
+              cropHits.push({ productId: g.hit.productId, name: g.hit.name, conf: g.hit.conf, cropBox: crop.box });
               candCards.delete(g.hit.productId);   // 已确认件不再出现在候选卡片
             } else {
               if (g.ambiguous) ambCrops++; else lowCrops++;
@@ -192,8 +211,27 @@ export class AiController {
           clipMs = em.ms;
           result = [...counts.values()].map(it => ({ productId: it.productId, name: it.name, count: it.count, conf: it.conf, matched: true }));
           candidates = [...candCards.values()];
+          // V4.27.4 多品同拍采集：逐件命中明细（同品取最高置信，≤10 个），供前端裁剪入样本库
+          const bestBy = new Map<number, { productId: number; name: string; conf: number; cropBox: any }>();
+          for (const c of cropHits) {
+            const prev = bestBy.get(c.productId);
+            if (!prev || c.conf > prev.conf) bestBy.set(c.productId, c);
+          }
+          cropSamples = [...bestBy.values()].sort((a, b2) => b2.conf - a.conf).slice(0, 10);
+          // V4.27.5 逐件全量明细（含未命中件）：收银员对"待确认/未识别"件手动指定正确商品后可采
+          cropDetail = em.crops.slice(0, 12).map(crop => {
+            const g = gateClip(crop.candidates, minConf, strictConf, margin);
+            return {
+              cropBox: crop.box,
+              hit: !!g.hit,
+              productId: g.hit ? g.hit.productId : null,
+              name: g.hit ? g.hit.name : null,
+              conf: g.hit ? g.hit.conf : null,
+              cands: (crop.candidates || []).slice(0, 3).map(c => ({ productId: Number(c.productId), name: c.name, conf: Number(c.conf) || 0 })),
+            };
+          });
           imagePath = em.framePath;
-          const parts = [`轮廓分割 ${em.boxes.length} 件（${em.segMs}ms）`];
+          const parts = [`${em.segEngine === 'yolo' ? 'YOLO 定位' : '轮廓分割'} ${em.boxes.length} 件（${em.segMs}ms）`];
           if (result.length) parts.push(`自动确认 ${result.length} 种共 ${result.reduce((a, b2) => a + b2.count, 0)} 件（逐件检索 ${em.ms}ms）`);
           if (ambCrops) parts.push(`${ambCrops} 件外观相近待点选`);
           if (lowCrops) parts.push(`${lowCrops} 件未确认`);
@@ -326,11 +364,43 @@ export class AiController {
       const dv = await q(`SELECT id FROM devices WHERE id=$1`, [deviceId]);
       if (!dv.length) deviceId = null;
     }
+    /* ── V4.27.0 多帧跟踪平滑（借鉴 ultralytics 跟踪）：连续帧同品匹配 → stable 标注 + EMA 置信度。
+     *    只做增量标注（店员信心/前端免重复播报），不改变三门槛命中判定（铁律不变）。 ── */
+    if (result && result.length && (await trackEnabled())) {
+      const sf = await stableFrames();
+      const tracked = trackFrame(user.storeId, deviceId,
+        result.map(r => ({ productId: Number(r.productId), conf: Number(r.conf) || 0, bbox: r.bbox })));
+      result.forEach((r, i) => {
+        const t = tracked[i];
+        if (!t) return;
+        r.trackStable = t.hits >= sf;
+        r.trackHits = t.hits;
+        r.trackConf = t.ema;
+      });
+      if (result.length && result.every(r => r.trackStable)) notice += `（连续 ${sf} 帧稳定确认）`;
+    }
+    /* ── V4.27.1 命中结果补条码/重量区间（Q5 候选确认扫条码二次校验 + Q7 生鲜称重复核，前端消费） ── */
+    if (result && result.length) {
+      try {
+        const pids = [...new Set(result.map(r => Number(r.productId)).filter(Boolean))];
+        const prows = await q(`SELECT id, barcode, weight_min_g, weight_max_g FROM products WHERE id = ANY($1::bigint[])`, [pids]);
+        const pm = new Map(prows.map((r: any) => [Number(r.id), r]));
+        for (const r of result) {
+          const p = pm.get(Number(r.productId));
+          if (!p) continue;
+          r.barcode = p.barcode || '';
+          if (p.weight_min_g != null || p.weight_max_g != null) {
+            r.weightRange = { minG: p.weight_min_g != null ? Number(p.weight_min_g) : null,
+                              maxG: p.weight_max_g != null ? Number(p.weight_max_g) : null };
+          }
+        }
+      } catch { /* 商品信息补全失败不阻断识别链路 */ }
+    }
     const log = await q(
       `INSERT INTO ai_recognition_logs (store_id, device_id, image_path, raw_result, used_fallback, fallback_model, latency_ms, scene, layer)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
       [user.storeId, deviceId, imagePath, JSON.stringify(result), usedFallback, fallbackModel, latency, scene, layer]);
-    return { logId: Number(log[0].id), engine: engine === 'mock' ? 'sample' : engine, scene, result, usedFallback, fallbackModel, latencyMs: latency, layer, candidates, notice };
+    return { logId: Number(log[0].id), engine: engine === 'mock' ? 'sample' : engine, scene, result, usedFallback, fallbackModel, latencyMs: latency, layer, candidates, cropSamples, cropDetail, notice };
   }
 
   /** 人工纠正（收银员改识别结果 = 训练对；纠正帧自动进样本库） */
@@ -998,6 +1068,294 @@ print('完成：best.onnx 即可导入训练台')
 `;
     return { script };
   }
+
+  /** V4.27.0 获取检测训练脚本（ultralytics 单类「商品」检测 → ONNX → 导入后 ai.seg.model_id 启用 YOLO 定位）。
+   *  完整训练包（数据导出/自动标注/量化）见 backend/ai-train/。 */
+  @Get('train/script-detect')
+  @RequirePerms('ai.train.launch')
+  trainScriptDetect() {
+    const script = `# -*- coding: utf-8 -*-
+"""单类「商品」检测训练（ultralytics YOLO26，GPU）→ 导出 ONNX → 训练台导入 → 多件识别 YOLO 定位
+用法：
+  1) GPU 服务器：pip install ultralytics（CUDA 版 PyTorch 按官方指引安装）
+  2) 数据集：backend/ai-train/export_dataset.py 自动导出（ai_samples → YOLO 检测格式，含 train/val/test 划分），
+     或训练台「导出数据集」zip 手工整理为 YOLO detect 格式（labels: 0 cx cy w h 归一化）
+  3) python train_det.py
+  4) 训练台「模型管理」导入 best.onnx（mode=detect，classes={"0":{"name":"商品"}}），
+     导入后设置 ai.seg.model_id = 模型 id → 多件识别启用 YOLO 定位（0=回落轮廓分割）
+说明：YOLO26 为端到端 NMS-free 模型，ONNX 输出 [1,300,6]（max_det=300），
+     后端 ai.detect.ts parseEndToEnd 已支持该格式（默认参数勿改 max_det）。
+"""
+from ultralytics import YOLO
+
+model = YOLO('yolo26n.pt')              # YOLO26 nano：端到端 NMS-free，同精度更快；降级可用 yolo11n.pt
+model.train(data='dataset/data.yaml', epochs=80, imgsz=640, batch=16, device='0', patience=20)
+model.export(format='onnx', imgsz=640, opset=12, dynamic=False, simplify=True)   # max_det 保持默认 300
+print('完成：runs/detect/train/weights/best.onnx 导入训练台，并设置 ai.seg.model_id')
+`;
+    return { script };
+  }
+
+  /* ── V4.27.1 Q3 标注审核台：自动建议框（YOLO 定位/轮廓分割）→ 人工拖拽修正 → 校正框入库 ──
+   *  校正框存 ai_samples.annotation.boxes（labelReviewed=true），训练包 export_dataset.py 优先使用。 */
+
+  /** 待标注样本队列（已入库样本，未做过框校正） */
+  @Get('label/pending')
+  @RequirePerms('ai.train.launch')
+  labelPending(@Query('page') page = '1', @Query('size') size = '20', @CurrentUser() user: AuthUser) {
+    const pn = Math.max(1, Number(page) || 1), sz = Math.min(100, Math.max(1, Number(size) || 20));
+    return q(
+      `SELECT s.id, s.product_id, p.name AS product_name, s.image_path, s.status,
+              COALESCE(s.annotation->>'angle','') AS angle,
+              COALESCE((s.annotation->>'labelReviewed')::boolean, false) AS "labelReviewed"
+         FROM ai_samples s LEFT JOIN products p ON p.id = s.product_id
+        WHERE s.store_id=$1 AND s.status IN ('已审核','已入库') AND s.image_path LIKE '/uploads/%'
+          AND COALESCE((s.annotation->>'labelReviewed')::boolean, false) = false
+        ORDER BY s.id DESC LIMIT $2 OFFSET $3`, [user.storeId, sz + 1, (pn - 1) * sz]);
+  }
+
+  /** 获取样本 + 自动建议框（YOLO 定位模型优先，未配置回落轮廓分割；已有人工框则直接返回人工框） */
+  @Get('label/:id/boxes')
+  @RequirePerms('ai.train.launch')
+  async labelPropose(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    const rows = await q(
+      `SELECT s.*, p.name AS product_name FROM ai_samples s LEFT JOIN products p ON p.id = s.product_id
+        WHERE s.id=$1 AND s.store_id=$2`, [id, user.storeId]);
+    if (!rows.length) throw new BizException(40404, '样本不存在', 404);
+    const s = rows[0];
+    if (!String(s.image_path).startsWith('/uploads/')) throw new BizException(40003, '样本图为 img:// 占位（无实体文件），无法标注');
+    const f = uploadsFilePath(String(s.image_path));
+    if (!existsSync(f)) throw new BizException(40404, '样本图文件缺失（可能未随备份恢复）', 404);
+    const b64 = readFileSync(f).toString('base64');
+    let reviewed: any[] | null = null;
+    try { const arr = s.annotation?.boxes; if (Array.isArray(arr) && arr.length) reviewed = arr; } catch { /* 忽略坏数据 */ }
+    if (reviewed) {
+      return { sampleId: Number(s.id), productId: Number(s.product_id), productName: s.product_name,
+               imagePath: s.image_path, boxes: reviewed, engine: 'manual', reviewed: true };
+    }
+    const yolo = await segmentItemsYolo(b64).catch((): import('./ai.seg').SegResult | null => null);
+    const seg = yolo ?? await segmentItems(b64);
+    return { sampleId: Number(s.id), productId: Number(s.product_id), productName: s.product_name,
+             imagePath: s.image_path,
+             boxes: seg.boxes.map((b: { x: number; y: number; w: number; h: number }) => ({ x: b.x, y: b.y, w: b.w, h: b.h })),
+             engine: yolo ? 'yolo' : 'contour', reviewed: false };
+  }
+
+  /** 保存人工校正框（标注审核台提交；boxes 空数组=确认背景图/负样本） */
+  @Post('label/:id/boxes')
+  @RequirePerms('ai.train.launch')
+  async labelSave(@Param('id') id: string,
+                  @Body() b: { boxes: { x: number; y: number; w: number; h: number }[] },
+                  @CurrentUser() user: AuthUser) {
+    const boxes = (b.boxes || [])
+      .filter(x => Number(x.w) > 4 && Number(x.h) > 4)
+      .map(x => ({ x: Math.max(0, Math.round(Number(x.x))), y: Math.max(0, Math.round(Number(x.y))),
+                   w: Math.round(Number(x.w)), h: Math.round(Number(x.h)) }))
+      .slice(0, 12);
+    const r = await q(
+      `UPDATE ai_samples
+          SET annotation = jsonb_set(jsonb_set(COALESCE(annotation,'{}'::jsonb), '{boxes}', $2::jsonb), '{labelReviewed}', 'true'::jsonb)
+        WHERE id=$1 AND store_id=$3 RETURNING id`,
+      [id, JSON.stringify(boxes), user.storeId]);
+    if (!r.length) throw new BizException(40004, '样本不存在');
+    await audit(user.storeId, user.sub, 'AI', 'ai.label.review', 'ai_sample', Number(id), { boxes: boxes.length });
+    return { ok: true, boxes: boxes.length };
+  }
+
+  /* ── V4.27.1 Q7 生鲜称重复核：称重结果 vs 单件重量期望区间（products.weight_min_g/max_g） ── */
+
+  @Post('weight-check')
+  async weightCheck(@Body() b: { productId: number; weightG: number }) {
+    const pid = Number(b.productId), g = Number(b.weightG);
+    if (!pid || !(g > 0)) throw new BizException(40003, 'productId 与 weightG 必填');
+    const rows = await q(`SELECT name, weight_min_g, weight_max_g FROM products WHERE id=$1 AND deleted_at IS NULL`, [pid]);
+    if (!rows.length) throw new BizException(40404, '商品不存在', 404);
+    const p = rows[0];
+    const minG = p.weight_min_g != null ? Number(p.weight_min_g) : null;
+    const maxG = p.weight_max_g != null ? Number(p.weight_max_g) : null;
+    if (minG == null && maxG == null) return { ok: true, checked: false, name: p.name };
+    const below = minG != null && g < minG, above = maxG != null && g > maxG;
+    return { ok: !(below || above), checked: true, name: p.name, minG, maxG, weightG: g, below, above,
+             message: below ? `⚠️ 重量 ${g}g 低于期望下限 ${minG}g：请复核是否拿错品类/漏称`
+                   : above ? `⚠️ 重量 ${g}g 超过期望上限 ${maxG}g：请复核是否拿错品类/重复称`
+                   : '' };
+  }
+
+  /* ── V4.27.1 Q15 难例挖掘：识别错误（纠正）/低置信 识别日志检索（纠正帧已自动回流样本库，
+   *  本接口用于批量导出难例图做数据集迭代 / 复盘低置信模式） ── */
+
+  @Get('hardcases')
+  @RequirePerms('ai.train.launch')
+  async hardcases(@Query('days') days = '30', @Query('kind') kind = 'all', @Query('limit') limit = '100',
+                  @CurrentUser() user: AuthUser) {
+    const d = Math.min(180, Math.max(1, Number(days) || 30));
+    const lim = Math.min(500, Math.max(1, Number(limit) || 100));
+    const kindCond = kind === 'corrected'
+      ? `AND l.corrected`
+      : kind === 'lowconf'
+        ? `AND NOT COALESCE(l.corrected, false) AND EXISTS (
+             SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(l.raw_result)='array' THEN l.raw_result ELSE '[]'::jsonb END) e
+              WHERE (e->>'conf') IS NOT NULL AND (e->>'conf')::numeric < 0.90)`
+        : '';
+    const rows = await q(
+      `SELECT l.id, l.scene, l.layer, l.corrected, l.corrected_json, l.raw_result, l.image_path,
+              l.latency_ms AS "latencyMs", l.created_at AS "createdAt"
+         FROM ai_recognition_logs l
+        WHERE l.store_id=$1 AND l.created_at > now() - ($2 || ' days')::interval
+          AND l.image_path LIKE '/uploads/%' ${kindCond}
+        ORDER BY l.id DESC LIMIT $3`, [user.storeId, String(d), lim]);
+    const stats = await q(
+      `SELECT count(*)::int AS total, count(*) FILTER (WHERE corrected)::int AS corrected
+         FROM ai_recognition_logs
+        WHERE store_id=$1 AND created_at > now() - ($2 || ' days')::interval AND image_path LIKE '/uploads/%'`,
+      [user.storeId, String(d)]);
+    return { stats: stats[0], kind, rows };
+  }
+
+  /** V4.27.4/V4.27.5 多品同拍批量采集：一次拍照识别出的多件商品，逐件裁剪图批量入样本库（待审核）。
+   *  权限设计：采集【免店长放权】（登录即可，任何员工可闲时采集），审核在后台由店长/管理员异步完成，
+   *  不打断店长日常工作。人工纠错件（manual=true，识别未命中由收银员指定的商品）单独标记来源，
+   *  便于审核时重点把关。防反馈回路：一律待审核，审核不通过可批量驳回。
+   *  imagePath 须为 /uploads/ 相对路径（前端已先 /upload 落盘）。 */
+  @Post('samples/batch-collect')
+  async batchCollect(@Body() b: { items: { productId: number; imagePath: string; conf?: number; angle?: string; manual?: boolean }[] },
+                     @CurrentUser() user: AuthUser) {
+    const items = Array.isArray(b.items) ? b.items.slice(0, 12) : [];
+    if (!items.length) throw new BizException(40003, 'items 为空（每条 = productId + imagePath）');
+    let ok = 0;
+    const failed: string[] = [];
+    return tx(async c => {
+      for (const [i, it] of items.entries()) {
+        const ip = String(it.imagePath || '');
+        // P1-H3 同款路径收口：仅 /uploads/ 相对路径，拒绝 .. 与盘符/绝对路径
+        if (!ip.startsWith('/uploads/') || ip.includes('..') || ip.includes('\\') || /^[a-zA-Z]:/.test(ip)) {
+          failed.push(`#${i} 路径不合法`); continue;
+        }
+        const p = await cx(c, `SELECT id FROM products WHERE id=$1 AND deleted_at IS NULL`, [Number(it.productId)]);
+        if (!p.length) { failed.push(`#${i} 商品不存在：${it.productId}`); continue; }
+        const manual = !!it.manual;
+        await cx(c,
+          `INSERT INTO ai_samples (store_id, product_id, image_path, source, annotation, status)
+           VALUES ($1,$2,$3,'多品同拍',$4,'待审核')`,
+          [user.storeId, Number(it.productId), ip,
+           JSON.stringify({ from: manual ? '多品同拍(人工纠错)' : '多品同拍', angle: String(it.angle || '俯拍'),
+                            conf: Number(it.conf) || null, manual,
+                            collectedBy: user.sub, collectedAt: new Date().toISOString() })]);
+        ok++;
+      }
+      await audit(user.storeId, user.sub, 'AI', 'ai.sample.batch-collect', 'ai_samples', undefined,
+        { collected: ok, failed: failed.length });
+      return { ok: true, collected: ok, failedCount: failed.length, failed: failed.slice(0, 5) };
+    });
+  }
+
+  /* ── V4.27.6 AI 自动训练：状态查询 + 手动触发（把"每周手动跑三步脚本"变成设置里的自动任务） ── */
+
+  /** 自动训练状态（开关/计划/上次运行结果与日志尾部） */
+  @Get('autotrain/status')
+  @RequirePerms('ai.train.launch')
+  async autotrainStatusC() {
+    return autotrainStatus();
+  }
+
+  /** 立即执行一次自动训练（导出数据集 → GPU 训练 → 导入模型库；异步执行，轮询 status 看进度） */
+  @Post('autotrain/run')
+  @RequirePerms('ai.train.launch')
+  async autotrainRunC() {
+    if (autotrainBusy()) throw new BizException(40003, '已有自动训练在运行中（进度见 GET /ai/autotrain/status）');
+    void autotrainRun('manual').catch(() => {});   // 异步启动，训练可能数小时，立即返回
+    return { ok: true, message: '自动训练已启动（异步执行，进度/结果见 GET /ai/autotrain/status）' };
+  }
+
+  /* ── V4.27.7 训练环境：检测 + 一键安装（pip 两连，替代手工敲命令） ── */
+
+  /** 环境检测：python/pip/torch(GPU?)/ultralytics + 一键安装任务进度 */
+  @Get('autotrain/env')
+  @RequirePerms('ai.train.launch')
+  async autotrainEnvC() {
+    const env = await autotrainEnvCheck();
+    return { env, job: autotrainEnvJob() };
+  }
+
+  /** 一键安装训练环境（GPU 版 PyTorch + ultralytics；后台执行 10~30 分钟，进度看 env 接口） */
+  @Post('autotrain/setup-env')
+  @RequirePerms('ai.train.launch')
+  async autotrainSetupC() {
+    return autotrainEnvSetup();
+  }
+
+  /* ── V4.27.1 Q9 样本数据备份/恢复：整店样本图 + 元数据 zip 导出；JSON 分批导入恢复 ──
+   *  全量灾备 = 本接口（或文件目录拷贝）+ pg_dump；详见 deploy/backup/README.md。 */
+
+  @Get('samples/export')
+  @RequirePerms('ai.train.launch')
+  async samplesExport(@CurrentUser() user: AuthUser) {
+    const rows = await q(
+      `SELECT s.id, s.product_id, p.name AS product_name, p.barcode AS product_barcode,
+              s.image_path, s.source, s.annotation, s.status, s.created_at
+         FROM ai_samples s LEFT JOIN products p ON p.id = s.product_id
+        WHERE s.store_id=$1 AND s.image_path LIKE '/uploads/%' ORDER BY s.id`, [user.storeId]);
+    const items: { name: string; data: Buffer }[] = [];
+    const manifest: any[] = [];
+    let copied = 0, skipped = 0;
+    for (const s of rows as any[]) {
+      const f = uploadsFilePath(String(s.image_path));
+      if (!existsSync(f)) { skipped++; continue; }
+      const rel = String(s.image_path).replace(/^\/uploads\//, '');
+      items.push({ name: `backup/images/${rel}`, data: readFileSync(f) });
+      manifest.push({ productId: Number(s.product_id), productName: s.product_name, barcode: s.product_barcode,
+                      imagePath: String(s.image_path), source: s.source, annotation: s.annotation,
+                      status: s.status, createdAt: s.created_at });
+      copied++;
+    }
+    items.push({ name: 'backup/manifest.json', data: Buffer.from(JSON.stringify(
+      { store: user.storeId, exportedAt: new Date().toISOString(), count: copied, items: manifest }), 'utf8') });
+    items.push({ name: 'backup/README.txt', data: Buffer.from(
+      `门店 ${user.storeId} AI 样本备份：${copied} 张图（跳过 ${skipped} 张缺失）。\n` +
+      `恢复方式：① 整目录拷回 AI_UPLOADS_DIR + PG 恢复 ai_samples（全量灾备）；\n` +
+      `② POST /ai/samples/import 按 manifest.json 分批回传（选择性恢复/跨店迁移）。`, 'utf8') });
+    const zip = makeZip(items);
+    await audit(user.storeId, user.sub, 'AI', 'ai.samples.export', 'ai_samples', undefined, { copied, skipped });
+    return { base64: zip.toString('base64'), count: copied, skipped,
+             fileName: `ai-samples-store${user.storeId}-${new Date().toISOString().slice(0, 10)}.zip` };
+  }
+
+  /** 恢复导入（数据丢失/损坏/迁移）：items 每条 = 一张样本图 + 挂靠商品。单批 ≤200，可分批回传 */
+  @Post('samples/import')
+  @RequirePerms('ai.train.launch')
+  async samplesImport(@Body() b: { items: { productId: number; imageBase64: string; filename?: string;
+                                            angle?: string; source?: string; status?: string; annotation?: any }[] },
+                      @CurrentUser() user: AuthUser) {
+    const items = Array.isArray(b.items) ? b.items : [];
+    if (!items.length) throw new BizException(40003, 'items 为空（每条 = productId + imageBase64）');
+    if (items.length > 200) throw new BizException(40003, '单批最多 200 条，请分批回传');
+    let ok = 0;
+    const failed: string[] = [];
+    return tx(async c => {
+      for (const [i, it] of items.entries()) {
+        try {
+          const raw = String(it.imageBase64 || '').replace(/^data:image\/\w+;base64,/, '');
+          const buf = Buffer.from(raw, 'base64');
+          if (!buf.length) { failed.push(`#${i} 图片数据为空`); continue; }
+          const p = await cx(c, `SELECT id FROM products WHERE id=$1 AND deleted_at IS NULL`, [Number(it.productId)]);
+          if (!p.length) { failed.push(`#${i} 商品不存在：${it.productId}`); continue; }
+          const fname = /^[\w\-.]{1,80}$/.test(String(it.filename || '')) ? String(it.filename) : `restore_${Date.now()}_${i}.jpg`;
+          const path = saveUploadImage(buf, fname);
+          const ann = { ...(it.annotation || {}), ...(it.angle ? { angle: String(it.angle) } : {}), restored: true };
+          const status = ['已审核', '已入库', '待审核', '不合格'].includes(String(it.status)) ? String(it.status) : '待审核';
+          await cx(c,
+            `INSERT INTO ai_samples (store_id, product_id, image_path, source, annotation, status)
+             VALUES ($1,$2,$3,$4,$5,$6)`,
+            [user.storeId, Number(it.productId), path, String(it.source || '备份恢复'), JSON.stringify(ann), status]);
+          ok++;
+        } catch (e: any) {
+          failed.push(`#${i} ${e?.message || '写入失败'}`);
+        }
+      }
+      await audit(user.storeId, user.sub, 'AI', 'ai.samples.import', 'ai_samples', undefined, { imported: ok, failed: failed.length });
+      return { ok: true, imported: ok, failedCount: failed.length, failed: failed.slice(0, 10) };
+    });
+  }
 }
 
 @Module({ controllers: [AiController, AiModelsController, AiOcrController, AiSignatureController] })
@@ -1005,5 +1363,9 @@ export class AiModule {
   onModuleInit() {
     // V4.15.5：识别帧保留期清理（ai.frames.retention_days，默认 30 天；详见 ai.housekeeping.ts）
     scheduleFrameCleanup();
+    // V4.27.1 Q10：后台加载激活检测模型 + 多件定位模型 session（热加载已有 session 缓存，此处消首次冷启动）
+    prewarmModels().catch(() => {});
+    // V4.27.6：AI 自动训练调度（每 10 分钟检查一次是否到计划时间；开关/计划见系统设置 ai.autotrain.*）
+    setInterval(() => { autotrainTick().catch(() => {}); }, 10 * 60 * 1000);
   }
 }

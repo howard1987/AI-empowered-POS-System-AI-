@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="5F6CKs1cHthpAuwZBwI9zM">
+<head data-page-node-id="IbJv8RusJnGjUAIHKsNztU">
+<meta charset="UTF-8" data-page-node-id="MqBNLHvlKGuvd7isJFTbvq">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="tgUUZxhZlc4sE0rlKuFDni">
+<title>超市收银系统 · 收银端专项设计方案报告</title>
+<style>
+  :root{
+    --green:#0e9f6e; --green-d:#046c4e; --ink:#1a202c; --muted:#64748b;
+    --line:#e2e8f0; --bg:#f8fafc; --card:#ffffff; --dark:#0f172a;
+    --amber:#b45309; --red:#dc2626;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.75;font-size:15px}
+  .wrap{max-width:960px;margin:0 auto;padding:0 20px 80px}
+  header.cover{background:linear-gradient(135deg,#064e3b 0%,#065f46 55%,#0e9f6e 100%);color:#fff;padding:52px 20px 44px;margin-bottom:36px}
+  header.cover .wrap{padding-bottom:0}
+  .cover h1{font-size:30px;letter-spacing:1px;margin-bottom:10px}
+  .cover p{opacity:.92;font-size:14.5px}
+  .cover .meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}
+  .cover .meta span{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:4px 14px;font-size:12.5px}
+  h2{font-size:21px;margin:44px 0 14px;padding-left:12px;border-left:5px solid var(--green);color:var(--green-d)}
+  h3{font-size:16.5px;margin:24px 0 8px;color:var(--ink)}
+  p{margin:8px 0}
+  .muted{color:var(--muted);font-size:13.5px}
+  table{width:100%;border-collapse:collapse;background:var(--card);border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,.07);margin:12px 0 6px;font-size:14px}
+  th{background:#ecfdf5;color:var(--green-d);text-align:left;padding:10px 12px;font-weight:600;border-bottom:2px solid #a7f3d0;white-space:nowrap}
+  td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  .card{background:var(--card);border-radius:12px;box-shadow:0 1px 3px rgba(15,23,42,.07);padding:18px 20px;margin:12px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  .tag{display:inline-block;border-radius:999px;padding:1px 10px;font-size:12px;font-weight:600;margin-right:4px;white-space:nowrap}
+  .t-p14{background:#ecfdf5;color:#047857;border:1px solid #a7f3d0}
+  .t-p15{background:#fffbeb;color:#b45309;border:1px solid #fde68a}
+  .t-p16{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
+  .t-key{background:#0f172a;color:#fff}
+  .warn{background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:12px 16px;margin:10px 0;font-size:14px}
+  .ok{background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:12px 16px;margin:10px 0;font-size:14px}
+  ul{margin:6px 0 6px 22px}
+  li{margin:3px 0}
+  .figure{background:var(--card);border-radius:12px;box-shadow:0 1px 3px rgba(15,23,42,.07);padding:16px;margin:14px 0;text-align:center}
+  .figure figcaption{font-size:13px;color:var(--muted);margin-top:8px}
+  .toc{background:var(--card);border-radius:12px;box-shadow:0 1px 3px rgba(15,23,42,.07);padding:16px 22px;margin-bottom:8px}
+  .toc a{color:var(--green-d);text-decoration:none;display:inline-block;margin:3px 18px 3px 0;font-size:14px}
+  .toc a:hover{text-decoration:underline}
+  code{background:#f1f5f9;border-radius:5px;padding:1px 6px;font-size:13px;color:#334155}
+  footer{margin-top:50px;text-align:center;color:var(--muted);font-size:13px}
+</style>
+</head>
+<body data-page-node-id="N1XWNhm27OIYKEvrHSDXOf">
+
+<header class="cover" data-page-node-id="ZkBrPSfVWGgWV0W2oITqkz">
+  <div class="wrap" data-page-node-id="MBC9coxxOBhmbd3sfuRCov">
+    <h1 data-page-node-id="DDG2dRrPSuiobXaj7U0j2E">超市收银系统 · 收银端专项设计方案报告</h1>
+    <p data-page-node-id="aDhLY7BB23ohDTfT4zPjAt">九大分支 40+ 决策点全部收口 · 你问我答定稿（2026-09-11）</p>
+    <div class="meta" data-page-node-id="ASRR9VzsVaO7C9eqAWpfLe">
+      <span data-page-node-id="FFpPEXdvHNBMXrMQ2sdnLJ">文档版本 V1.0（设计定稿，未开工）</span>
+      <span data-page-node-id="5PDq5MDtpnfRKPftSCpB5f">P14 起跳预计 V4.18.0</span>
+      <span data-page-node-id="hVXJ99Z9cVjL45AkWHweQH">载体：A 端 PWA 收银台 + C 端 PC 收银机</span>
+      <span data-page-node-id="9Yo6L8MwOC0oKz65I1BTrl">决策日志：.workbuddy/memory/2026-09-11.md</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap" data-page-node-id="LwAPhKPK6zBeJjpeTVyKtt">
+
+<nav class="toc" data-page-node-id="hfaQbjEuqesBe6jFD0vPrq">
+  <a href="#s1" data-page-node-id="XylSRJhQvx5A5sdPvjDGg9">1 背景与现状</a><a href="#s2" data-page-node-id="gM5euWFugUNPdTMN9FPQ3g">2 决策总览</a><a href="#s3" data-page-node-id="pLcTfeS0hKAVCg2vF2pWEY">3 载体与范围</a><a href="#s4" data-page-node-id="aMmeaHDT9OjNIHBA6IUwZV">4 布局与视觉</a><a href="#s5" data-page-node-id="AT95AToGsOyZyCMKfWoskn">5 功能清单</a><a href="#s6" data-page-node-id="wvDznwu5uKWRep4M3Z7s7L">6 设备连接</a><a href="#s7" data-page-node-id="xB2H8HWTALMw9IWxmAuOsk">7 离线策略</a><a href="#s8" data-page-node-id="rmjyvm9Oai7k4vy3WaJdxL">8 设置与权限</a><a href="#s9" data-page-node-id="4zNC7BoWovH8uWFPRiXgKj">9 分期计划</a><a href="#s10" data-page-node-id="TFCV663dnn4sEtr0OAix8J">10 数据与接口影响面</a><a href="#s11" data-page-node-id="hwOIEgN2bnKJCHQF36AODN">11 风险与开放项</a><a href="#s12">12 竞品借鉴</a>
+</nav>
+
+<h2 id="s1" data-page-node-id="bbeZZwegAEF1U9ubYwpVNU">1. 背景与现状</h2>
+<div class="card" data-page-node-id="o7WfjMEnuBYZE7VdmU8Iwn">
+<h3 data-page-node-id="28bHEe5ifF92eMIrOM1xiA">1.1 现状盘点（代码事实）</h3>
+<ul data-page-node-id="CsjCzFW1ZLMF8feyxMToVQ">
+  <li data-page-node-id="Yaxa01oG6uBR4yjVpBIX3U">收银目前是 <b data-page-node-id="WMWRWIDlZZUGLiVlhh5CcD">PWA「作业」Tab 里的子视图</b>（<code data-page-node-id="gTRYG3gVsJR3Zj46DHeTRA">checkout.js</code> 856 行），入口层级深，与入库/盘点混在同层，风格互相牵制；</li>
+  <li data-page-node-id="w5Nzdu5szAPuGwVynBiN0l">已有能力：价目表 IndexedDB 离线缓存、扫码枪直扫/搜索联想、购物车、现金/扫码/余额三选一支付、扫码通道真扣款（USERPAYING 轮询）、挂单/取单、扫码购核销、语音播报、电子秤串口读重、漏扫检测、应急收银、断网暂存补传、条码秤格式解析、即时秤贴；</li>
+  <li data-page-node-id="JNzbzye76VbW2b817ybmBu">设备连接入口在「我的-设备管理」，但<b data-page-node-id="PChKYvV27iFUxDPzlLaVFm">无状态感知、连接不持久、失败静默降级</b>；</li>
+  <li data-page-node-id="a5ndqvOswAufGrfxVigsyx">支付无找零界面、无组合支付；退货要跨页面去作业页；无交接班界面。</li>
+</ul>
+<h3 data-page-node-id="VCR80n4S52By12RhCffMzA">1.2 问题定性</h3>
+<p data-page-node-id="3wMhcOFj0hzPpMDUf0nLtK">收银是全店<b data-page-node-id="nKjH4A4r01UU2N9NiAsTok">最高频、设备最密集、资金风险最集中</b>的操作。本专项按「一单的完整生命周期 + 人钱物流动」全面梳理，补齐<b data-page-node-id="hfF3VSVqkouUJuViEphk0v">功能、异常路径、设备底座</b>三块。</p>
+</div>
+
+<h2 id="s2" data-page-node-id="p5EXC3VE9Qhyki8GfSYRIU">2. 决策总览（九大分支）</h2>
+<table data-page-node-id="IHDkrIRR4hUdu9cGGQCtRx">
+  <tr data-page-node-id="aCxvjsAJvNzwDZ7NAysZx8"><th style="width:36px" data-page-node-id="kDZiVDUCWKuZfakSrs8qfn">#</th><th style="width:130px" data-page-node-id="hq0BDIWt76lxImyPtGFybv">分支</th><th data-page-node-id="8xjDFG2nRmfMmwrFUNznqQ">结论</th></tr>
+  <tr data-page-node-id="YTNlW2BxR3qEyhp73H1r3P"><td data-page-node-id="iAv6V4zFoHAm2IEJYJWtUm">1</td><td data-page-node-id="gm8Om00orzOKwcYETcCM5a">载体与范围</td><td data-page-node-id="DJGoBeLEEjegARPXpROC5b"><b data-page-node-id="prVtnGV15TISDD67eZvoJB">A+C 双端</b>：先 A（PWA 独立收银台）落底座，再 C（PC 收银机专属端）扩展</td></tr>
+  <tr data-page-node-id="iQDgIKHqdblJb89xrAvtcn"><td data-page-node-id="Vu8b0Xo5HqhlRKRa3YUVzn">2</td><td data-page-node-id="RWNTs9eGaEdKLuFUh2WRkp">硬件与场景</td><td data-page-node-id="wv0pY2gkLCq7J0b4KE0MP8">店内有固定 PC 台位（Windows+扫码枪+小票机+钱箱）→ C 有真实落点；A 端响应式双布局</td></tr>
+  <tr data-page-node-id="XMd1TQDEyU0DkrPhMwWSYH"><td data-page-node-id="bOiDF5ef7FevDk2DwiIgvc">3</td><td data-page-node-id="8LfIchOs7W9VggsL60uDvm">视觉风格</td><td data-page-node-id="3UuHHr7OdY61Rtn3EkVvdi">浅色+品牌绿延续，<b data-page-node-id="wD0IZRzrzs4OjeiGZPp7p4">金额深色高对比条</b>（≥28px），大按钮低密度（触控 ≥48px）</td></tr>
+  <tr data-page-node-id="840qr757Sc9vKr8APQ1A4A"><td data-page-node-id="nXGDo8AayT0jEU0SzAH1a1">4</td><td data-page-node-id="pKiSG8Av0axlQhmwm3KAd0">功能清单</td><td data-page-node-id="DXcfEWjOQUFb2sPcRd9Dug">16 项主功能 + 12 项遗漏补全（§5）</td></tr>
+  <tr data-page-node-id="vbZLYIdYuxEGWtD6oZYKwE"><td data-page-node-id="a97Y2x4YHhFOTMo5bYTahT">5</td><td data-page-node-id="PVho5ZCjq7ggbQNvHAEN3e">效率交互</td><td data-page-node-id="Y5dFELXObqWDUIeGhVVKKH">全局键盘监听扫码、数量直改、防抖可撤销</td></tr>
+  <tr data-page-node-id="sT7t3EFxfc79zQC37gdWNI"><td data-page-node-id="82ZzGHnPFCSJU0a6OdpBiP">6</td><td data-page-node-id="TpPJ7CpAg0u0275p1HBtXz">离线与异常</td><td data-page-node-id="cik3impI5s8P8hi8lloPN2">分级降级（§7）</td></tr>
+  <tr data-page-node-id="iDC4DCKxjuvDddokB54yeO"><td data-page-node-id="GR9FnhBjtuxmd0MY1E8e4s">7</td><td data-page-node-id="OPwunnD63LXNQm2zvsUGuE">设备连接</td><td data-page-node-id="hiuzHCYERHWkxc31wZ5Oi1">状态灯+自检+指纹记忆+一键重连等八项（§6）</td></tr>
+  <tr data-page-node-id="G58v3rhPcRPpVhoEwm7vgy"><td data-page-node-id="daiIn2Zbhnrw9QU3s8Wfjr">8</td><td data-page-node-id="iitklHbWjXk6MsBDYMpLnP">设置与权限</td><td data-page-node-id="bXcEsLt2NbrYVpJXugREPJ">内嵌收银台「⚙ 收银设置」店长面板（底层同键 system_settings）</td></tr>
+  <tr data-page-node-id="BLbWrcOf0k7rdiMcku86zj"><td data-page-node-id="LHRktXHZHrlkcXCMJqMIJy">9</td><td data-page-node-id="hECFEZMYLo1P6XsZziUNHE">分期</td><td data-page-node-id="H51BWDsV65r7RnIK8n2bhA">P14（骨架高频）→ P15（业务深度）→ P16（C 端+客显）</td></tr>
+</table>
+
+<h2 id="s3" data-page-node-id="lrMYflCEXvVMkChsdY7916">3. 载体与范围：A + C 双端</h2>
+<div class="grid2" data-page-node-id="HC9UGHbTOpTw1gihJO4LKa">
+  <div class="card" data-page-node-id="SdUr77gqZxmOnFi4kuCVAE">
+    <h3 data-page-node-id="dh0IMDBmYQ7RNGtCoYFycU">A 端 · PWA 独立收银台（先做）</h3>
+    <ul data-page-node-id="Wyal0ee7ZHMCghmTM4qaWN">
+      <li data-page-node-id="71nyuQj4dFPqFU2rrLYe8x">一级「收银」入口，<b data-page-node-id="C7EvSNEPIGsNLeNXAgbTs3">登录后直落全屏收银台</b>，无底部 Tab 干扰；</li>
+      <li data-page-node-id="kztTm9eSWK6pbIMiHU96G7">手机/平板/收银机浏览器通用；</li>
+      <li data-page-node-id="zffEtcDXusgqf1mj5mDjCZ">复用现有底座：离线价目表、支付通道、设备连接、小票/钱箱钩子——改动集中在信息架构与布局层。</li>
+    </ul>
+  </div>
+  <div class="card" data-page-node-id="cxuPNm4hD7FZHHfziNG1Fb">
+    <h3>C 端 · PC 收银机专属端（基于已实施 Electron 端演进）</h3>
+    <div class="muted" style="margin:2px 0 6px"><b>修正（2026-09-11 补确认）</b>：初始版已实施 Electron 收银端 <code>frontend-desktop</code>（V4.8.x，Win7/Win11 安装包齐备），P16 <b>不新建</b>，在其基础上按新设计补功能。</div>
+    <ul>
+      <li>保留已验证底座：<b>双屏输出（主屏 kiosk + 副屏顾客信任屏）</b>、外设适配器（serialport 直驱）、小票模版、安装包链路；</li>
+      <li><b>副屏已实施元素全保留</b>：明细逐行滚动、应收大字、「会员已帮您节省 ¥X」、会员卡（脱敏手机、储值/分红/积分、等级系数、累计与<b>失效分红透明展示</b>）、支付成功页；</li>
+      <li><b>副屏增强（P16）</b>：支付过程引导（扫码「请出示付款码」/现金应收·实收·找零大字）、店招欢迎语常驻、空闲轮播内容后台可配；</li>
+      <li>设备通道以 <b>Electron 原生适配器为主</b>（serialport 直驱，无手势限制），网口走后端转发；</li>
+      <li>F1~F12 键盘流（快捷键体系见 §12）；复用 A 端全部后端接口与数据层。</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="s4" data-page-node-id="dKpikhe3xOGf50qs6vjteN">4. 布局与视觉</h2>
+
+<figure class="figure" data-page-node-id="GIk75885A7WdKHF12toDMO">
+<svg viewBox="0 0 680 250" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto" data-page-node-id="hNovEBpOSgvbYBqUkPvc11">
+  <rect x="8" y="6" width="316" height="238" rx="14" fill="#f8fafc" stroke="#cbd5e1" data-page-node-id="NF1ph8GpaiunFh3mNUUdrB"/>
+  <text x="166" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#046c4e" data-page-node-id="FzqOiFtrF6mJe4wILEbA2x">手机竖屏 · 单栏流</text>
+  <rect x="20" y="36" width="292" height="26" rx="6" fill="#0f172a" data-page-node-id="ezhrLCHqCcBf2EpFc4oPaF"/>
+  <circle cx="34" cy="49" r="4" fill="#22c55e" data-page-node-id="3AQt88XDOyAIWkjH7QCmgK"/><circle cx="48" cy="49" r="4" fill="#22c55e" data-page-node-id="xKygznYDz6RF2Qk62PBeN3"/><circle cx="62" cy="49" r="4" fill="#22c55e" data-page-node-id="Jfc6RRqntgq4gZKAAtHrWF"/><circle cx="76" cy="49" r="4" fill="#ef4444" data-page-node-id="XNxQ45MErcEgihVGKW15EG"/>
+  <text x="92" y="53" font-size="9.5" fill="#cbd5e1" data-page-node-id="uK0A5P0QZyT640KkFey7B0">扫码</text><text x="120" y="53" font-size="9.5" fill="#cbd5e1" data-page-node-id="WekXEpEa1bVB3BPJTn8ZjQ">秤</text><text x="146" y="53" font-size="9.5" fill="#cbd5e1" data-page-node-id="xbEZIrrz9Eyo9F2uRqAoyA">小票机</text><text x="180" y="53" font-size="9.5" fill="#cbd5e1" data-page-node-id="PPUd0LDaFUujdKcGDXZ8LF">钱箱</text>
+  <text x="292" y="53" text-anchor="end" font-size="9" fill="#94a3b8" data-page-node-id="O6TTTINBedFlB3UPL8cRoB">🔒</text>
+  <rect x="20" y="68" width="292" height="24" rx="6" fill="#fff" stroke="#cbd5e1" data-page-node-id="DSltxgBaoDFPaHKNFEukHK"/>
+  <text x="30" y="84" font-size="9.5" fill="#94a3b8" data-page-node-id="iLpuqlen2LOvLHyKX2cNVS">🔍 扫码 / 搜索商品</text>
+  <rect x="20" y="98" width="292" height="52" rx="8" fill="#ecfdf5" stroke="#a7f3d0" data-page-node-id="eMj3Tt5t3BgJ8JJK9wAfuX"/>
+  <text x="30" y="114" font-size="9.5" fill="#065f46" data-page-node-id="bIfBor04HgtspmZjR5yRMg">快捷格（8~12）</text>
+  <g fill="#fff" stroke="#34d399" data-page-node-id="zKGQomxZpfygvOcQiv4dqJ">
+    <rect x="28" y="120" width="40" height="24" rx="5" data-page-node-id="oqwHjWu4EoCuLQuVq9AX6D"/><rect x="72" y="120" width="40" height="24" rx="5" data-page-node-id="4H3D0QIyMFORoAJrCDH86z"/><rect x="116" y="120" width="40" height="24" rx="5" data-page-node-id="UUAQu3LNJrnlnRuGceFoHk"/><rect x="160" y="120" width="40" height="24" rx="5" data-page-node-id="X0FRH2fqPOePpQD5wWUAuH"/><rect x="204" y="120" width="40" height="24" rx="5" data-page-node-id="2YEVu0VGVTNzlnCtzDHBKR"/><rect x="248" y="120" width="40" height="24" rx="5" data-page-node-id="augqg5UXuPfU7TfFu72a67"/>
+  </g>
+  <rect x="20" y="156" width="292" height="44" rx="8" fill="#fff" stroke="#e2e8f0" data-page-node-id="oqYEAQ7VapXYTkV8xSJgD6"/>
+  <text x="30" y="172" font-size="9.5" fill="#334155" data-page-node-id="9RHsy6LG19m8DoA3t9wL2K">购物车行（数量直改 / 删行）</text>
+  <text x="30" y="190" font-size="8.5" fill="#94a3b8" data-page-node-id="gbJ39JmxooZD76EplVczTt">价格快照 · 低库存警示 · 防抖小条</text>
+  <rect x="20" y="206" width="292" height="30" rx="8" fill="#0f172a" data-page-node-id="6yN8EVjg2hEqLcC0oDn6Nt"/>
+  <text x="30" y="226" font-size="11" font-weight="700" fill="#4ade80" data-page-node-id="HC9aGntf4CWnaWBnsmjXRN">合计 ¥86.50</text>
+  <rect x="212" y="212" width="92" height="18" rx="9" fill="#0e9f6e" data-page-node-id="YASArPgMD8ZKHh50j4XP7k"/>
+  <text x="258" y="225" text-anchor="middle" font-size="9.5" font-weight="700" fill="#fff" data-page-node-id="FP7Ml3rcwkg1D74NGceYf2">去结算（≥48px）</text>
+
+  <rect x="356" y="6" width="316" height="238" rx="14" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="514" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#046c4e">平板横屏 / C 端 · 左商品右购物车</text>
+  <rect x="368" y="36" width="134" height="24" rx="6" fill="#fff" stroke="#cbd5e1"/>
+  <text x="378" y="52" font-size="9.5" fill="#94a3b8">🔍 扫码 / 搜索（拼音码）</text>
+  <rect x="368" y="66" width="134" height="46" rx="8" fill="#ecfdf5" stroke="#a7f3d0"/>
+  <text x="378" y="82" font-size="9.5" fill="#065f46">快捷格 / 常点商品</text>
+  <g fill="#fff" stroke="#34d399"><rect x="376" y="88" width="34" height="18" rx="4"/><rect x="414" y="88" width="34" height="18" rx="4"/><rect x="452" y="88" width="34" height="18" rx="4"/></g>
+  <rect x="368" y="118" width="134" height="42" rx="8" fill="#fff" stroke="#e2e8f0"/>
+  <text x="378" y="134" font-size="9" fill="#334155">功能格：退货 · 交接班 · 开放键</text>
+  <text x="378" y="150" font-size="9" fill="#334155">挂单 · 拆单 · 无码录入</text>
+  <rect x="368" y="166" width="134" height="34" rx="8" fill="#fff" stroke="#e2e8f0"/>
+  <text x="378" y="180" font-size="9" fill="#334155">会员：张三 · 余额 ¥120</text>
+  <text x="378" y="194" font-size="8.5" fill="#94a3b8">秒建会员 · 积分抵现</text>
+  <rect x="368" y="206" width="134" height="30" rx="8" fill="#0e9f6e"/>
+  <text x="435" y="226" text-anchor="middle" font-size="10.5" font-weight="700" fill="#fff">结 算</text>
+  <rect x="514" y="36" width="150" height="164" rx="8" fill="#fff" stroke="#e2e8f0"/>
+  <text x="524" y="52" font-size="9.5" font-weight="600" fill="#334155">购物车</text>
+  <g fill="#f1f5f9"><rect x="522" y="60" width="134" height="16" rx="3"/><rect x="522" y="80" width="134" height="16" rx="3"/><rect x="522" y="100" width="134" height="16" rx="3"/><rect x="522" y="120" width="134" height="16" rx="3"/></g>
+  <text x="524" y="156" font-size="8.5" fill="#94a3b8">数量直改 · 删行 · 价格快照</text>
+  <text x="524" y="172" font-size="8.5" fill="#94a3b8">整单/行备注 · 拆单勾选</text>
+  <rect x="514" y="206" width="150" height="30" rx="8" fill="#0f172a"/>
+  <text x="522" y="226" font-size="10.5" font-weight="700" fill="#4ade80">合计 ¥86.50</text>
+  <rect x="600" y="212" width="56" height="18" rx="9" fill="#0e9f6e"/>
+  <text x="628" y="225" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">去结算</text>
+</svg>
+<figcaption>图 1 · 双布局骨架：竖屏单栏流（左）与横屏/C 端双栏·左商品右购物车（右）；顶部四盏设备灯常驻，深色合计条金额 ≥28px</figcaption>
+</figure>
+
+<div class="card" data-page-node-id="VfQfrNrLIdoh1nESbuXIri">
+<h3 data-page-node-id="IxCkWFIg7jfRAa505YzXmr">视觉规范</h3>
+<ul data-page-node-id="EKYwTayEToIN4MgjvUW8Qc">
+  <li data-page-node-id="Fig2BoM3KuElY1DQkiLVho"><b data-page-node-id="YvSFLV8TGpoI83XtP5B9f1">基调</b>：延续全店浅色 + 品牌绿；合计/找零/支付区用<b data-page-node-id="G4v173Ff0mN1UbP024C3ej">深色高对比条</b>突出金额（≥28px 加粗）；</li>
+  <li data-page-node-id="9D9AFCmSGTeF6tuRWKgqif"><b data-page-node-id="zDMCDbF2enB4zTER7D8yA7">密度</b>：大按钮低密度，触控目标 ≥48px——收银是操作不是浏览；</li>
+  <li data-page-node-id="2QQPHphTigjAzqj0LPX1Bq"><b data-page-node-id="3PxUFXxl6EXWlPqDYEPXSV">设备状态灯</b>：顶部常驻四盏（扫码枪/电子秤/小票机/钱箱），<span style="color:#16a34a" data-page-node-id="Vz5NyFNgfYC9hF56fT2rNR">●绿</span>=在线、<span style="color:#dc2626" data-page-node-id="pjLQUFQ8I9lWXVBiSTPQBP">●红</span>=掉线可点重连、<span style="color:#b45309" data-page-node-id="4vwBi9TkeyBxIcwajDCijT">●黄</span>=降级通道。</li>
+</ul>
+</div>
+
+<h2 id="s5" data-page-node-id="ALoGQ2MhLwNaPeeWiZMg1U">5. 功能清单（总表）</h2>
+
+<h3 data-page-node-id="GI2YEg3To6Jb5LiGHkaFuy">5.1 支付与结算</h3>
+<table data-page-node-id="wl4CYAFftwNk6NRe5vyDkA">
+  <tr data-page-node-id="10cDFjGdqGmp93LjuV1pyo"><th style="width:120px" data-page-node-id="6c4p6joICjgA57SZXzojya">功能</th><th data-page-node-id="I75SpggiMfcwO0ivUUnTCH">决策要点</th><th style="width:70px" data-page-node-id="ZAykHZqsMfGAFo573itKNy">分期</th></tr>
+  <tr data-page-node-id="HaoxpV1b5PEPnVzu4iHBvK"><td data-page-node-id="HSt7ovKnIUHZbBolS7vLMe">找零计算</td><td data-page-node-id="hCV4bqWPabAldhWC1oo1Gx">现金支付输入实收自动算找零并大字展示</td><td data-page-node-id="BAXmzUkAaBmUwY0t8tQyw6"><span class="tag t-p14" data-page-node-id="V8Z0lCWBGsHBACyBGKHGFc">P14</span></td></tr>
+  <tr data-page-node-id="86VgU9HWfK5QUoeU4bByRX"><td data-page-node-id="BxcaTXlR5jDkHftVLDalB1">组合支付</td><td data-page-node-id="XVZDBSxZc3EeJ0gX1MpsYA">现金+扫码混支（现金不够扫码补）；离线自动退化为现金记账单笔</td><td data-page-node-id="yD6RbGlFVoCcgxKGjEJQUa"><span class="tag t-p14" data-page-node-id="E9XLMXMStpmAP8TG93PC3B">P14</span></td></tr>
+  <tr data-page-node-id="buY614YCUK5ZstCBZmsknd"><td data-page-node-id="I89xvgpaEH8uaJBrFEyQAu">收现弹钱箱</td><td data-page-node-id="m59nqca3K2R9ygGoceiqEs">收现金自动弹箱（现有 ESC p 钩子）</td><td data-page-node-id="VLWjTdilEUmL30wbnhEzoM"><span class="tag t-p14" data-page-node-id="DxRHEinx9iYXCysAuLnNSr">P14</span></td></tr>
+  <tr data-page-node-id="nDHxBOowIShzm7txLzze8s"><td data-page-node-id="GlvWUF2k2Vx0vE1VxDAAMD">抹零双轨</td><td data-page-node-id="u8KZWfHuHi3vvk2cqCtQUC">默认规则（去分/到角/去角可设）自动；手动抹零店长权限，均留痕</td><td data-page-node-id="gKyti5kQFYEMQFTJuG0Pdg"><span class="tag t-p14" data-page-node-id="TCffYJcPXPIHDAiqhyBBfh">P14</span></td></tr>
+  <tr data-page-node-id="ajEENrERhTB2jn8OKC5CPB"><td data-page-node-id="0U7WZx9Z1RKh9RzwklHXwd">最低售价</td><td data-page-node-id="nLWMMdBTCaFMoAzL2O16hK">商品档案加字段（导入模版同步加列）；改价/行折/整单折低于它硬拦 + 高权限放行留痕</td><td data-page-node-id="Lg4ltapRYy45saWnCXDs0B"><span class="tag t-p14" data-page-node-id="f5a0SctvANwneyUjwVhXtV">P14</span></td></tr>
+  <tr data-page-node-id="TkfLduY5ZN8RIV71fQnolq"><td data-page-node-id="QtMDwUE6qlEmwNkgXJBu3C">整单折扣</td><td data-page-node-id="yqb4iFvuAdluyHYxa5g93w">后台预定义命名规则套用；自定义折扣率需权限+留痕，不得突破最低售价</td><td data-page-node-id="EriT8t3IUh2EILwNkD1CCJ"><span class="tag t-p15" data-page-node-id="Fh1Bo1TxiBnqmJkAY4QFOG">P15</span></td></tr>
+  <tr data-page-node-id="bsk3kEKxRgwEGwuTCn1Tgw"><td data-page-node-id="rGuV5aUvtDK4z4uXw2sSJK">积分抵现</td><td data-page-node-id="9SFCbgZkZVKj1iJMWqOgE7">比例可设（如 100 分=1 元）+ 单笔上限（如 ≤20%）；结算页勾选，抵扣流水留痕</td><td data-page-node-id="ckiADM9sEL6jLqMVbJg7pN"><span class="tag t-p15" data-page-node-id="GjPMOFbdctGoVl9SVJGDC0">P15</span></td></tr>
+  <tr data-page-node-id="c7zUNIEhjOb8qWuQ2i99MC"><td data-page-node-id="fNPwshv0kgogIYGFcLovhK">会员挂账</td><td data-page-node-id="wm8tZSl697CopIcKvXoMSr">结算页「记账」选会员即挂（限额可设超限店长）；欠款记录+销账+超期提醒</td><td data-page-node-id="JbR7pEAIw01dFMOjz05JPc"><span class="tag t-p15" data-page-node-id="FYh2WSM0P1EbSVt9HG6KMF">P15</span></td></tr>
+</table>
+
+<h3 data-page-node-id="umOUHLMvfybjekft2x3DoC">5.2 商品与购物车</h3>
+<table data-page-node-id="LIpjoJU0dMQTzCo11b1ksx">
+  <tr data-page-node-id="SzuLFFS8wjduDqJPuMAUfY"><th style="width:120px" data-page-node-id="EXjT3lkT9cRhImRhwFZzaH">功能</th><th data-page-node-id="PXKvPpIPOgVPsC2BlcNmaw">决策要点</th><th style="width:70px" data-page-node-id="sV110HCGGPCYnTJ1VTGdjI">分期</th></tr>
+  <tr data-page-node-id="B7oY10di9WY9fxpWhLMVZA"><td data-page-node-id="Resl8wL7WWiSNUaeiY3tQe">快捷商品格</td><td data-page-node-id="K8gnUHSy0uTlBZtHdPFFD9">8~12 格常用商品，按销量自动推荐候选 + 手动配置，离线可用</td><td data-page-node-id="RcDXTPQJ0A8nAWcBeJN39I"><span class="tag t-p14" data-page-node-id="ekecey6Xzxd4ddcny2XV8D">P14</span></td></tr>
+  <tr data-page-node-id="XIeXr7R3CgFcBhY6gx3uT8"><td data-page-node-id="QYog8e3hKGaunW8S97ASMu">数量直改/删行</td><td data-page-node-id="2jlvt383wHOo8u47Uf4Kwg">行内键入数量（不+1 点到底）、删行、长按清空</td><td data-page-node-id="0mylkepwgjO5qftnff7FFR"><span class="tag t-p14" data-page-node-id="Z2oQekXQLuNOvBzKqSotoi">P14</span></td></tr>
+  <tr data-page-node-id="fRBBPW6A3wn8nOubExhJ9r"><td data-page-node-id="7bQTqrWtLZiHek3UmOZaWL">重复扫防抖</td><td data-page-node-id="rBRIUfCKAjWrsLDaLqXBKm">同码 2 秒内连扫默认不加件，弹条「已加过，再扫=再加 / 点此撤销」，可关</td><td data-page-node-id="xE4hhWGap0HoYkHBK6Nlo5"><span class="tag t-p14" data-page-node-id="NPanPYnQFBG6opYKKmQBkC">P14</span></td></tr>
+  <tr data-page-node-id="POesuFY9MSB5JECjGm8tXV"><td data-page-node-id="YZUEO8Pry4Zqq7erEDseTW">价格快照</td><td data-page-node-id="551Pp70AS3Dq6xFbVmMoDj">已扫行不受后台调价影响</td><td data-page-node-id="ybsWJrTbfgbc3ZKlSdWqDK"><span class="tag t-p14" data-page-node-id="kU7eA5UhTlMomOoJXtk8nJ">P14</span></td></tr>
+  <tr data-page-node-id="1Sdu6KjiCeacVDYpWRUrqV"><td data-page-node-id="R6khGNu1iEYv9iMy4nE0wR">低库存警示</td><td data-page-node-id="70hZ8OT1ATnBGj5u6CnSX8">加车时库存不足/偏低提示</td><td data-page-node-id="L9STeVtmU0LzLTY3OYjKXw"><span class="tag t-p14" data-page-node-id="8skxuB9qCxssW8FxO40wHQ">P14</span></td></tr>
+  <tr data-page-node-id="ujuXVHxi0ZEZDtJkjhODlp"><td data-page-node-id="DbWEV9Zgi0Daat2rBG4ED8">开放键</td><td data-page-node-id="VBGkJnZwX3uSZv2rkqUIGZ">无码不称重杂货手输价格+品名+备注进临时行（不建档案不碰库存）</td><td data-page-node-id="x3okauBPOZEp7hsF5VDi2l"><span class="tag t-p15" data-page-node-id="XVBEhJeDtV5CpITyDFwbPb">P15</span></td></tr>
+  <tr data-page-node-id="a7lv5G5dfP4PrGbAkFFJ7A"><td data-page-node-id="6HuwbgDTK7JlCFY2hLifuV">分单</td><td data-page-node-id="OQSWhQHHJZZhAYRA3N7KHo">行勾选「拆出另结」成第二张车（Tab 切换），各自独立结算，不做优惠自动分摊</td><td data-page-node-id="0v149AraetP0lMBGv0y5w7"><span class="tag t-p15" data-page-node-id="qZ3Bo4hg7k508pLCfTLpIL">P15</span></td></tr>
+  <tr data-page-node-id="5b3ogng260O3CuxMYXmgx2"><td data-page-node-id="8sBnlZhZJhTeIiUKIDpCmV">扫码查库存</td><td data-page-node-id="hVcXQtNqxSM9U7wjr8XMGk">选中商品弹库存/批次/到期详情</td><td data-page-node-id="tuGXvDyrK9lb0UAxdtxaye"><span class="tag t-p15" data-page-node-id="rwhP6cSLikxklICUOCppuZ">P15</span></td></tr>
+  <tr data-page-node-id="wTKiCi7phsIJeEzCkoBef9"><td data-page-node-id="wleobHokPIuTb46aoMgzdx">赠品行</td><td data-page-node-id="lJuptWFBMuUQQXJ0QzFljp">0 元行，权限+留痕</td><td data-page-node-id="H2HuYVu4bF04CorgUWDWR1"><span class="tag t-p15" data-page-node-id="uDDK07XOb2X0fvMvQ5ztbx">P15</span></td></tr>
+  <tr data-page-node-id="2sC5AWV3xVDZ2vLywLY23D"><td data-page-node-id="uwPErFzEJpVbKAzkFWykaG">重复上一单</td><td data-page-node-id="yooF7sWURCShqMEBpTCwmA">同顾客买相同东西一键重上车</td><td data-page-node-id="xa4BUzdF9IoQpowQTR26lP"><span class="tag t-p15" data-page-node-id="6ig1vngHn91SoTpWGeESBf">P15</span></td></tr>
+</table>
+
+<h3 data-page-node-id="FVtTVwgsqat57arnsqZASF">5.3 会员</h3>
+<table data-page-node-id="uaH6CQEdR7a2Z0bSK4fpXD">
+  <tr data-page-node-id="o3WeFW74FuNG0mAJte24WB"><th style="width:120px" data-page-node-id="Et3AIwEwSHISGj2wGYEkAe">功能</th><th data-page-node-id="piRISySIb89MloAyGjKTgs">决策要点</th><th style="width:70px" data-page-node-id="7rtpnTEmNpYk4l5yuKa8jn">分期</th></tr>
+  <tr data-page-node-id="fHdXnewZsBBrYGfadfZzBd"><td data-page-node-id="fcpKHnVR29GAZwonGiTUaT">秒建会员</td><td data-page-node-id="VND0JAQStGWyfNcy2eD63j">结账页手机号+姓名秒建档，立即可充值/积分，不断流收银节奏</td><td data-page-node-id="Nrx9KHATPgruSOHzvVq0EH"><span class="tag t-p14" data-page-node-id="9VP7jr1OGYNcETYKbBxgIk">P14</span></td></tr>
+  <tr data-page-node-id="u0ythlbrOtktzvQFZAeEVz"><td data-page-node-id="sa4G8Sto2FSIMVamMNU1qq">会员信息常驻</td><td data-page-node-id="ZyE2F5vLDfXPW3O9SQk94H">结账页常驻余额/待分红展示，收银员可主动告知</td><td data-page-node-id="bgGEajujFBtALoOB7wv6c1"><span class="tag t-p14" data-page-node-id="JmZqlCW0s9qXUsyH6p2Oy9">P14</span></td></tr>
+</table>
+
+<h3 data-page-node-id="pvklReq61AtjqMBomZQBJG">5.4 业务与资金安全</h3>
+<table data-page-node-id="nBf5aZs0AjBLh7QjDoDkHC">
+  <tr data-page-node-id="mLIDIzr3gCAKsH2nLCr2cy"><th style="width:120px" data-page-node-id="om4UxE9oJAk360CmEp9J0c">功能</th><th data-page-node-id="bHtSLP0opOuA7kvxjHrGv1">决策要点</th><th style="width:70px" data-page-node-id="xSEzJqZrCD8oJpvhGDOnlk">分期</th></tr>
+  <tr data-page-node-id="HtGicsWVbrzL9Zi7gsRuTj"><td data-page-node-id="YczhHXXEpGgnLNtO36JqrM">收银锁屏</td><td data-page-node-id="mRjoFmPF4lg1tY4BUYCHrN">手动按钮+闲置自动锁（默认 5 分钟可设）；PIN/工号密码秒解锁；购物车/挂单/设备连接原样</td><td data-page-node-id="boFFYqjn41YR2bSrN1AFbq"><span class="tag t-p14" data-page-node-id="TamewGDl8aHRTnTFCwolmx">P14</span></td></tr>
+  <tr data-page-node-id="dMYfDlmjCaRLic2vORt7q8"><td data-page-node-id="hjNeRFOxUd8BuG3JSenZYA">半支付恢复</td><td data-page-node-id="sXSnjGerOtGnIvHsV4kY42">收银台启动+支付异常时自动查漏卡单（USERPAYING/PENDING）：查到款自动补小票续流程，查不到引导重扫/现金</td><td data-page-node-id="dpmPl2uO1DA1ZW16BI3D9j"><span class="tag t-p15" data-page-node-id="dmux6qey61DiOHQfv01nxA">P15</span></td></tr>
+  <tr data-page-node-id="0r3LLcCezV8X0rQ6WkUCot"><td data-page-node-id="G5tsdOwdLayaIHHXbx08vT">内置退货</td><td data-page-node-id="LqU4H0ix9rCBsgs1S6joHK">输小票号带原单、勾退按原批次价退、现金退款或原路退；<b data-page-node-id="wQvmFje1hLF3dakwQtpp8l">限额内（可设）收银员直接退 / 超限店长输密放行；退货原因必选留痕</b></td><td data-page-node-id="fv7u02UJQDKbscO88JaJib"><span class="tag t-p15" data-page-node-id="tlCyQ6RJx8PpiVnWjNwvxU">P15</span></td></tr>
+  <tr data-page-node-id="48v0WS5S1sGwLmDa6V66dC"><td data-page-node-id="o0lOYrsxEzZCS7L6OsxRJX">交接班</td><td data-page-node-id="2tooZudf3QptLDM2DORXDV">本班分渠道汇总 + 现金实点差异录入；<b data-page-node-id="QEjERsHrM9CGw95bvORHSO">容差超限强制填原因</b>；一键打印交接单+后端留档</td><td data-page-node-id="YT24nVSIr2G1B65L58FUXc"><span class="tag t-p15" data-page-node-id="9mVOZv4eDTYU5JhQPMVquu">P15</span></td></tr>
+  <tr data-page-node-id="OYIruhIdcLBusV8W6Icz7r"><td data-page-node-id="9I04Z2wKWRK5wiBEyDt9kY">钱箱过程管理</td><td data-page-node-id="3VOfrZ5n8eA7REtzu6xznN">开班录备用金（默认值可设）→ 班中存入/取出必选原因留痕（换零/取现）→ 交接班应答=备用金+现金收入±存取，实点差异闭环</td><td data-page-node-id="oykHF4oV5ZCLgFSyYy0zs9"><span class="tag t-p15" data-page-node-id="VDjCkUJHJAGgcjcPotDV6F">P15</span></td></tr>
+  <tr data-page-node-id="VEsXEy0bvce8UvQyrLV2zD"><td data-page-node-id="yoWxya7zANBnBu2JoXTRbI">无交易开钱箱</td><td data-page-node-id="QmBjQWgR0UFSGAKsMjUUof">对钱/放零，权限+留痕</td><td data-page-node-id="uZYn1XZPAEcErp2fIYeGRs"><span class="tag t-p15" data-page-node-id="X0Fy8yIItVYgA8dgISpI4C">P15</span></td></tr>
+  <tr data-page-node-id="Qt7lxtC3c5abEJCJoDTcGb"><td data-page-node-id="SGEeBTib5P5BFFDYwVspRl">重打上一单</td><td data-page-node-id="F5FedgKjRJNgWAGtdUcmj1">卡纸/丢票一键补打</td><td data-page-node-id="66eRvv4yBfhiAcSDv4xBB8"><span class="tag t-p14" data-page-node-id="CM0UETN1Ci8zHKCLqzZTSJ">P14</span></td></tr>
+  <tr data-page-node-id="sXxsgk4lo7z47wxy4t0x3a"><td data-page-node-id="sLHwVvTSip8GNn26Srx8de">跨零点日切提示</td><td data-page-node-id="DygCEAmZfi9k0iN15cxOXb">收银中跨零点自动提示班次日切</td><td data-page-node-id="ZbAHuC3IdzXcAhaRUpiRb1"><span class="tag t-p15" data-page-node-id="SyJXyxAzyvCDewC59xsQHI">P15</span></td></tr>
+</table>
+
+<h3 data-page-node-id="N0qWpP1PYlhAg95GFmZSND">5.5 语音与提示</h3>
+<table data-page-node-id="PRzzn2lkNz9fbFF9FzlH0s">
+  <tr data-page-node-id="Num2tfULEoabH6CnnIRSAi"><th style="width:120px" data-page-node-id="y54OJicFGZdHP2ZuDIrxTX">功能</th><th data-page-node-id="16x6HaZfTHzssLkjye0kej">决策要点</th><th style="width:70px" data-page-node-id="YyEMwMkNCJMV34p8Lgvvcq">分期</th></tr>
+  <tr data-page-node-id="YFPxAeuRAhDs5cqYaY8V6t"><td data-page-node-id="ujWOhD3wASjLWGXOizIt30">语音查售价/库存</td><td data-page-node-id="2Ar65nQdpey6LcS6NuAPCB">挂现有语音助手，离线兜底答「查不到」</td><td data-page-node-id="Yh2srWX04PXBUQOCazZ6o6"><span class="tag t-p15" data-page-node-id="jhXQQVVboP5jBIwhBsryZp">P15</span></td></tr>
+  <tr data-page-node-id="2pEuHHHADwWDfX81u7lh90"><td data-page-node-id="0DBRqXbvNCo9AufegqNGlP">语音播报出口</td><td data-page-node-id="ODD5ibkZUv8LHWwmwbFQ9K">默认本机喇叭；设备管理加蓝牙音箱一项，连上自动切换</td><td data-page-node-id="6zTFtnGTUM4FsEma9qxoTJ"><span class="tag t-p15" data-page-node-id="iOKm9RPEdexb1BrAzEuJCR">P15</span></td></tr>
+  <tr data-page-node-id="9SVXcVN41BpSSYeHJH2h90"><td data-page-node-id="z7wqw5AeX2ckWhGMVxuFid">消息静默</td><td data-page-node-id="ZPuZ1dteS9unbyFoD4M3QJ">收银中的消息/告警静默收纳不打断</td><td data-page-node-id="ewg4PRstgqi7NmubSyyuVK"><span class="tag t-p15" data-page-node-id="3FWeCmoWglpUdECL1jbLDv">P15</span></td></tr>
+</table>
+
+<h3 data-page-node-id="hWocO1CZsQUktq6YP2qOPD">5.6 体验兜底（默认顺带）</h3>
+<p data-page-node-id="kxGMXSamjH6QnEKGw3pF6I">小票机缺纸检测提示；挂单/取单沿用现有；满减/促销沿用现有底座（V4.16.4 满减取最高档、范围门槛）。</p>
+
+<h2 id="s6" data-page-node-id="8hIabKw5k0LZGp5tPc7Hbt">6. 设备连接方案（八项）</h2>
+<table data-page-node-id="Rh6ztUoR4oPmYrT8fa6eot">
+  <tr data-page-node-id="35AaIs6YaF6foTyre2hwQ4"><th style="width:110px" data-page-node-id="KYRxkb3gzSYAUM16aEE0wu">决策点</th><th data-page-node-id="l1nywmXaB6eXbS6Tx164OV">结论</th></tr>
+  <tr data-page-node-id="tHH7LIrFAnrZ7goAPJBM38"><td data-page-node-id="Y63pcMvWJHsEmKCaXqNLGr">① 状态感知</td><td data-page-node-id="MHuZh9iRXg3LTDiySYzjHE">收银台顶部常驻四盏设备灯，进收银台自动检测一轮，掉线可点重连；班前<b data-page-node-id="W4ulhWc9Oxf2e3yMspyXlm">「一键连齐全套」</b></td></tr>
+  <tr data-page-node-id="jxCiAkRQ2M8HWkSzmh9dz6"><td data-page-node-id="6vrf8gA4LF6WVbAKmkWGfm">② 连接持久化</td><td data-page-node-id="lUNFDaR0P8GSG15lx17kdC">指纹记忆（端口标识/网口 IP/蓝牙名）+ 一键重连；WebSerial 仍需一次手势（浏览器硬限制），网口设备走后端<b data-page-node-id="qi7qEnO3BC7PObnE6ggDwH">免手势直连</b></td></tr>
+  <tr data-page-node-id="YzLEBxj5EF4btE9xeuic6C"><td data-page-node-id="cXQ5DLQBGPK7oS6zRXEnOD">③ 扫码枪</td><td data-page-node-id="JV23pudvjAApNr9Ea6fcbx">收银台运行期<b data-page-node-id="1Ws7edHxSKv7VnfRQPO9uC">全局键盘监听</b>（HID 枪特征节奏收码，不依赖焦点，弹窗/结算页都能收）；手机配隐藏输入框防软键盘；<b data-page-node-id="3qgsI2DcJBtA2l4DnM65Be">不换枪</b></td></tr>
+  <tr data-page-node-id="7upe9ovBUxcsAWzTPO133v"><td data-page-node-id="eZCOaFCmgGgqJ8KR08j3Aq">④ C 端通道</td><td>基于<b>已实施 Electron 端演进</b>：设备通道以 Electron 原生适配器为主（serialport 直驱，无手势限制），网口走后端转发；不做浏览器本地打印代理</td></tr>
+  <tr data-page-node-id="UK3UjzRwqzC1WtuGxmTG40"><td data-page-node-id="Yd8EuBVnEvCCBzKtrPDta3">⑤ 绑定粒度</td><td data-page-node-id="vG8lCu8pBQCdUfI5uE7yIu">C 端设备绑<b data-page-node-id="FBbICOImy6SFjxztsZfpsK">台位</b>（存台位档案，换人接岗不重连）；A 端手机设备绑<b data-page-node-id="UQBQGqx33oAeCiri84juvD">登录人</b></td></tr>
+  <tr data-page-node-id="T8ZCrOLp6PCoI2glFnLC7F"><td data-page-node-id="gP9h0OdQacif3PrMtxBIiL">⑥ 打印降级</td><td data-page-node-id="wulFeKLTkAMGdh0Ztj3APm">网口失败 → 自动试串口 → 再试系统打印，<b data-page-node-id="B0etAg3bp8AKCUQHd3oM1m">每级明示实际通道</b>（如「已走串口通道出票」）；全失败才报错给重试；状态灯同步变黄</td></tr>
+  <tr data-page-node-id="jzGraNsHv8K8REaBw9dDzG"><td data-page-node-id="MsM9FH8PYOKcECTDMtcka0">⑦ 手机连秤</td><td data-page-node-id="IrJcc4pcN7ClrD83ybD20W">维持手输重量（放开安卓串口秤被否，规避 OTG 线材支持问题）</td></tr>
+  <tr data-page-node-id="fzZNtfG0YjQDEN0J6W2bm1"><td data-page-node-id="mtYkQ0diAAdpB1Uq1cuguO">⑧ 语音播报</td><td data-page-node-id="vGzaqcEu24EgKsUokT9K7i">默认本机喇叭，蓝牙音箱可选自动切换</td></tr>
+</table>
+<div class="ok" data-page-node-id="Cd8mrrGn14bKCCKj8KXVKk"><b data-page-node-id="3XUEnwnIMn6PRAdDeMXhlH">现状病灶对照</b>：设备无状态感知（用到才报错）→ 状态灯+自检；连接不持久（刷新即忘）→ 指纹+一键重连；打印静默降级 → 每级明示通道。</div>
+
+<h2 id="s7" data-page-node-id="bAXvGMf00KmJQPTPDMrW5r">7. 离线策略（分级降级）</h2>
+<div class="grid2" data-page-node-id="6m10ZrLasuWEqFJpQE91Sp">
+  <div class="card" data-page-node-id="JraNdGzstxiFActnBoJBfe"><h3 data-page-node-id="S3mu1BEBBJeS3agCp4LYlD">离线可用</h3><ul data-page-node-id="vjseoeAn1ZxtRfaVVHEaJ5">
+    <li data-page-node-id="eUJrLR8YSdhW8Sr5Wm4fdu">扫码/搜索/快捷格</li><li data-page-node-id="5I3bqM098PCm2bFsc4JcTB">数量改/删行/开放键</li><li data-page-node-id="mMWCzGsqVGyBOZvA05eFKy">现金记账支付、挂单取单</li><li data-page-node-id="nKMIX9CenPxm6EzKk5hoEu">锁屏</li>
+  </ul></div>
+  <div class="card" data-page-node-id="VUtGE7FzuGzAzGKzN2RrcU"><h3 data-page-node-id="paT9ltcf994lnxrNc9OEdR">仅在线</h3><ul data-page-node-id="O9dtYRg7kHLNP3qYQKN48J">
+    <li data-page-node-id="NjVRJuQxiXtHNJmZq6yLRc">扫码通道扣款（自动提示改现金记账）</li><li data-page-node-id="sdWqvR8F7Aypkl0UwH1TvU">退货原路退</li><li data-page-node-id="mBNR3EIJ8j0MPEUF0yWfmd">交接班提交、积分抵现/挂账校验</li><li data-page-node-id="efAdjAkb73qgVwgV4FQNxp">语音 AI 查询（本地规则兜底）</li>
+  </ul></div>
+</div>
+<p class="muted" data-page-node-id="V5Ce7kHy6JBDfgxpstzVnm">断网时自动降级提示，<b data-page-node-id="qiMhRCiqSgb2AkOqSPqwE4">不阻塞收银</b>；断网暂存补传沿用现有底座。</p>
+
+<h2 id="s8" data-page-node-id="pgYFeuBnshQ8JILXUTTg42">8. 设置与权限</h2>
+<div class="card" data-page-node-id="Tzrhk1FcPMb7zvN5wrbPGC">
+<ul data-page-node-id="BAR6UlPIsqe4TnfJoapatx">
+  <li data-page-node-id="Qe2oeGK9CQ8czhtaorR0Hx">设置项<b data-page-node-id="wMrfHO72H3aFlLTFAMNVpW">内嵌收银台</b>：店长权限的「⚙ 收银设置」面板就地改（快捷格数量、抹零方式、退货限额、交接班容差、锁屏超时、积分比例、语音开关、客显文案等）；</li>
+  <li data-page-node-id="vWX0SLkXV1t4KH8lrQxoF0">底层仍存 <code data-page-node-id="pGIQmQCOYLkAMsiNfAKeAB">system_settings</code> 同一套键，日后迁系统设置页只需换入口；</li>
+  <li data-page-node-id="AXieVFbVcASRQ5B37DKsAx">权限主线：抹零/赠品/开放键可选权限、整单自定义折扣、最低售价放行、退货超限、无交易开钱箱、挂账超限——<b data-page-node-id="8XSnlycKyccf9Fv89HN58w">全部留痕进操作记录</b>。</li>
+</ul>
+</div>
+
+<h2 id="s9" data-page-node-id="XJycMGo6JJ2bdm0Bv0Ljp6">9. 分期计划</h2>
+<table data-page-node-id="14GyWiv1Fr4iVkFJ4kGtGg">
+  <tr data-page-node-id="p2oBQkAGfy7XEbN8scVEqW"><th style="width:60px" data-page-node-id="ojJIKCISZ5xlBxOAHJXiXB">期</th><th style="width:190px" data-page-node-id="cuBJssGvkGnDImAo1id8OM">主题</th><th data-page-node-id="GgFn9eI6izcAqKjEdgL2dc">范围</th></tr>
+  <tr data-page-node-id="rSHJIo00nl7uv6RVARqC3d"><td data-page-node-id="Lhaby2BdGFJlvCrcIgD4Jy"><span class="tag t-p14" data-page-node-id="pqXHs2tx7sVnCd20G75CU5">P14</span></td><td data-page-node-id="OtpOfPzO9zgDkC7cIbSxf1">A 端骨架与高频（预计 V4.18.0）</td><td data-page-node-id="NxlMA9ZAHzy1PHuZTCje92">登录直落收银台、响应式双布局、风格落地、快捷格、找零+组合支付+弹钱箱、数量直改/删行、防抖+价格快照+低库存警示+缺纸提示、重打上一单、抹零双轨、会员常驻+秒建会员、最低售价+硬拦、<b data-page-node-id="mNGJF707DNeYRWorDMsGqT">设备状态灯+自检+一键重连+全局扫码监听+锁屏</b></td></tr>
+  <tr data-page-node-id="S98DUenqEvjFHtfXwMBr6q"><td data-page-node-id="rBfaUPjSRhbGVS6zNGdiyb"><span class="tag t-p15" data-page-node-id="8VqCleJVOHptMuPi8jzgUD">P15</span></td><td data-page-node-id="jGAqWhtxQqc6HKcTYG6EZq">A 端业务深度</td><td data-page-node-id="1ULTlacnSLgHz1HptSGwkp">整单折扣规则、赠品行、无交易开钱箱、重复上一单、扫码查库存、内置退货、交接班（含钱箱过程管理）、语音查售价/库存+蓝牙音箱、<b data-page-node-id="7SgQTbrouYrNUnKRei43vK">半支付恢复、会员挂账、开放键、分单、积分抵现、消息静默、日切提示、打印降级明示</b></td></tr>
+  <tr data-page-node-id="0CyWOILVFyNPyvSG4LfAKl"><td><span class="tag t-p16">P16</span></td><td>C 端（基于现有 Electron 端演进）</td><td>双栏大屏（左商品右购物车）+F 键键盘流、<b>双屏客显</b>（副屏已实施会员卡等全保留+增强：支付引导/店招欢迎语/轮播可配）、台位档案与设备台位绑定、Electron 原生外设接入状态灯体系、复用 A 端全部接口</td></tr>
+</table>
+<p class="muted" data-page-node-id="NWR7dVSRDxUgUAN5gnFqgz">P14 开工前先出横屏双栏收银台高保真原型确认，每期做完验收再进下一期。</p>
+
+<h2 id="s10" data-page-node-id="eZolJBmzyEGfm2wiuJdcMT">10. 数据与接口影响面（实现期细化）</h2>
+<table data-page-node-id="aeObcHYvfm3hRksqg4UPG1">
+  <tr data-page-node-id="8aFaZ2jY1jE1R72YYmn1Uz"><th style="width:110px" data-page-node-id="pAgStkfQS8A9gL5zM2Gbf1">类别</th><th data-page-node-id="ymkrVLZLfJp5WTiMtPXSfW">内容</th></tr>
+  <tr data-page-node-id="JBZBg7wfvzDAOTfjxU3DxL"><td data-page-node-id="lGNCKc4THE57jKcyWQJnHD">表新增</td><td data-page-node-id="VAioW0ZTqRlY3WYnkcEhy4">挂账（欠款+还款流水）、钱箱存取流水、积分抵扣流水、台位档案（P16）</td></tr>
+  <tr data-page-node-id="TDcEc6zsfyg35oEX7lIRCH"><td data-page-node-id="GVZ7IzedVZQo7yrtVqqGqe">表加列</td><td data-page-node-id="ZXAh0EPE7272d6pBgaORB9">商品表 <code data-page-node-id="UiGDxUjgwOqLifid9LP2gL">min_price</code> 最低售价；班次/交接班表补备用金与存取字段</td></tr>
+  <tr data-page-node-id="qmHIWMdJWzOglND9jfgJKv"><td data-page-node-id="v7u9TGGfSZCcGXxKv8o1S1">设置键</td><td data-page-node-id="qCPjHSUobF4hS5WLxBtvDD">收银设置组（快捷格数量、抹零方式、退货限额、交接班容差、锁屏超时、积分比例/上限、语音/客显开关、<b>客显轮播文案</b>等），沿用 <code data-page-node-id="8xk6D7OL648RzTmQEJuBLU">system_settings</code></td></tr>
+  <tr data-page-node-id="Yu0dm5B23ShC1Lr48jeYmA"><td data-page-node-id="TFGk0cR7KqLErNkOhSw6Uu">接口新增</td><td data-page-node-id="gZh6XsxBDaMsqFD8Kr0lVp">组合支付（多通道分摊）、半支付查漏、挂账/销账、积分抵扣、开放键临时行、拆单、交接班汇总/打印、设备指纹绑定</td></tr>
+  <tr data-page-node-id="BklDVDPb9BEKMUnUjM2jfo"><td data-page-node-id="XGE4duiguY6PABAMAXa98B">复用底座</td><td data-page-node-id="G7ELTxjfGgH70IfSdvw2oH">settlePaidCas 逐分结算、out_trade_no 幂等、USERPAYING 轮询、对账双方向、FIFO 批次退货原价、满减取最高档、printers/print_jobs 打印底座</td></tr>
+</table>
+
+<h2 id="s11" data-page-node-id="NmiuCn25vuP1chtXmTFKEw">11. 风险与开放项</h2>
+<table data-page-node-id="7rrg7hfb0V44DsTXPHoEPG">
+  <tr data-page-node-id="vMHLEpLyH4XE936IGH9fpg"><th style="width:170px" data-page-node-id="ACWcO5n4GHZE7Ff7wEw4hy">风险/开放项</th><th data-page-node-id="IFprF2ho8vA6hzEiSFv8iO">说明</th></tr>
+  <tr data-page-node-id="BP9iN3vgCeMxZvCkbYCPwi"><td data-page-node-id="gkwAAv36lO9jmtxMR7FjlP">组合支付退款拆分</td><td data-page-node-id="kk74XwFG15RNaQSDMx21kt">多通道支付的退款按原通道拆分回退，实现期需定分摊明细规则</td></tr>
+  <tr data-page-node-id="jLkND9S04hfAeIDBx8AyOZ"><td data-page-node-id="57853kFkdjYc26L4zXyJnj">防抖与连扫多件</td><td data-page-node-id="USaLbD7me41MNvq7uDyPEz">防抖默认可关，需真机验证「连扫 5 件」真实节奏</td></tr>
+  <tr data-page-node-id="iw8ZUq2lbIpUKRd9NK0GKZ"><td data-page-node-id="vMPsP7luhg7Qdb2NWkdUkT">挂账超期提醒触达</td><td data-page-node-id="1q8nUc5tULYFlcOOevOuI5">站内/PWA 消息通道，P15 细化</td></tr>
+  <tr data-page-node-id="XTWJXd7vHbztBHRLhGJXxf"><td data-page-node-id="rhuLJEHbGOm0V7TurTTklx">C 端客显连接方式</td><td data-page-node-id="8XFvtzEzg9hOjzb5LyRrqK">浏览器第二窗口或副屏镜像，P16 细化</td></tr>
+  <tr data-page-node-id="PLBVfdfceZFh41jFR5DuG0"><td data-page-node-id="0gn1ElvQE63jCXW1l5dMDy">WebSerial 手势限制</td><td data-page-node-id="UsuMlGdraEeK9vVCLcoT58">一键重连对串口设备仍需一次点击，店员培训覆盖</td></tr>
+  <tr data-page-node-id="lu4uz7SWeyCt5YkIxusJOn"><td data-page-node-id="jrxfGyuSekPs5G2QodFllH">版本号</td><td data-page-node-id="uIFF0WULsFS3mVbuEg2sKF">P14 起跳预计 V4.18.0，开工时确认</td></tr>
+</table>
+
+<div class="warn" data-page-node-id="t1rDPbXWvd9G2kJpf4HyuC"><b data-page-node-id="EZatocav4qSsah0S0FonCE">下一步</b>：P14 横屏双栏收银台高保真原型 → 你确认 → 开发 → 真机回归 → 版本文档。开工前会把 P14 最终清单再列一次供确认。</div>
+
+<h2 id="s12">12. 竞品借鉴（银豹收银端，2026-09-11 截图分析）</h2>
+<p>对银豹收银端 15 张截图（登录/加载/功能菜单/交接班/查库存/快捷键设置×9）逐一分析，<b>吸收 8 项、否决照搬若干</b>。</p>
+
+<h3>12.1 吸收项（已并入分期）</h3>
+<table>
+  <tr><th style="width:150px">借鉴点</th><th>说明</th><th style="width:70px">分期</th></tr>
+  <tr><td>拼音码搜索</td><td>搜索联想支持拼音首字母（如 ysx→饮用水），收银员不打全名找货</td><td><span class="tag t-p14">P14</span></td></tr>
+  <tr><td>沽清置灰</td><td>库存为 0 的商品在搜索/快捷格置灰禁加，防卖空（低库存警示的反面补充）</td><td><span class="tag t-p14">P14</span></td></tr>
+  <tr><td>版本号常驻</td><td>版本号展示（登录页/设置页），远程支持时一眼对版本</td><td><span class="tag t-p14">P14</span></td></tr>
+  <tr><td>日结</td><td>独立于交接班的「日汇总」：当日全店分渠道流水/退货/抹零汇总，可打印日报——交接班结「人」，日结结「店」</td><td><span class="tag t-p15">P15</span></td></tr>
+  <tr><td>整单/行备注</td><td>整单备注（挂账原因/顾客称呼）+ 行备注（赠品原因等），结算与小票留痕（对应银豹 Ctrl+R）</td><td><span class="tag t-p15">P15</span></td></tr>
+  <tr><td>查库存带加车</td><td>查库存弹窗结果直接带「加入」按钮，查完库存顺手加车一步到位</td><td><span class="tag t-p15">P15</span></td></tr>
+  <tr><td>收款双键</td><td>结算页回车=收款打小票、空格=收款不打小票（小额免票省纸，可补打）</td><td><span class="tag t-p16">P16</span></td></tr>
+  <tr><td>完整快捷键体系</td><td>按界面分组（主界面/结算/全局）可编辑快捷键：焦点键（F2 条码/F3 会员/F10 数量）、F1 弹快捷键说明；A 端触屏不依赖，C 端键盘流核心</td><td><span class="tag t-p16">P16</span></td></tr>
+</table>
+
+<h3>12.2 不照搬项</h3>
+<ul>
+  <li><b>收银端塞全套后台</b>（进货/盘点/报损/调拨/商品编辑/批发模式进收银端）——本店作业流已在移动 PWA，收银端保持「收银专注」；</li>
+  <li>蓝色主题（已定品牌绿）；预约/预付卡/礼券销售/合伙人/邮寄管理（不适用本期）。</li>
+</ul>
+
+<h3>12.3 方向验证</h3>
+<p class="muted">银豹「常点商品」=我们的快捷格、无码收款 Ctrl+W=我们的开放键、锁屏 Shift+ESC=我们的锁屏、积分抵现/组合支付/抹零键位齐全——核心功能集与行业成熟产品对齐，决策合理性得到验证。</p>
+
+<footer>超市收银系统 · 收银端专项设计方案 · 决策过程：你问我答九大分支（载体/硬件/风格/功能/交互/离线/设备/设置/分期 + 设备连接补漏 + 日常遗漏补漏 + 银豹借鉴）· 全部决策已存项目日志</footer>
+</div>
+</body>
+</html>

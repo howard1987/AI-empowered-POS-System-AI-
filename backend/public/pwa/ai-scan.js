@@ -90,27 +90,34 @@ const AiScan = {
         : ((g.recognizedPieces ?? 0) > 0 ? ' ✅ 本张识别良好，可继续补拍或直接加入' : '');
     };
 
-    /* ── V4.9.8 兜底：识别不出时「改用扫码」——扫中的商品直接并入本次候选清单 ── */
+    /* ── V4.9.8 兜底：识别不出时「改用扫码」——扫中的商品直接并入本次候选清单 ──
+     *  V4.27.1 Q13：无扫码组件时支持手动输入条码补录（识别结果 ±/勾选本就支持手动增减） ── */
     const scanFallback = () => {
-      if (typeof Scanner === 'undefined' || !Scanner.start) { toast('扫码组件未加载，请返回后重试'); return; }
+      if (typeof Scanner === 'undefined' || !Scanner.start) {
+        const code = String(prompt('扫码组件未加载，可手动输入商品条码：') || '').trim();
+        if (!code) return;
+        addManualBarcode(code);
+        return;
+      }
       const tmp = document.createElement('input');
       tmp.style.cssText = 'position:fixed;left:-9999px';
       document.body.appendChild(tmp);
-      Scanner.start(tmp, async code => {
-        tmp.remove();
-        try {
-          const p = await lookupProduct(code);
-          if (p) {
-            const it = items.find(x => x.productId === Number(p.id));
-            if (it) { it.count += 1; it.conf = 1; it.checked = true; it.manual = true; it.aiSrc = 'barcode'; }
-            else items.push({ productId: Number(p.id), name: p.name, count: 1, conf: 1, checked: true, manual: true, aiSrc: 'barcode' });
-            sec.style.display = ''; listBox.classList.remove('hidden'); renderList();
-            setState(`✅ 扫码命中「${p.name}」，可在下方改数量后加入`);
-          } else {
-            setState(`⚠️ 扫码未命中：${code}（该码未维护到商品档案，可改关键词搜索或先建档）`);
-          }
-        } catch (e) { setState('⚠️ 扫码查询失败：' + (e.message || '')); }
-      });
+      Scanner.start(tmp, async code => { tmp.remove(); await addManualBarcode(String(code || '').trim()); });
+    };
+    /** 手输/扫码补录共用：条码 → 商品 → 并入候选清单（manual 补录，纠正回传标记 manualAdd） */
+    const addManualBarcode = async code => {
+      try {
+        const p = await lookupProduct(code);
+        if (p) {
+          const it = items.find(x => x.productId === Number(p.id));
+          if (it) { it.count += 1; it.conf = 1; it.checked = true; it.manual = true; it.aiSrc = 'barcode'; }
+          else items.push({ productId: Number(p.id), name: p.name, count: 1, conf: 1, checked: true, manual: true, aiSrc: 'barcode' });
+          sec.style.display = ''; listBox.classList.remove('hidden'); renderList();
+          setState(`✅ 条码命中「${p.name}」，可在下方改数量后加入`);
+        } else {
+          setState(`⚠️ 未命中：${code}（该码未维护到商品档案，可改关键词搜索或先建档）`);
+        }
+      } catch (e) { setState('⚠️ 条码查询失败：' + (e.message || '')); }
     };
     m.querySelector('#asScan').onclick = scanFallback;
     m.querySelector('#asHelp').onclick = () => {
@@ -205,16 +212,17 @@ const AiScan = {
       okBtn.classList.toggle('hidden', !items.some(x => x.checked));
     };
 
-    /** 抓当前帧（960px JPEG，够识别且省流量） */
+    /** 抓当前帧（V4.27.1 Q12：前端压缩到 ≤1280×720 再上传，JPEG 0.75——识别够用且大幅省传输耗时） */
     const grabFrame = () => {
       if (!stream || video.readyState < 2) return '';
-      const MAX = 960;
-      const k = Math.min(1, MAX / Math.max(video.videoWidth || MAX, video.videoHeight || MAX));
+      const MAX_W = 1280, MAX_H = 720;
+      const vw = video.videoWidth || MAX_W, vh = video.videoHeight || MAX_H;
+      const k = Math.min(1, MAX_W / vw, MAX_H / vh);
       const c = document.createElement('canvas');
-      c.width = Math.max(1, Math.round((video.videoWidth || MAX) * k));
-      c.height = Math.max(1, Math.round((video.videoHeight || MAX) * k));
+      c.width = Math.max(1, Math.round(vw * k));
+      c.height = Math.max(1, Math.round(vh * k));
       c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
-      return c.toDataURL('image/jpeg', 0.66);
+      return c.toDataURL('image/jpeg', 0.75);
     };
 
     /** 合并一轮识别结果：已有→刷新置信度/勾选；新出现→追加或防抖 +1
@@ -275,7 +283,7 @@ const AiScan = {
           for (const c of d.candidates) {
             const pid = Number(c.productId);
             if (!pid || items.some(x => x.productId === pid)) continue;
-            items.push({ productId: pid, name: c.name || `商品${pid}`, count: 1, conf: Number(c.conf || 0), checked: false, cand: true, aiSrc: 'cand', aiCount: 0, cropBox: c.cropBox || null });
+            items.push({ productId: pid, name: c.name || `商品${pid}`, count: 1, conf: Number(c.conf || 0), checked: false, cand: true, aiSrc: 'cand', aiCount: 0, cropBox: c.cropBox || null, barcode: c.barcode || '' });
             added = true;
           }
           if (added) {
@@ -363,8 +371,35 @@ const AiScan = {
       } catch { /* 任何回传异常不阻断确认流程 */ }
     };
 
-    okBtn.onclick = () => {
+    /* ── V4.27.1 Q5 易混 SKU 二次校验：候选确认（相似度未达自动采信阈值）的商品，
+     *  加入明细前须扫其条码比对一致，防"白瓶红标"点错。逐件校验，不一致即中止确认。 ── */
+    const verifyCandidates = async chosen => {
+      const need = chosen.filter(x => x.aiSrc === 'cand' && x.barcode && !x.barcodeVerified);
+      if (typeof Scanner === 'undefined' || !Scanner.start) {
+        const noScan = need.length ? '；存在待扫码校验候选（未装扫码组件，可取消勾选或改用条码秒识别）' : '';
+        if (need.length) { toast('扫码组件未加载：候选未做条码二次校验' + noScan); return false; }
+        return true;
+      }
+      for (const it of need) {
+        setState(`🔦 二次校验：请扫「${it.name}」的条码核对…`);
+        const okScan = await new Promise(resolve => {
+          const tmp = document.createElement('input');
+          tmp.style.cssText = 'position:fixed;left:-9999px';
+          document.body.appendChild(tmp);
+          let done = false;
+          const finish = v => { if (done) return; done = true; tmp.remove(); resolve(v); };
+          try { Scanner.start(tmp, code => finish(String(code || '').trim() === String(it.barcode))); }
+          catch { finish(false); }
+        });
+        if (!okScan) { toast(`条码不一致/未扫到：已中止加入「${it.name}」（可取消勾选该候选后重试）`); return false; }
+        it.barcodeVerified = true;
+      }
+      return true;
+    };
+
+    okBtn.onclick = async () => {
       const chosen = items.filter(x => x.checked);
+      if (!(await verifyCandidates(chosen))) return;
       reportCorrection(chosen);
       if (chosen.length) opts.onConfirm(chosen.map(x => ({ productId: x.productId, name: x.name, count: x.count })));
       stop();

@@ -68,6 +68,16 @@ export class PayGatewayService {
    */
   private async adapterFor(channel?: string | null, opts: { forRefund?: boolean } = {}): Promise<PayAdapter> {
     const mode = await this.settings.getVal('pay.gateway.mode');
+    // ── V4.28.1 安全修复（P0-2 模拟通道门禁）：pay.gateway.allow_mock=0 时拒绝 mock 假扣款，
+    //    防"上线忘切通道"造成假收款。记账式 off 不受影响——那是"不发起通道请求"的真实记账，
+    //    不是假成功。退款走 forRefund 分支不拦（原路退需匹配已有 mock 流水）。 ──
+    if (mode === 'mock' && !opts.forRefund) {
+      const allowMock = (await this.settings.getNum('pay.gateway.allow_mock', 1)) === 1;
+      if (!allowMock) {
+        throw new BizException(40900,
+          '模拟支付通道已被关闭（pay.gateway.allow_mock=0）：请配置真实支付通道，或在后台改回记账式收款');
+      }
+    }
     if (mode === 'off' && !opts.forRefund) {
       throw new BizException(40900, '支付通道未启用（当前为记账式收款）');
     }

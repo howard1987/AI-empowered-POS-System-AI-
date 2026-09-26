@@ -269,6 +269,17 @@ export class SyncStoreService implements OnModuleInit, OnModuleDestroy {
         await c.query(
           `UPDATE system_settings SET value=$2::jsonb, updated_at=now() WHERE setting_key=$1 AND scope='hq'`,
           [String(p.key), JSON.stringify(p.value ?? null)]);
+      } else if (ch.entity === 'hq_setting_scope') {
+        // ── V4.27.8 设置作用域下发：总部把键重新分类（通用⇄门店级），门店同步分类 ──
+        //    store→hq 时同样清本店覆盖值（与总部侧行为一致，防旧覆盖继续生效）
+        const p = ch.payload ?? {};
+        if (!p.key || !['hq', 'store'].includes(String(p.scope))) throw new Error('hq_setting_scope 下行参数非法');
+        await c.query(`UPDATE system_settings SET scope=$2 WHERE setting_key=$1`, [String(p.key), String(p.scope)]);
+        if (p.scope === 'hq') {
+          const self = await cx(c, `SELECT store_id FROM sync_nodes WHERE is_self LIMIT 1`);
+          const sid = Number(self[0]?.store_id ?? 0);
+          if (sid) await c.query(`DELETE FROM store_settings WHERE store_id=$1 AND setting_key=$2`, [sid, String(p.key)]);
+        }
       } else if (ch.entity === 'store_settings') {
         // ── V5.0.0 P2-6 门店设置下发：payload {key, value}；store_id 重写为本店 ──
         //    delete = 总部清除覆盖（门店回落 system_settings 默认值）；其余值 upsert 本店覆盖行

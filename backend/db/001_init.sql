@@ -1252,7 +1252,10 @@ INSERT INTO permission_points (code, module, name, risk_level) VALUES
  ('ai.suggestion.decide','AI',   '智能建议执行/否决',1),      -- 9.8
  ('sys.settings',        '系统', '系统设置修改',    2),       -- 敏感组二次确认
  ('sys.user.manage',     '系统', '员工与角色管理',  2),
- ('sys.data.backup',     '系统', '备份恢复操作',    2);
+ ('sys.data.backup',     '系统', '备份恢复操作',    2)
+-- V4.28.9 幂等修复：本语句此前无 ON CONFLICT，任何已初始化库在"迁移全量重跑"时必撞
+-- permission_points_code_key（init-db V4.28.0 起对 duplicate key 零容忍）——安装版首测暴露
+ON CONFLICT (code) DO NOTHING;
 
 -- 绑定：超级管理员 = 全部权限点
 INSERT INTO role_permissions (role_id, permission_id)

@@ -13,6 +13,7 @@
  *  - PG_MODE=embedded（默认，免安装便携库）| external（用外部已装 PG，读 DATABASE_URL）。
  */
 import { spawn, spawnSync } from 'child_process';
+import net from 'net';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -99,6 +100,17 @@ function pgRunning() {
   try { return pgCtl(['-D', PGDATA, 'status'], { stdio: 'ignore' }).status === 0; } catch { return false; }
 }
 
+/** V4.28.9f：TCP 探测端口是否已有监听者（识别 pg_ctl status 认不出的孤儿 postmaster） */
+function tcpInUse(port) {
+  return new Promise(resolve => {
+    const s = net.connect({ host: '127.0.0.1', port });
+    const done = v => { try { s.destroy(); } catch { /* noop */ } resolve(v); };
+    s.once('connect', () => done(true));
+    s.once('error', () => done(false));
+    setTimeout(() => done(false), 1500);
+  });
+}
+
 function pgStop(silent = false) {
   if (!fs.existsSync(path.join(PGDATA, 'PG_VERSION'))) return false;
   const r = pgCtl(['-D', PGDATA, 'stop', '-m', 'fast'], { stdio: silent ? 'ignore' : 'inherit' });
@@ -114,6 +126,15 @@ async function pgStart() {
     return;
   }
   pgCtl(['-D', PGDATA, 'stop', '-m', 'immediate'], { stdio: 'ignore' });   // 清掉残留
+
+  // V4.28.9f 修复"启动服务失效"：pg_ctl stop/immediate 清不掉**孤儿 postmaster**
+  //  （如服务进程被强杀后 postgres.exe 被系统收养，pg_ctl status 已不认它，但 54329 端口仍被占用）。
+  //  此前直接 pg_ctl start → 端口占用 FATAL → 整个服务起不来。
+  //  现改为启动前 TCP 探测：端口已有监听 = 数据库实际可用 → 直接复用（连接重试段会立刻连通）。
+  if (await tcpInUse(PORT)) {
+    console.log(`ℹ 端口 ${PORT} 已有 PostgreSQL 在运行（复用，不重复启动）`);
+    return;
+  }
 
   if (fresh) {
     const pwFile = path.join(WORK, 'pgpw.txt');
