@@ -481,7 +481,7 @@ cd backend && npm install && npm run build && npm test
 
 
 
-* 本仓库采用 **MIT License**（见 [LICENSE](LICENSE)）。`LICENSE` 中的版权人占位符 `[你的名称 / 你的组织]` 请在**上传前替换**为你本人 / 组织的名称。
+* 本仓库采用 **MIT License**（见 [LICENSE](LICENSE)），版权人：**杨联 (YangLian)**。
 
 * 如需改用 Apache-2.0 / GPL-3.0 或保留所有权利（All rights reserved），替换 LICENSE 文件即可。
 
