@@ -97,15 +97,15 @@ export async function render(view) {
     view.querySelector('#sCount').textContent = `共 ${list.length} 家供应商`;
     const allChecked = pageRows.length > 0 && pageRows.every(s => sel.has(Number(s.id)));
     view.querySelector('#sList').innerHTML = pageRows.length ? `
-      <table><thead><tr><th class="seq">序号</th><th style="width:34px"><input type="checkbox" id="sChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}></th>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="sChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}></th><th class="seq">序号</th>
         <th>编号</th><th>供应商名称</th><th>业务员</th><th>电话</th>
         <th>经营方式</th><th class="num">扣点</th><th>结算方式</th><th>地址</th><th>备注</th><th style="width:96px">签字预览</th><th style="width:70px">操作</th></tr></thead>
       <tbody>${pageRows.map((s, i) => {
         const rate = s.deduction_rate ?? s.deductionRate;
         const hasBiz = !!(s.has_business ?? s.hasBusiness);
         return `<tr data-edit="${s.id}" style="cursor:pointer" title="双击编辑">
-        <td class="num seq">${(page - 1) * PAGE_SIZE + i + 1}</td><td onclick="event.stopPropagation()"><input type="checkbox" data-schk="${s.id}" ${sel.has(Number(s.id)) ? 'checked' : ''}
-          ${hasBiz ? 'disabled title="已产生业务的供应商不可删除"' : 'title="未产生业务，可勾选删除"'}></td>
+        <td onclick="event.stopPropagation()"><input type="checkbox" data-schk="${s.id}" ${sel.has(Number(s.id)) ? 'checked' : ''}
+          ${hasBiz ? 'disabled title="已产生业务的供应商不可删除"' : 'title="未产生业务，可勾选删除"'}></td><td class="num seq">${(page - 1) * PAGE_SIZE + i + 1}</td>
         <td class="num muted mono">${gysCode(s.id)}</td>
         <td><b>${esc(s.name)}</b></td>
         <td>${esc(s.contact_person || s.contactPerson || '—')}</td>

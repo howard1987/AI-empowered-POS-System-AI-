@@ -441,7 +441,7 @@ export async function render(view) {
         const deletable = DELETABLE.includes(o.status);
         const cancellable = o.status !== '已取消';   // V4.9.6 已完成也可作废
         return `<tr data-po="${o.id}" style="cursor:pointer" title="双击查看单据详情">
-        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td onclick="event.stopPropagation()"><input type="checkbox" data-pochk="${o.id}" data-deletable="${deletable ? 1 : 0}" ${poSel.has(Number(o.id)) ? 'checked' : ''} title="${deletable ? '勾选：批量打印 / 批量删除' : '勾选：批量打印（已产生业务的单据不可删除，可作废）'}"></td>
+        <td onclick="event.stopPropagation()"><input type="checkbox" data-pochk="${o.id}" data-deletable="${deletable ? 1 : 0}" ${poSel.has(Number(o.id)) ? 'checked' : ''} title="${deletable ? '勾选：批量打印 / 批量删除' : '勾选：批量打印（已产生业务的单据不可删除，可作废）'}"></td><td class="num seq">${(pg.page - 1) * 10 + i + 1}</td>
         <td style="font-family:var(--mono);font-weight:600">${esc(o.po_no)}</td>
         <td>${esc(o.supplier_name || '')}</td>
         <td class="num">${Math.round(Number(o.total_qty ?? o.totalQty ?? 0))}</td>

@@ -115,10 +115,10 @@ export async function render(view) {
     // 无回显则重绘后变回未勾选，表现为「只能全选、无法取消全选」）
     const sAllChecked = items.length > 0 && items.every(p => poSel.has(Number(p.id)));
     $('#sList').innerHTML = items.length ? `
-      <table><thead><tr><th class="seq">序号</th><th style="width:34px"><input type="checkbox" id="sChkAll" title="全选/取消全选本页" ${sAllChecked ? 'checked' : ''}></th><th>名称</th><th>条码</th><th>规格</th><th class="num">库存</th><th class="num">在途</th>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="sChkAll" title="全选/取消全选本页" ${sAllChecked ? 'checked' : ''}></th><th class="seq">序号</th><th>名称</th><th>条码</th><th>规格</th><th class="num">库存</th><th class="num">在途</th>
         <th class="num">库存金额</th><th class="num">下限</th><th class="num">保质期</th><th>最近到期日</th><th>供应商</th><th>状态</th></tr></thead>
       <tbody>${items.map((p, i) => `<tr data-prow="${p.id}" style="cursor:pointer" title="双击查看商品明细">
-        <td class="num seq">${i + 1}</td><td onclick="event.stopPropagation()"><input type="checkbox" data-spo="${p.id}" data-qty="${Number(p.qty_total)}" data-min="${Number(p.min_stock)}" data-max="${Number(p.max_stock)}" ${poSel.has(Number(p.id)) ? 'checked' : ''}></td>
+        <td onclick="event.stopPropagation()"><input type="checkbox" data-spo="${p.id}" data-qty="${Number(p.qty_total)}" data-min="${Number(p.min_stock)}" data-max="${Number(p.max_stock)}" ${poSel.has(Number(p.id)) ? 'checked' : ''}></td><td class="num seq">${i + 1}</td>
         <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(p.name)}</b></td>
         <td style="font-family:var(--mono)">${esc(p.barcode || '—')}</td>
         <td class="muted">${esc(p.spec || '—')}</td>
@@ -166,11 +166,11 @@ export async function render(view) {
     const { mask, close } = openDetailModal(`🛒 生成订货单（${draft.length} 项商品）`, `
       <div class="muted" style="font-size:12.5px;padding:2px 0 8px">建议数量 = 库存下限 × 2 − 现有库存；进价已自动填充<b>最近一批进价</b>，均可修改；不想订的行取消勾选即可。确认后按供应商自动拆单（草稿），到「采购订单」处理。</div>
       <table><thead><tr>
-        <th class="seq">序号</th><th style="width:34px"><input type="checkbox" id="spoAll" checked title="全选/取消全选"></th>
+        <th style="width:34px"><input type="checkbox" id="spoAll" checked title="全选/取消全选"></th><th class="seq">序号</th>
         <th>商品</th><th>规格</th><th>供应商</th><th class="num">现有库存</th><th class="num">下限</th>
         <th class="num" style="width:110px">订货数量</th><th class="num" style="width:120px">进价（元）</th><th class="num">小计</th></tr></thead>
       <tbody id="spoBody">${draft.map((d, ix) => `<tr data-ix="${ix}">
-        <td class="num seq">${ix + 1}</td><td><input type="checkbox" class="spo-chk" data-ix="${ix}" checked></td>
+        <td><input type="checkbox" class="spo-chk" data-ix="${ix}" checked></td><td class="num seq">${ix + 1}</td>
         <td><b>${esc(d.name)}</b></td><td class="muted">${esc(d.spec)}</td><td class="muted">${esc(d.supplier)}</td>
         <td class="num">${d.stock}</td><td class="num">${d.min}</td>
         <td class="num"><input type="number" class="spo-qty" data-ix="${ix}" min="1" step="1" value="${d.qty}" style="width:88px;text-align:right;padding:3px 6px"></td>
@@ -270,7 +270,7 @@ export async function render(view) {
     const rows2 = await must(get('/inventory/expiry-alerts')).catch(() => []);
     const arr = Array.isArray(rows2) ? rows2 : (rows2.items || []);
     $('#sExp').innerHTML = arr.length ? `
-      <table><thead><tr><th class="seq">序号</th><th style="width:34px"><input type="checkbox" id="expAll" title="全选可退批次"></th><th>名称</th><th>条码</th><th class="num">数量</th><th>到期日期</th><th class="num">剩余天数</th>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="expAll" title="全选可退批次"></th><th class="seq">序号</th><th>名称</th><th>条码</th><th class="num">数量</th><th>到期日期</th><th class="num">剩余天数</th>
         <th>供应商</th><th>处置状态</th><th>处置时限</th><th style="width:190px">操作</th></tr></thead>
       <tbody>${arr.map((b, i) => {
         const stTag = b.disposal_status === '已退换' ? '<span class="tag g">已退/换货</span>'

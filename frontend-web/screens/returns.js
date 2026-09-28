@@ -535,7 +535,7 @@ export async function render(view) {
     // V4.26.2 合并为一列后，回显条件与勾选范围一致
     const allChecked = rows.length > 0 && rows.every(r => delSel.has(Number(r.id)));
     view.querySelector('#rList').innerHTML = rows.length ? `
-      <table><thead><tr><th class="seq">序号</th><th style="width:34px"><input type="checkbox" id="rChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}></th>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="rChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}></th><th class="seq">序号</th>
         <th>退货单号</th><th>供应商</th><th class="num">退货数量</th><th class="num">退货金额</th>
         <th>制单时间</th><th>凭证</th><th>状态</th><th style="width:220px">操作</th></tr></thead>
       <tbody>${pg.slice.map((r, i) => {
@@ -543,9 +543,9 @@ export async function render(view) {
         const deletable = DELETABLE.includes(r.status);
         const evi = r.evidence_path || r.evidencePath || '';
         return `<tr data-ret="${r.id}" style="cursor:pointer" title="双击查看单据详情">
-        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td onclick="event.stopPropagation()"><input type="checkbox" data-chk="${r.id}" data-del="${r.id}" data-deletable="${deletable ? 1 : 0}" data-auditable="${pre ? 1 : 0}"
+        <td onclick="event.stopPropagation()"><input type="checkbox" data-chk="${r.id}" data-del="${r.id}" data-deletable="${deletable ? 1 : 0}" data-auditable="${pre ? 1 : 0}"
           ${delSel.has(Number(r.id)) ? 'checked' : ''}
-          title="${deletable ? '勾选：批量打印 / 批量审核 / 批量删除' : '勾选：批量打印（已产生业务的单据不可删除）'}"></td>
+          title="${deletable ? '勾选：批量打印 / 批量审核 / 批量删除' : '勾选：批量打印（已产生业务的单据不可删除）'}"></td><td class="num seq">${(pg.page - 1) * 10 + i + 1}</td>
         <td style="font-family:var(--mono);font-weight:600">${esc(r.return_no || r.returnNo)}</td>
         <td>${esc(r.supplier_name || r.supplierName || '')}</td>
         <td class="num">${Math.round(Number(r.total_qty ?? 0))}</td>

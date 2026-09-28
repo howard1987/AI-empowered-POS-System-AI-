@@ -102,11 +102,11 @@ export async function render(view) {
         <button class="btn sm" id="mBatExp" style="display:none">导出所选 (<b id="mExpN">0</b>)</button>
         <span class="muted" style="font-size:12px" id="mSelN"></span>
       </div>
-      <table><thead><tr><th class="seq">序号</th><th style="width:34px"><input type="checkbox" id="mChkAll" title="全选/取消全选本页" ${items.length && items.every(m => mSel.has(Number(m.id))) ? 'checked' : ''}></th><th>卡号</th><th>姓名</th><th>手机号</th><th>等级</th><th class="num">余额</th>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="mChkAll" title="全选/取消全选本页" ${items.length && items.every(m => mSel.has(Number(m.id))) ? 'checked' : ''}></th><th class="seq">序号</th><th>卡号</th><th>姓名</th><th>手机号</th><th>等级</th><th class="num">余额</th>
         <th class="num">其中本金</th><th class="num">分红余额</th><th class="num">积分</th>
         <th>封顶</th><th>最后活跃</th><th></th></tr></thead>
       <tbody>${items.map((m, i) => `<tr data-mid="${m.id}" style="cursor:pointer" title="双击查看会员详情">
-        <td class="num seq">${i + 1}</td><td onclick="event.stopPropagation()"><input type="checkbox" data-mchk="${m.id}" ${mSel.has(Number(m.id)) ? 'checked' : ''}></td>
+        <td onclick="event.stopPropagation()"><input type="checkbox" data-mchk="${m.id}" ${mSel.has(Number(m.id)) ? 'checked' : ''}></td><td class="num seq">${i + 1}</td>
         <td style="font-family:var(--mono)">${esc(m.card_no)}</td><td>${esc(m.name || '—')}</td><td>${esc(m.phone || '—')}</td>
         <td><span class="tag b">${esc(m.level_name || '普通会员')}</span></td>
         <td class="num"><b>${money(m.balance)}</b></td>
