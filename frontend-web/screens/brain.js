@@ -17,7 +17,7 @@ const APP_BTN = [
   { k: 'holidayStock', label: '🗓 节假日备货' },
   { k: 'weatherStock', label: '🌦 天气备货' },
   { k: 'memberPortraits', label: '👥 会员画像' },
-  { k: 'memberMarketing', label: '🎯 画像营销（V4.16.5）' },
+  { k: 'memberMarketing', label: '🎯 画像营销' },
 ];
 
 function payloadBrief(p) {
@@ -280,22 +280,22 @@ export async function render(view) {
     const money = n => '¥' + Number(n ?? 0).toFixed(2);
     if (p.rule === '安全库存法' && items.length) return `
       <div class="muted" style="font-size:12.5px;margin-bottom:6px">选品明细（按日均销量 × 覆盖天数 − 现有库存 − 在途 计算建议量）</div>
-      <table><thead><tr><th>商品</th><th class="num">现有库存</th><th class="num">在途</th><th class="num">日均销量</th><th class="num">可售天数</th><th class="num">建议订货量</th><th class="num">参考售价</th></tr></thead>
-      <tbody>${items.map(i => `<tr>
-        <td>${esc(i.name || '')}</td><td class="num">${Number(i.stock ?? 0)}</td><td class="num">${Number(i.inTransit ?? 0)}</td>
+      <table><thead><tr><th class="seq">序号</th><th>商品</th><th class="num">现有库存</th><th class="num">在途</th><th class="num">日均销量</th><th class="num">可售天数</th><th class="num">建议订货量</th><th class="num">参考售价</th></tr></thead>
+      <tbody>${items.map((i, idx) => `<tr>
+        <td class="num seq">${idx + 1}</td><td>${esc(i.name || '')}</td><td class="num">${Number(i.stock ?? 0)}</td><td class="num">${Number(i.inTransit ?? 0)}</td>
         <td class="num">${Number(i.avgDaily ?? 0)}</td><td class="num">${i.daysLeft ?? '—'}</td>
         <td class="num" style="font-weight:700;color:var(--pri)">${Number(i.suggestQty ?? 0)}</td>
         <td class="num">${i.sellPrice != null ? money(i.sellPrice) : '—'}</td></tr>`).join('')}</tbody></table>`;
     if (p.rule === '沉默唤醒' && members.length) return `
       <div class="muted" style="font-size:12.5px;margin-bottom:6px">推送人群明细（${p.silentDays ?? 30} 天无有效消费，且有余额/未用券）</div>
-      <table><thead><tr><th>会员</th><th>手机号</th><th class="num">余额</th><th class="num">分红余额</th><th class="num">沉默天数</th></tr></thead>
-      <tbody>${members.map(m => `<tr><td>${esc(m.name || '')}</td><td class="mono">${esc(m.phone || '—')}</td>
+      <table><thead><tr><th class="seq">序号</th><th>会员</th><th>手机号</th><th class="num">余额</th><th class="num">分红余额</th><th class="num">沉默天数</th></tr></thead>
+      <tbody>${members.map((m, i) => `<tr><td class="num seq">${i + 1}</td><td>${esc(m.name || '')}</td><td class="mono">${esc(m.phone || '—')}</td>
         <td class="num">${money(m.balance)}</td><td class="num">${money(m.dividendBalance)}</td><td class="num">≥ ${m.silentDays ?? 30}</td></tr>`).join('')}</tbody></table>`;
     if ((p.rule === '慢动销折扣建议' || p.rule === '临期损耗预警') && items.length) return `
       <div class="muted" style="font-size:12.5px;margin-bottom:6px">定价明细（哪些商品建议改价：原售价 → 现售价）</div>
-      <table><thead><tr><th>商品</th><th class="num">进价</th><th class="num">原售价</th><th class="num">建议价</th><th class="num">建议折扣</th><th>原因</th>${p.rule === '临期损耗预警' ? '<th class="num">剩余天数</th>' : '<th class="num">近7天销量</th>'}</tr></thead>
-      <tbody>${items.map(i => `<tr>
-        <td>${esc(i.name || i.productName || '')}</td>
+      <table><thead><tr><th class="seq">序号</th><th>商品</th><th class="num">进价</th><th class="num">原售价</th><th class="num">建议价</th><th class="num">建议折扣</th><th>原因</th>${p.rule === '临期损耗预警' ? '<th class="num">剩余天数</th>' : '<th class="num">近7天销量</th>'}</tr></thead>
+      <tbody>${items.map((i, idx) => `<tr>
+        <td class="num seq">${idx + 1}</td><td>${esc(i.name || i.productName || '')}</td>
         <td class="num">${i.cost != null ? money(i.cost) : '—'}</td>
         <td class="num">${money(i.sellPrice)}</td>
         <td class="num" style="font-weight:700;color:var(--warn)">${money(i.suggestPrice)}</td>
@@ -308,9 +308,9 @@ export async function render(view) {
       if (!el.length && !ex.length) return '<div class="empty">该建议无明细数据</div>';
       return `
       <div class="muted" style="font-size:12.5px;margin-bottom:6px">淘汰评估明细（窗口 ${p.windowDays ?? 30} 天动销/周转打分：动销越慢分越低，建议「清仓/停补淘汰」的是重灾对象；执行权在人）</div>
-      <table><thead><tr><th>商品</th><th>类别</th><th class="num">库存</th><th class="num">窗口销量</th><th class="num">动销天数</th><th class="num">周转天数</th><th class="num">售价</th><th class="num">打分</th><th>建议</th></tr></thead>
-      <tbody>${el.map(i => `<tr>
-        <td>${esc(i.name || '')}</td><td class="muted">${esc(i.category || '未分类')}</td>
+      <table><thead><tr><th class="seq">序号</th><th>商品</th><th>类别</th><th class="num">库存</th><th class="num">窗口销量</th><th class="num">动销天数</th><th class="num">周转天数</th><th class="num">售价</th><th class="num">打分</th><th>建议</th></tr></thead>
+      <tbody>${el.map((i, idx) => `<tr>
+        <td class="num seq">${idx + 1}</td><td>${esc(i.name || '')}</td><td class="muted">${esc(i.category || '未分类')}</td>
         <td class="num">${Number(i.stock ?? 0)}</td><td class="num">${Number(i.qtyWindow ?? 0)}</td>
         <td class="num">${i.sellDays ?? '—'}</td>
         <td class="num">${i.turnoverDays != null ? i.turnoverDays : '—'}</td>
@@ -318,13 +318,13 @@ export async function render(view) {
         <td class="num" style="font-weight:700">${i.confidence != null ? (Number(i.confidence) * 100).toFixed(0) + ' 分' : '—'}</td>
         <td class="muted">${esc(i.suggest || '—')}</td></tr>`).join('') || '<tr><td colspan="9" class="muted">无淘汰候选</td></tr>'}</tbody></table>
       ${ex.length ? `<div class="muted" style="font-size:12.5px;margin:12px 0 6px">品类扩容建议（收入占比显著高于 SKU 占比 → 建议扩充该品类商品结构）</div>
-      <table><thead><tr><th>品类</th><th class="num">收入占比</th><th class="num">SKU 占比</th></tr></thead>
-      <tbody>${ex.map(x => `<tr><td>${esc(x.category || '')}</td><td class="num">${Number(x.revShare ?? 0)}%</td><td class="num">${Number(x.skuShare ?? 0)}%</td></tr>`).join('')}</tbody></table>` : ''}`;
+      <table><thead><tr><th class="seq">序号</th><th>品类</th><th class="num">收入占比</th><th class="num">SKU 占比</th></tr></thead>
+      <tbody>${ex.map((x, i) => `<tr><td class="num seq">${i + 1}</td><td>${esc(x.category || '')}</td><td class="num">${Number(x.revShare ?? 0)}%</td><td class="num">${Number(x.skuShare ?? 0)}%</td></tr>`).join('')}</tbody></table>` : ''}`;
     }
     if (p.rule === '收银异常基线' && items.length) return `
       <div class="muted" style="font-size:12.5px;margin-bottom:6px">异常人员明细</div>
-      <table><thead><tr><th>收银员</th><th class="num">退款率%</th><th class="num">其他指标</th></tr></thead>
-      <tbody>${items.map(i => `<tr><td>${esc(i.name || '')}</td><td class="num">${i.refundRate ?? '—'}</td><td class="muted">${esc(JSON.stringify(Object.fromEntries(Object.entries(i).filter(([k]) => !['name', 'refundRate'].includes(k)))).slice(0, 80))}</td></tr>`).join('')}</tbody></table>`;
+      <table><thead><tr><th class="seq">序号</th><th>收银员</th><th class="num">退款率%</th><th class="num">其他指标</th></tr></thead>
+      <tbody>${items.map((i, idx) => `<tr><td class="num seq">${idx + 1}</td><td>${esc(i.name || '')}</td><td class="num">${i.refundRate ?? '—'}</td><td class="muted">${esc(JSON.stringify(Object.fromEntries(Object.entries(i).filter(([k]) => !['name', 'refundRate'].includes(k)))).slice(0, 80))}</td></tr>`).join('')}</tbody></table>`;
     return `<pre style="white-space:pre-wrap;font-size:12px">${esc(JSON.stringify(p, null, 2))}</pre>`;
   }
 
@@ -449,7 +449,14 @@ export async function render(view) {
       recalc(tr);
     });
     recalcAll();
-    mask.querySelector('#edAll').onchange = e => mask.querySelectorAll('.ed-chk').forEach(cb => cb.checked = e.target.checked);
+    const edAll = mask.querySelector('#edAll');
+    if (edAll) {
+      edAll.onchange = e => mask.querySelectorAll('.ed-chk').forEach(cb => cb.checked = e.target.checked);
+      // V5.0.3：行勾选变化时同步表头全选框（部分取消 → 表头自动取消勾选，可再次全选/取消全选）
+      mask.querySelectorAll('.ed-chk').forEach(cb => cb.onchange = () => {
+        edAll.checked = mask.querySelectorAll('.ed-chk').length > 0 && [...mask.querySelectorAll('.ed-chk')].every(x => x.checked);
+      });
+    }
     const batDrop = mask.querySelector('#edBatDrop');
     if (batDrop) batDrop.onclick = () => {
       const sel = [...mask.querySelectorAll('.ed-chk')].filter(cb => cb.checked);
@@ -562,8 +569,8 @@ export async function render(view) {
     $('#sTotal').textContent = `共 ${r.total} 条`;
     const arr = r.items || [];
     $('#sList').innerHTML = arr.length ? `
-      <table><thead><tr><th>ID</th><th>域</th><th>建议内容</th><th class="num">置信度</th><th>状态</th><th>原因/决定人</th><th>创建时间</th><th>操作</th></tr></thead>
-      <tbody>${arr.map(s => {
+      <table><thead><tr><th class="seq">序号</th><th>ID</th><th>域</th><th>建议内容</th><th class="num">置信度</th><th>状态</th><th>原因/决定人</th><th>创建时间</th><th>操作</th></tr></thead>
+      <tbody>${arr.map((s, i) => {
         const conf = s.confidence != null ? (Number(s.confidence) * 100).toFixed(0) + '%' : '—';
         const tag = s.status === '已执行' ? 'g' : s.status === '已否决' ? 'r' : 'y';
         const dec = s.status === '待处理' ? '—'
@@ -571,7 +578,7 @@ export async function render(view) {
             + (s.autoExecuted ? '<span class="tag b" style="margin-left:4px">🤖 自动执行</span>'
               : s.decided_by_name ? `（${esc(s.decided_by_name)}）` : '');
         return `<tr data-sg="${s.id}" style="cursor:pointer" title="点击查看建议明细（选品/定价/人群）">
-          <td>${s.id}</td><td>${esc(s.domain)}</td>
+          <td class="num seq">${i + 1}</td><td>${s.id}</td><td>${esc(s.domain)}</td>
           <td class="muted">${esc(payloadBrief(s.payload))}</td>
           <td class="num">${conf}</td>
           <td><span class="tag ${tag}">${esc(s.status)}</span></td>
@@ -584,7 +591,7 @@ export async function render(view) {
             : '<span class="muted" style="font-size:11.5px">点行看明细</span>'}</td>
         </tr>`;
       }).join('')}</tbody></table>` : '<div class="empty">暂无建议（可点击「一键全量刷新」生成）</div>';
-    // 点行 → 建议明细弹窗（V4.14.9）
+    // 点行 → 建议明细弹窗
     view.querySelectorAll('[data-sg]').forEach(tr => tr.onclick = e => {
       if (e.target.closest('button')) return;   // 点按钮不触发明细
       const hit = arr.find(x => Number(x.id) === Number(tr.dataset.sg));
@@ -622,9 +629,9 @@ export async function render(view) {
       <div class="bar" style="padding:4px 2px 0">
         <button class="btn sm" id="kbBatDel" style="display:none;color:#c0392b;border-color:#e6b0aa">🗑 批量删除 (<b id="kbDelN">0</b>)</button>
       </div>
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="kbChkAll" title="全选/取消全选" ${arr.length && arr.every(d => kbSel.has(Number(d.id))) ? 'checked' : ''}></th><th>标题</th><th>来源</th><th>状态</th><th>预览</th><th>收录时间</th><th></th></tr></thead>
-      <tbody>${arr.map(d => `<tr>
-        <td onclick="event.stopPropagation()"><input type="checkbox" data-kbchk="${d.id}" ${kbSel.has(Number(d.id)) ? 'checked' : ''}></td>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="kbChkAll" title="全选/取消全选" ${arr.length && arr.every(d => kbSel.has(Number(d.id))) ? 'checked' : ''}></th><th class="seq">序号</th><th>标题</th><th>来源</th><th>状态</th><th>预览</th><th>收录时间</th><th></th></tr></thead>
+      <tbody>${arr.map((d, i) => `<tr>
+        <td onclick="event.stopPropagation()"><input type="checkbox" data-kbchk="${d.id}" ${kbSel.has(Number(d.id)) ? 'checked' : ''}></td><td class="num seq">${i + 1}</td>
         <td>${esc(d.title)}</td>
         <td class="muted">${esc(d.source_type)}</td>
         <td><span class="tag g">${esc(d.status)}</span></td>

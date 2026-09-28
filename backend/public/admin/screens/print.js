@@ -182,19 +182,22 @@ export async function render(view) {
     const curType = cur.printer_type || '小票';
     const m = modal(`
       <h3 style="margin:0 0 12px">${id ? '编辑打印机' : '新增打印机'}</h3>
-      <div class="fld"><label>名称（前台小票机 / 价签标签机 …）</label>
-        <input id="pfName" value="${esc(cur.name || '')}" placeholder="如：前台小票机"></div>
+      <div class="fld" style="flex-direction:column;align-items:flex-start;gap:3px"><label style="min-width:0;text-align:left">名称</label>
+        <input id="pfName" value="${esc(cur.name || '')}" placeholder="如：前台小票机" style="width:100%">
+        <div class="muted" style="font-size:11px">用于区分用途，如：前台小票机 / 价签标签机 …</div></div>
       <div class="fld"><label>设备类型</label>
         <select id="pfType">${['小票', '标签'].map(t =>
           `<option value="${t}" ${curType === t ? 'selected' : ''}>${t === '小票' ? '小票机（ESC/POS 卷纸）' : '标签机（TSPL/ZPL 价签·秤贴）'}</option>`).join('')}</select></div>
       <div class="fld"><label>连接方式</label>
         <select id="pfConn">${['USB', '网口', '蓝牙', '串口'].map(c =>
           `<option ${cur.conn_type === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
-      <div class="fld"><label>连接地址（网口填 IP:port，如 192.168.1.50:9100；串口/USB 可留空）</label>
-        <input id="pfAddr" value="${esc(cur.conn_addr || '')}" placeholder="如：192.168.1.50:9100"></div>
-      <div class="fld"><label>品牌（通用适配：芯烨/佳博/得力/爱普生=ESC/POS；汉印/佳博/TSC=TSPL、斑马=ZPL）</label>
-        <select id="pfBrand">${['芯烨', '佳博', '得力', '爱普生', '汉印', 'TSC', '斑马', '通用'].map(b =>
-          `<option ${(cur.brand || '通用') === b ? 'selected' : ''}>${b}</option>`).join('')}</select></div>
+      <div class="fld" style="flex-direction:column;align-items:flex-start;gap:3px"><label style="min-width:0;text-align:left">连接地址</label>
+        <input id="pfAddr" value="${esc(cur.conn_addr || '')}" placeholder="如：192.168.1.50:9100" style="width:100%">
+        <div class="muted" style="font-size:11px">网口填 IP:port（如 192.168.1.50:9100）；串口/USB 可留空</div></div>
+      <div class="fld" style="flex-direction:column;align-items:flex-start;gap:3px"><label style="min-width:0;text-align:left">品牌</label>
+        <select id="pfBrand" style="width:100%">${['芯烨', '佳博', '得力', '爱普生', '汉印', 'TSC', '斑马', '通用'].map(b =>
+          `<option ${(cur.brand || '通用') === b ? 'selected' : ''}>${b}</option>`).join('')}</select>
+        <div class="muted" style="font-size:11px">通用适配：芯烨/佳博/得力/爱普生=ESC/POS；汉印/佳博/TSC=TSPL、斑马=ZPL</div></div>
       <div class="fld" id="pfWidthRow"><label>纸宽</label>
         <select id="pfWidth">${[58, 80].map(w => `<option value="${w}" ${Number(cur.width_mm || 80) === w ? 'selected' : ''}>${w}mm</option>`).join('')}</select></div>
       <div class="fld" id="pfLabelRow" style="display:none"><label>标签纸型（价签/秤贴）</label>

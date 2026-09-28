@@ -92,8 +92,8 @@ export async function render(view) {
     const rows = await must(get('/dividend/periods')).catch(() => []);
     const pg = paginate(rows, perPage, 10);
     view.querySelector('#dPeriods').innerHTML = rows.length ? `
-      <table><thead><tr><th>业务日期</th><th class="num">净利润</th><th class="num">分红池</th><th class="num">实发</th><th>状态</th></tr></thead>
-      <tbody>${pg.slice.map(p => `<tr><td>${String(p.biz_date).slice(0, 10)}</td>
+      <table><thead><tr><th class="seq">序号</th><th>业务日期</th><th class="num">净利润</th><th class="num">分红池</th><th class="num">实发</th><th>状态</th></tr></thead>
+      <tbody>${pg.slice.map((p, i) => `<tr><td class="num seq">${i + 1}</td><td>${String(p.biz_date).slice(0, 10)}</td>
         <td class="num">${money(p.net_profit)}</td><td class="num">${money(p.pool_amount)}</td>
         <td class="num">${money(p.given_amount)}</td><td>${esc(p.status || '—')}</td></tr>`).join('')}</tbody></table>${pg.bar}`
       : '<div class="empty">暂无计提记录</div>';
@@ -104,8 +104,8 @@ export async function render(view) {
     const rows = await must(get('/dividend/records' + (mid ? `?memberId=${mid}` : ''))).catch(() => []);
     const pg = paginate(rows, recPage, 10);
     view.querySelector('#dRecords').innerHTML = rows.length ? `
-      <table><thead><tr><th>会员</th><th>类型</th><th class="num">金额</th><th>时间</th></tr></thead>
-      <tbody>${pg.slice.map(r => `<tr><td>${esc(r.member_name || r.member_id)}</td>
+      <table><thead><tr><th class="seq">序号</th><th>会员</th><th>类型</th><th class="num">金额</th><th>时间</th></tr></thead>
+      <tbody>${pg.slice.map((r, i) => `<tr><td class="num seq">${i + 1}</td><td>${esc(r.member_name || r.member_id)}</td>
         <td><span class="tag ${r.record_type === '计提' ? 'g' : r.record_type === '抵扣' ? 'b' : 'y'}">${esc(r.record_type)}</span></td>
         <td class="num">${money(r.amount)}</td><td>${dt(r.created_at)}</td></tr>`).join('')}</tbody></table>${pg.bar}`
       : '<div class="empty">暂无明细</div>';

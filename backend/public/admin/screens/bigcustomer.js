@@ -1,6 +1,7 @@
-import { get, post, put, must, money, esc, dt, toast } from '../api.js';
+import { get, post, put, del, must, money, esc, dt, toast, imgUrl } from '../api.js';
 import { openDetailModal, paginate, bindPager } from '../common-ui.js';
 import { attachProductSearch } from '../product-search.js';
+import { zoomImg } from '../ui.js';
 
 /** 大客户与团购销售（方案 5.10 / M9）：
  *  一屏三 Tab：客户档案（建档/启停/下单） → 专属价目（按客户批量设价） → 应收台账（账龄/未清赊账/回款登记）
@@ -15,6 +16,7 @@ export async function render(view) {
         <button class="btn sm segbtn" data-tab="price">💱 专属价目</button>
         <button class="btn sm segbtn" data-tab="req">📨 价申请</button>
         <button class="btn sm segbtn" data-tab="rcv">📑 应收台账</button>
+        <button class="btn sm segbtn" data-tab="rch">💳 充值明细</button>
       </span>
     </div>
 
@@ -65,6 +67,19 @@ export async function render(view) {
         <div style="padding:0 18px 10px" id="bcRcvAging"></div>
         <div class="tbl-min pg-host" style="padding:0 18px" id="bcRcvOrders"></div>
         <div class="tbl-min pg-host" style="padding:0 18px" id="bcRcvPay"></div>
+      </div>
+    </div>
+
+    <div id="bcTabRch" style="display:none">
+      <div class="card" style="padding-bottom:16px">
+        <h3>💳 充值明细
+          <span class="muted" style="font-weight:400">大客户预充值流水（先存后用；下单可选「预存余额」抵扣，不计应收）</span></h3>
+        <div class="bar">
+          <select id="bcRchCust" style="min-width:240px"></select>
+          <input id="bcRchKw" placeholder="方式/备注关键字" style="width:200px">
+          <button class="btn sm" id="bcRchRefresh">查询</button>
+        </div>
+        <div class="tbl-min pg-host" id="bcRchList" style="margin-top:8px"></div>
       </div>
     </div>
 
@@ -172,6 +187,7 @@ export async function render(view) {
     const opts = r.map(c => `<option value="${c.id}">${esc(c.name)}${Number(c.status) === 1 ? '' : '（停用）'}</option>`).join('');
     $('#bcPriceCust').innerHTML = '<option value="">— 选择客户 —</option>' + opts;
     $('#bcRcvCust').innerHTML = '<option value="">— 选择客户 —</option>' + opts;
+    $('#bcRchCust').innerHTML = '<option value="">— 选择客户 —</option>' + opts;
     $('#bcReqCust').innerHTML = '<option value="">— 选择客户 —</option>' + opts;
     if (keepCur && state.curId) { $('#bcPriceCust').value = String(state.curId); $('#bcRcvCust').value = String(state.curId); }
     drawCustTable();
@@ -183,7 +199,7 @@ export async function render(view) {
     $('#bcCustBody').innerHTML = rows.length ? `
       <table class="tbl">
         <thead><tr>
-          <th>名称</th><th>联系人</th><th>电话</th><th class="num">信用额度</th><th class="num">整单折扣</th>
+          <th>名称</th><th>联系人</th><th>电话</th><th>建档时间</th><th class="num">信用额度</th><th class="num">整单折扣</th>
           <th class="num">订单数</th><th class="num">应收合计</th><th class="num">已收</th><th class="num">未收</th>
           <th>状态</th><th style="width:230px">操作</th>
         </tr></thead>
@@ -193,6 +209,7 @@ export async function render(view) {
             <td><b>${esc(c.name)}</b>${c.signature_path ? ' <span class="tag g" title="已采集电子签字">✍</span>' : ''}</td>
             <td class="muted">${esc(c.contact || '—')}</td>
             <td class="muted">${esc(c.phone || '—')}</td>
+            <td class="muted">${c.created_at ? dt(c.created_at) : '—'}</td>
             <td class="num">${Number(c.credit_limit) > 0 ? money(c.credit_limit) : '不限'}</td>
             <td class="num">${(Number(c.default_discount) * 100).toFixed(0)}%</td>
             <td class="num">${c.order_count ?? 0}</td>
@@ -201,10 +218,9 @@ export async function render(view) {
             <td class="num"><b style="color:${unpaid > 0 ? 'var(--warn)' : 'inherit'}">${money(unpaid)}</b></td>
             <td>${Number(c.status) === 1 ? '<span class="tag g">启用</span>' : '<span class="tag r">停用</span>'}</td>
             <td style="white-space:nowrap">
-              <button class="btn sm" data-edit="${c.id}">编辑</button>
-              <button class="btn sm pri" data-recharge="${c.id}">💰 预充值</button>
-              <button class="btn sm" data-price="${c.id}">专价</button>
-              <button class="btn sm" data-rcv="${c.id}">台账</button>
+              ${unpaid > 0
+                ? `<button class="btn sm pri" data-collect="${c.id}">💰 收款</button>`
+                : '<span class="tag g" title="无未收欠款">已结清</span>'}
               <button class="btn sm pri" data-order="${c.id}">下单</button>
               <button class="btn sm ${Number(c.status) === 1 ? 'warn' : ''}" data-toggle="${c.id}">${Number(c.status) === 1 ? '停用' : '启用'}</button>
             </td>
@@ -213,10 +229,9 @@ export async function render(view) {
       </table>${pg.bar}` : '<div class="empty">暂无客户（点「➕ 新建客户」建档）</div>';
     bindPager($('#bcCustBody'), p => { custPage = p; drawCustTable(); });
 
-    $('#bcCustBody').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openCust(Number(b.dataset.edit)));
-    $('#bcCustBody').querySelectorAll('[data-price]').forEach(b => b.onclick = () => gotoPrice(Number(b.dataset.price)));
-    $('#bcCustBody').querySelectorAll('[data-rcv]').forEach(b => b.onclick = () => gotoRcv(Number(b.dataset.rcv)));
     $('#bcCustBody').querySelectorAll('[data-order]').forEach(b => b.onclick = () => openOrder(Number(b.dataset.order)));
+    // V5.0.1：收款入口（仅对有未收欠款的客户显示；编辑/预充值/专价/台账均迁入客户详情弹窗）
+    $('#bcCustBody').querySelectorAll('[data-collect]').forEach(b => b.onclick = () => openCollect(Number(b.dataset.collect)));
     $('#bcCustBody').querySelectorAll('[data-toggle]').forEach(b => b.onclick = async () => {
       const c = state.customers.find(x => Number(x.id) === Number(b.dataset.toggle));
       await must(put(`/big-customers/${b.dataset.toggle}`, { status: Number(c.status) === 1 ? 0 : 1 }),
@@ -224,8 +239,7 @@ export async function render(view) {
       await loadCustomers();
     });
     // V4.14.0 C2：预充值入口
-    $('#bcCustBody').querySelectorAll('[data-recharge]').forEach(b => b.onclick = () => openRecharge(Number(b.dataset.recharge)));
-    // V4.14.0 C3：双击客户行 → 客户详情弹窗
+    // V4.14.0 C3：双击客户行 → 客户详情弹窗（编辑/预充值/专价/台账均在此弹窗内）
     $('#bcCustBody').querySelectorAll('tr[data-cust]').forEach(tr => tr.ondblclick = () => openCustDetail(Number(tr.dataset.cust)));
   }
 
@@ -234,7 +248,8 @@ export async function render(view) {
     const c = state.customers.find(x => Number(x.id) === id);
     if (!c) return;
     const unpaid = Math.max(0, Number(c.total_receivable) - Number(c.paid_cash) - Number(c.paid_collect));
-    openDetailModal(`🤝 客户详情：${esc(c.name)}`, `
+    openDetailModal(`🤝 客户详情`, `
+      <div class="bar muted" style="margin-bottom:8px">👤 客户名称：<b>${esc(c.name)}</b>（编号 #${c.id}）</div>
       <div class="grid kpis" style="grid-template-columns:repeat(4,1fr)">
         <div class="kpi"><div class="t">信用额度（赊账上限）</div><div class="v">${Number(c.credit_limit) > 0 ? money(c.credit_limit) : '不限'}</div></div>
         <div class="kpi"><div class="t">额度余额（还可赊）</div><div class="v">${Number(c.credit_limit) > 0 ? money(Math.max(0, Number(c.credit_limit) - unpaid)) : '不限'}</div></div>
@@ -244,21 +259,50 @@ export async function render(view) {
       <table style="margin-top:10px">
         <tr><td style="width:110px;color:var(--muted,#8a8577)">联系人</td><td>${esc(c.contact || '—')}</td>
             <td style="width:110px;color:var(--muted,#8a8577)">联系电话</td><td>${esc(c.phone || '—')}</td></tr>
+        <tr><td style="color:var(--muted,#8a8577)">建档时间</td><td>${c.created_at ? dt(c.created_at) : '—'}</td>
+            <td style="color:var(--muted,#8a8577)">最近业务</td><td>${c.last_order_at ? dt(c.last_order_at) : '—'}</td></tr>
         <tr><td style="color:var(--muted,#8a8577)">整单折扣</td><td>${(Number(c.default_discount) * 100).toFixed(0)}%</td>
             <td style="color:var(--muted,#8a8577)">订单数</td><td>${c.order_count ?? 0}</td></tr>
         <tr><td style="color:var(--muted,#8a8577)">应收合计</td><td>${money(c.total_receivable)}</td>
             <td style="color:var(--muted,#8a8577)">已收</td><td>${money((Number(c.paid_cash) || 0) + (Number(c.paid_collect) || 0))}</td></tr>
         <tr><td style="color:var(--muted,#8a8577)">状态</td><td>${Number(c.status) === 1 ? '<span class="tag g">启用</span>' : '<span class="tag r">停用</span>'}</td>
-            <td style="color:var(--muted,#8a8577)">电子签字</td><td>${c.signature_path ? '<span class="tag g">已采集</span>' : '<span class="tag y">未采集</span>'}</td></tr>
+            <td style="color:var(--muted,#8a8577)">电子签字</td>
+            <td>${c.signature_path
+              ? `<img src="${imgUrl(c.signature_path)}" data-zoom style="max-height:44px;border:1px dashed var(--line);border-radius:6px;cursor:zoom-in;vertical-align:middle;background:#fff" title="点击放大预览">
+                 <span class="tag g" id="cdResign" style="cursor:pointer" title="点击重新采集/补签">已采集 · 点击重采</span>`
+              : `<span class="tag y" id="cdResign" style="cursor:pointer" title="点击采集签字">未采集 · 点击采集</span>`}</td></tr>
       </table>
-      <div class="doc-tip">💡 口径说明：额度余额 = 信用额度 − 未收应收（可继续赊账的空间）；预存余额 = 预充值未消费的金额，下单可选「预存余额」直接抵扣。</div>
-      <div class="bar" style="justify-content:flex-end;margin-top:8px">
+      <div class="doc-tip">💡 口径说明：额度余额 = 信用额度 − 未收应收（可继续赊账的空间）；预存余额 = 预充值未消费的金额，下单可选「预存余额」直接抵扣。删除条件：未产生业务，或已停用且最近业务超过 90 天（历史业务单据保留）。</div>
+      <div class="bar" style="justify-content:flex-end;margin-top:8px;flex-wrap:wrap">
+        ${unpaid > 0 ? '<button class="btn pri" id="cdGoCollect">💰 收款</button>' : ''}
         <button class="btn pri" id="cdGoRc">💰 预充值</button>
         <button class="btn" id="cdGoEdit">✏️ 编辑档案</button>
+        <button class="btn" id="cdGoPrice">🏷 专价</button>
+        <button class="btn" id="cdGoRcv">📋 台账</button>
+        ${(Number(c.order_count) === 0 || (Number(c.status) === 0 && (!c.last_order_at || (Date.now() - new Date(c.last_order_at).getTime()) > 90 * 86400000)))
+          ? '<button class="btn" id="cdGoDel" style="color:#c0392b;border-color:#e6b8b1">🗑 删除</button>' : ''}
       </div>`, { width: 720 });
     const mask = [...document.querySelectorAll('.modal-mask')].pop();
     mask.querySelector('#cdGoRc').onclick = () => { mask.remove(); openRecharge(id); };
     mask.querySelector('#cdGoEdit').onclick = () => { mask.remove(); openCust(id); };
+    // V5.0.1：专价/台账/收款迁入客户详情，形成单一操作入口
+    mask.querySelector('#cdGoPrice').onclick = () => { mask.remove(); gotoPrice(id); };
+    mask.querySelector('#cdGoRcv').onclick = () => { mask.remove(); gotoRcv(id); };
+    const cc = mask.querySelector('#cdGoCollect');
+    if (cc) cc.onclick = () => { mask.remove(); openCollect(id); };
+    // V5.0.2：签字预览放大 / 点击状态文字补采重采（进入编辑弹窗签字区）
+    const zp = mask.querySelector('[data-zoom]');
+    if (zp) zp.onclick = () => zoomImg(zp.src);
+    const rs = mask.querySelector('#cdResign');
+    if (rs) rs.onclick = () => { mask.remove(); openCust(id); };
+    // V5.0.2：条件删除（后端二次校验）
+    const dl = mask.querySelector('#cdGoDel');
+    if (dl) dl.onclick = async () => {
+      if (!confirm(`确认删除客户「${c.name}」？\n档案/专属价/价目申请/资金流水将清除；已有业务单据保留留痕。`)) return;
+      await must(del(`/big-customers/${id}`), '客户已删除');
+      mask.remove();
+      await loadCustomers();
+    };
   }
 
   /* ── V4.14.0 C2：预充值弹窗 ── */
@@ -268,7 +312,8 @@ export async function render(view) {
     const mask = document.createElement('div');
     mask.className = 'modal-mask';
     mask.style.display = 'flex';
-    mask.innerHTML = `<div class="modal" style="width:420px"><h3>💰 预充值 · ${esc(c.name)}</h3>
+    mask.innerHTML = `<div class="modal" style="width:420px"><h3>💰 预充值
+      <span class="muted" style="font-size:12px;font-weight:400">客户：${esc(c.name)}</span></h3>
       <div class="doc-head" style="grid-template-columns:1fr;border:1px dashed var(--line);border-radius:10px;padding:14px 16px">
         <div class="fld"><label class="req">充值金额（元）</label><input id="brcAmt" type="number" min="0.01" step="0.01"></div>
         <div class="fld"><label>收款方式</label>
@@ -289,6 +334,115 @@ export async function render(view) {
       }), `已预充值 ${money(amount)}`);
       mask.remove();
       await loadCustomers();
+    };
+  }
+
+  /* ── V5.0.1 收款闭环：对账单弹窗（打印 A5 对账单 + 确认收款终结欠款） ── */
+  async function openCollect(id) {
+    const c = state.customers.find(x => Number(x.id) === id);
+    if (!c) return;
+    const d = await must(get(`/big-customers/${id}/receivables`));
+    const s = d.summary;
+    if (!(s.unpaid > 0)) { toast('该客户无未收欠款', false); return; }
+    const mask = document.createElement('div');
+    mask.className = 'modal-mask';
+    mask.innerHTML = `<div class="modal" style="width:860px;height:min(84vh,780px);display:flex;flex-direction:column">
+      <h3 style="flex:none">💰 收款 <span class="muted" style="font-size:12px;font-weight:400">客户：${esc(c.name)} · 未收欠款 <b style="color:#c0392b">${money(s.unpaid)}</b></span></h3>
+      <div id="bcCollBody" style="flex:1;overflow:auto">
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+          <div style="flex:1;min-width:130px;padding:10px 14px;border:1px solid var(--line);border-radius:10px"><div class="muted" style="font-size:12px">应收合计</div><b>${money(s.totalReceivable)}</b></div>
+          <div style="flex:1;min-width:130px;padding:10px 14px;border:1px solid var(--line);border-radius:10px"><div class="muted" style="font-size:12px">现结实收</div><b>${money(s.paidCash)}</b></div>
+          <div style="flex:1;min-width:130px;padding:10px 14px;border:1px solid var(--line);border-radius:10px"><div class="muted" style="font-size:12px">回款登记</div><b>${money(s.paidCollect)}</b></div>
+          <div style="flex:1;min-width:130px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;border-color:#c0392b"><div class="muted" style="font-size:12px">未收欠款</div><b style="color:#c0392b">${money(s.unpaid)}</b></div>
+        </div>
+        <b>未清赊账单（${(d.unpaidOrders || []).length} 单）</b>
+        <table style="margin:6px 0 12px"><thead><tr><th>单号</th><th>日期</th><th class="num">应付</th></tr></thead>
+          <tbody>${(d.unpaidOrders || []).map(o => `<tr>
+            <td style="font-family:var(--mono)">${esc(o.orderNo)}</td>
+            <td class="muted">${String(o.date).slice(0, 10)}</td>
+            <td class="num">${money(o.amount)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">—</td></tr>'}</tbody></table>
+        <b>应收账龄</b>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 12px">
+          ${(d.aging || []).map(a => `<div style="padding:8px 14px;border:1px solid var(--line);border-radius:10px">
+            <div class="muted" style="font-size:11.5px">${esc(a.bucket)}</div><b>${money(a.amount)}</b></div>`).join('')}
+        </div>
+        <b>近期回款记录</b>
+        <table style="margin-top:6px"><thead><tr><th>时间</th><th class="num">金额</th><th>方式</th><th>备注</th><th>经办</th></tr></thead>
+          <tbody>${(d.payments || []).slice(0, 8).map(p => `<tr>
+            <td class="muted">${dt(p.created_at)}</td><td class="num">${money(p.amount)}</td>
+            <td>${esc(p.method)}</td><td class="muted">${esc(p.remark || '—')}</td><td class="muted">${esc(p.operator_name || '—')}</td>
+          </tr>`).join('') || '<tr><td colspan="5" class="muted">暂无</td></tr>'}</tbody></table>
+      </div>
+      <div class="bar" style="flex:none;margin-top:10px;flex-wrap:wrap;align-items:flex-end">
+        <div><div class="muted" style="font-size:11.5px;margin-bottom:3px">本次收款（元）</div>
+          <input id="bcColAmt" type="number" min="0.01" step="0.01" value="${Number(s.unpaid).toFixed(2)}" style="width:130px"></div>
+        <div><div class="muted" style="font-size:11.5px;margin-bottom:3px">收款方式</div>
+          <select id="bcColMethod"><option>现金</option><option>转账</option><option>微信</option><option>支付宝</option><option>其他</option></select></div>
+        <div style="flex:1;min-width:160px"><div class="muted" style="font-size:11.5px;margin-bottom:3px">备注（留痕）</div>
+          <input id="bcColRemark" placeholder="默认：对账单结清" style="width:100%"></div>
+        <button class="btn" id="bcColPrint">🖨 打印A5对账单</button>
+        <button class="btn pri" id="bcColGo">✔ 确认收款</button>
+      </div>
+      <div class="muted" style="flex:none;font-size:11.5px;margin-top:6px">确认收款后按先进先出冲抵未清赊账单；全额收清即终结欠款状态，列表「收款」按钮随之消失。</div></div>`;
+    document.body.appendChild(mask);
+    mask.onclick = e => { if (e.target === mask) mask.remove(); };
+    // A5 对账单打印（@page A5 单页；账单抬头+汇总+未清明细+账龄+签署栏）
+    mask.querySelector('#bcColPrint').onclick = () => {
+      const w = window.open('', '_blank', 'width=820,height=900');
+      if (!w) { toast('浏览器拦截了打印窗口，请允许弹窗', false); return; }
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>对账单 · ${esc(c.name)}</title>
+        <style>
+          @page { size: A5 portrait; margin: 12mm; }
+          body { font: 12px/1.6 "Microsoft YaHei", sans-serif; color: #222; }
+          h1 { font-size: 17px; text-align: center; margin: 0 0 2px; }
+          .sub { text-align: center; color: #666; font-size: 11px; margin-bottom: 10px; }
+          .meta { display: flex; flex-wrap: wrap; gap: 4px 18px; border: 1px solid #ccc; border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+          th, td { border: 1px solid #bbb; padding: 4px 7px; font-size: 11px; }
+          th { background: #f2efe6; }
+          .num { text-align: right; font-family: Consolas, monospace; }
+          .kpis { display: flex; gap: 8px; margin-bottom: 10px; }
+          .kpi { flex: 1; border: 1px solid #ccc; border-radius: 6px; padding: 6px 10px; }
+          .kpi b { display: block; font-size: 14px; }
+          .sign { display: flex; gap: 40px; margin-top: 26px; }
+          .sign div { flex: 1; border-top: 1px solid #333; padding-top: 4px; text-align: center; color: #555; font-size: 11px; }
+          @media print { .noprint { display: none } }
+        </style></head><body>
+        <h1>大客户对账单</h1>
+        <div class="sub">打印时间 ${new Date().toLocaleString('zh-CN')} · 截至今日未清口径（回款按先进先出冲抵）</div>
+        <div class="meta">
+          <span>客户：<b>${esc(c.name)}</b></span><span>联系人：${esc(c.contact || '—')}</span>
+          <span>电话：${esc(c.phone || '—')}</span><span>信用额度：${Number(c.credit_limit) > 0 ? money(c.credit_limit) : '不限'}</span>
+        </div>
+        <div class="kpis">
+          <div class="kpi">应收合计<b>${money(s.totalReceivable)}</b></div>
+          <div class="kpi">现结实收<b>${money(s.paidCash)}</b></div>
+          <div class="kpi">回款登记<b>${money(s.paidCollect)}</b></div>
+          <div class="kpi">未收欠款<b style="color:#c0392b">${money(s.unpaid)}</b></div>
+        </div>
+        <table><thead><tr><th>单号</th><th>日期</th><th class="num">应付金额</th></tr></thead>
+        <tbody>${(d.unpaidOrders || []).map(o => `<tr><td>${esc(o.orderNo)}</td><td>${String(o.date).slice(0, 10)}</td><td class="num">${money(o.amount)}</td></tr>`).join('')}
+        <tr><td colspan="2"><b>未清合计</b></td><td class="num"><b>${money(s.unpaid)}</b></td></tr></tbody></table>
+        <table><thead><tr><th>账龄段</th><th class="num">金额</th></tr></thead>
+        <tbody>${(d.aging || []).map(a => `<tr><td>${esc(a.bucket)}</td><td class="num">${money(a.amount)}</td></tr>`).join('')}</tbody></table>
+        <div class="sign"><div>客户确认签字</div><div>经办人</div></div>
+        <script>window.onload = () => { window.print(); };</script>
+        </body></html>`);
+      w.document.close();
+    };
+    mask.querySelector('#bcColGo').onclick = async () => {
+      const amount = Number(mask.querySelector('#bcColAmt').value);
+      if (!(amount > 0)) return toast('收款金额必须大于 0', false);
+      await must(post(`/big-customers/${id}/collect`, {
+        amount, method: mask.querySelector('#bcColMethod').value,
+        remark: mask.querySelector('#bcColRemark').value.trim() || '对账单结清',
+      }), `已登记收款 ${money(amount)}`);
+      mask.remove();
+      await loadCustomers();
+      // 全额收清 → 终结欠款状态提示（FIFO 冲抵后未收为 0）
+      const c2 = state.customers.find(x => Number(x.id) === id);
+      const left = c2 ? Math.max(0, Number(c2.total_receivable) - Number(c2.paid_cash) - Number(c2.paid_collect)) : 0;
+      toast(left <= 0.004 ? `✅ 欠款已全部结清，「${c.name}」收款闭环完成` : `仍余未收 ${money(left)}（FIFO 冲抵后）`, left <= 0.004);
     };
   }
 
@@ -330,7 +484,7 @@ export async function render(view) {
   function openCust(id) {
     state.editId = id;
     const c = id ? state.customers.find(x => Number(x.id) === id) : null;
-    $('#bcCustTitle').textContent = c ? `✏️ 编辑客户 · ${c.name}` : '➕ 新建客户';
+    $('#bcCustTitle').textContent = c ? '✏️ 编辑客户' : '➕ 新建客户';
     $('#bcCustName').value = c?.name || '';
     $('#bcCustContact').value = c?.contact || '';
     $('#bcCustPhone').value = c?.phone || '';
@@ -576,7 +730,7 @@ export async function render(view) {
     const c = state.customers.find(x => Number(x.id) === Number(id));
     if (!c) return;
     if (Number(c.status) !== 1) return toast(`客户「${c.name}」已停用，无法下单`, false);
-    $('#bcOrderFor').textContent = `· ${c.name}（整单折扣 ${(Number(c.default_discount) * 100).toFixed(0)}%）`;
+    $('#bcOrderFor').textContent = `整单折扣 ${(Number(c.default_discount) * 100).toFixed(0)}%`;
     $('#bcOrderRows').innerHTML = ''; orderRows.length = 0;
     $('#bcOrderRemark').value = '';
     updateOrderTotal();
@@ -599,7 +753,7 @@ export async function render(view) {
     if ($('#bcTabRcv').style.display !== 'none') await loadRcv();
   };
 
-  /* ── 价申请（V5.0.0 P3-1：连锁模式门店申请 → 总部审批） ── */
+  /* ── 价申请 ── */
   const chain = { isHq: false, enabled: false };
   (async () => {
     try {
@@ -692,7 +846,28 @@ export async function render(view) {
     $('#bcTabPrice').style.display = tab === 'price' ? '' : 'none';
     $('#bcTabReq').style.display = tab === 'req' ? '' : 'none';
     $('#bcTabRcv').style.display = tab === 'rcv' ? '' : 'none';
+    $('#bcTabRch').style.display = tab === 'rch' ? '' : 'none';
+    if (tab === 'rch') loadRch();
   }
+
+  /* ── V5.0.2 充值明细 ── */
+  async function loadRch() {
+    const id = Number($('#bcRchCust').value) || 0;
+    const box = $('#bcRchList');
+    if (!id) { box.innerHTML = '<div class="empty">先选择客户</div>'; return; }
+    const rows = await must(get(`/big-customers/${id}/recharges?keyword=${encodeURIComponent($('#bcRchKw').value.trim())}`)).catch(() => []);
+    box.innerHTML = rows.length ? `<table><thead><tr><th>充值时间</th><th class="num">金额</th><th>方式</th><th>备注</th><th>经办</th></tr></thead>
+      <tbody>${rows.map(p => `<tr>
+        <td class="muted">${dt(p.created_at)}</td>
+        <td class="num"><b style="color:var(--pri)">${money(p.amount)}</b></td>
+        <td>${esc(p.method)}</td>
+        <td class="muted">${esc(p.remark || '—')}</td>
+        <td class="muted">${esc(p.operator_name || '—')}</td></tr>`).join('')}</tbody></table>`
+      : '<div class="empty">暂无充值记录</div>';
+  }
+  $('#bcRchCust').onchange = loadRch;
+  $('#bcRchRefresh').onclick = loadRch;
+  $('#bcRchKw').addEventListener('keydown', e => { if (e.key === 'Enter') loadRch(); });
   view.querySelectorAll('.segbtn[data-tab]').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
 
   /* ── 查询 ── */

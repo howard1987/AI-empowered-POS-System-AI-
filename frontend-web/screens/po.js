@@ -61,10 +61,10 @@ export async function render(view) {
 
     <div id="tab-list">
       <div class="card">
-        <div class="doc-head" style="grid-template-columns:1.5fr 1fr 1.6fr auto;align-items:end">
-          <div class="fld"><label>单据日期</label><span style="display:flex;gap:4px;align-items:center"><input id="poFrom" type="date" value="${monthStart}" style="flex:1;min-width:0"><span style="color:var(--ink-3)">~</span><input id="poTo" type="date" value="${today}" style="flex:1;min-width:0"></span></div>
-          <div class="fld"><label>供应商</label><input id="poQSup" list="poQSupDl7" placeholder="输入名称快速匹配（留空=全部）" style="min-width:150px"><datalist id="poQSupDl7"></datalist></div>
-          <div class="fld"><label>状态</label><span class="seg" id="poStatSel" style="display:flex;gap:2px;flex-wrap:wrap">
+        <div class="doc-head" style="display:flex;flex-wrap:nowrap;align-items:end;gap:14px">
+          <div class="fld" style="flex:none"><label>单据日期</label><span style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap"><input id="poFrom" type="date" value="${monthStart}" style="flex:1;min-width:0"><span style="color:var(--ink-3)">~</span><input id="poTo" type="date" value="${today}" style="flex:1;min-width:0"></span></div>
+          <div class="fld" style="flex:none"><label>供应商</label><input id="poQSup" list="poQSupDl7" placeholder="输入名称快速匹配（留空=全部）" style="width:160px"><datalist id="poQSupDl7"></datalist></div>
+          <div class="fld" style="flex:none"><label>状态</label><span class="seg" id="poStatSel" style="display:flex;gap:2px;flex-wrap:nowrap">
             <button class="btn sm segbtn" data-v="草稿">草稿</button>
             <button class="btn sm segbtn" data-v="待审批">待审批</button>
             <button class="btn sm segbtn" data-v="已下单">已下单</button>
@@ -72,7 +72,7 @@ export async function render(view) {
             <button class="btn sm segbtn" data-v="已完成">已完成</button>
             <button class="btn sm segbtn" data-v="已取消">已取消</button>
             <button class="btn sm segbtn on" data-v="">全部</button></span></div>
-          <div class="fld"><label>&nbsp;</label><span style="display:flex;gap:6px;flex-wrap:wrap">
+          <div class="fld" style="flex:1;min-width:0"><label>&nbsp;</label><span style="display:flex;gap:6px;flex-wrap:nowrap;justify-content:flex-end">
             <button class="btn pri" id="poGo">🔍 查询</button>
             <button class="btn" id="poRefresh">刷新</button>
             <button class="btn pri" id="poNewDoc" style="white-space:nowrap">＋ 新增订单</button>
@@ -262,17 +262,22 @@ export async function render(view) {
   view.querySelector('#poDel').onclick = async () => {
     const ids = [...poSel];
     if (!ids.length) return;
+    // V5.0.3 删除加固：只对「未产生业务」（草稿/待审批/已取消 且无到货）的勾选执行删除，
+    // 已完成/待收货等一律跳过并明示——杜绝「勾 6 删 8」式的范围失控（后端亦有二次校验）。
+    const delIds = ids.filter(id => DELETABLE.includes((poRows.find(r => Number(r.id) === Number(id)) || {}).status));
+    const skipped = ids.length - delIds.length;
+    if (!delIds.length) return toast('所选单据均不可删除（已产生业务的订单只能作废）', false);
     if (!await confirmBox({
       title: '🗑 删除采购订单',
-      html: `确认删除 ${ids.length} 张未产生业务的订单？\n删除后不可恢复（审计留痕）。`,
+      html: `确认删除 ${delIds.length} 张未产生业务的订单？${skipped ? `\n另有 ${skipped} 张已产生业务的勾选将被跳过（请走作废流程）。` : ''}\n删除后不可恢复（审计留痕）。`,
     })) return;
     let ok = 0; const errs = [];
-    for (const id of ids) {
+    for (const id of delIds) {
       try { await must(del(`/purchase/orders/${id}`)); ok++; poSel.delete(Number(id)); }
       catch (e) { errs.push(e.msg || e.message); }
     }
     if (errs.length) toast(`成功 ${ok} 张，失败 ${errs.length} 张：${errs[0]}`, false);
-    else toast(`已删除 ${ok} 张订单`);
+    else toast(skipped ? `已删除 ${ok} 张；跳过 ${skipped} 张已产生业务的订单` : `已删除 ${ok} 张订单`);
     syncDelBtn();
     loadList();
   };
@@ -307,7 +312,7 @@ export async function render(view) {
     } catch (e) { toast(e.message, false); }
   };
 
-  /* ── 作废弹窗（V4.9.6 二次确认风险） ── */
+  /* ── 作废弹窗 ── */
   const voidModal = view.querySelector('#voidModal');
   view.querySelector('#voidCancel').onclick = () => { voidModal.style.display = 'none'; };
   view.querySelector('#voidGo').onclick = async () => {
@@ -338,7 +343,7 @@ export async function render(view) {
       供应商：<b>${esc(o.supplier_name || '')}</b>　
       状态：<span class="tag ${STATUS_TAG[o.status] || 'y'}">${esc(stTxt)}</span>　
       预计到货：${o.expect_arrival ? String(o.expect_arrival).slice(0, 10) : '—'}　
-      备注：${esc(o.remark || '—')}
+      备注：${esc((o.remark || '—').replace(/发货缺口自动生成/g, '自动生成'))}
       ${o.approver_name ? `　审批人：<b>${esc(o.approver_name)}</b>${signImg}　审批时间：${dt(o.approved_at)}` : ''}
       ${o.void_reason ? `　<span style="color:#c0392b">作废原因：${esc(o.void_reason)}</span>` : ''}`;
     const editable = o.status === '草稿';
@@ -365,14 +370,14 @@ export async function render(view) {
       });
     } else {
       view.querySelector('#poItems').innerHTML = its.length ? `
-        <table><thead><tr><th>序号</th><th>条码</th><th>商品</th><th>单位</th><th class="num">订购数量</th>
+        <table><thead><tr><th class="seq">序号</th><th>条码</th><th>商品</th><th>单位</th><th class="num">订购数量</th>
           <th class="num">已到货</th><th class="num">含税进价</th><th class="num">金额</th><th>到货状态</th></tr></thead>
         <tbody>${its.map((it, i) => {
           const p = allProducts.find(x => String(x.id) === String(it.product_id));
           const arrived = Number(it.arrived_qty || 0), order = Number(it.order_qty || 0);
           const lineStat = arrived >= order ? '<span class="tag g">已到齐</span>'
             : arrived > 0 ? `<span class="tag y">部分到货 ${arrived}</span>` : '<span class="tag b">待收</span>';
-          return `<tr><td class="num">${i + 1}</td><td class="mono">${esc(p ? p.barcode || '—' : '—')}</td><td>${esc(it.product_name)}</td><td>${esc(it.base_unit || '—')}</td>
+          return `<tr><td class="num seq">${i + 1}</td><td class="mono">${esc(p ? p.barcode || '—' : '—')}</td><td>${esc(it.product_name)}</td><td>${esc(it.base_unit || '—')}</td>
             <td class="num">${order}</td><td class="num">${arrived}</td>
             <td class="num">${it.price != null ? money(it.price) : '—'}</td>
             <td class="num">${money(order * (Number(it.price) || 0))}</td><td>${lineStat}</td></tr>`;
@@ -429,21 +434,21 @@ export async function render(view) {
     // （原来只统计可删行，导致全选后表头复选框不复原、看起来"只能全选不能取消"）
     const allChecked = rows.length > 0 && rows.every(o => poSel.has(Number(o.id)));
     view.querySelector('#poList').innerHTML = rows.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="poChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}></th>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="poChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}></th><th class="seq">序号</th>
         <th>单号</th><th>供应商</th><th class="num">数量</th><th class="num">金额</th>
         <th>预计到货</th><th>创建</th><th>来源</th><th>状态</th><th style="width:190px">操作</th></tr></thead>
-      <tbody>${rows.map(o => {
+      <tbody>${rows.map((o, i) => {
         const deletable = DELETABLE.includes(o.status);
         const cancellable = o.status !== '已取消';   // V4.9.6 已完成也可作废
         return `<tr data-po="${o.id}" style="cursor:pointer" title="双击查看单据详情">
-        <td onclick="event.stopPropagation()"><input type="checkbox" data-pochk="${o.id}" data-deletable="${deletable ? 1 : 0}" ${poSel.has(Number(o.id)) ? 'checked' : ''} title="${deletable ? '勾选：批量打印 / 批量删除' : '勾选：批量打印（已产生业务的单据不可删除，可作废）'}"></td>
+        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td onclick="event.stopPropagation()"><input type="checkbox" data-pochk="${o.id}" data-deletable="${deletable ? 1 : 0}" ${poSel.has(Number(o.id)) ? 'checked' : ''} title="${deletable ? '勾选：批量打印 / 批量删除' : '勾选：批量打印（已产生业务的单据不可删除，可作废）'}"></td>
         <td style="font-family:var(--mono);font-weight:600">${esc(o.po_no)}</td>
         <td>${esc(o.supplier_name || '')}</td>
         <td class="num">${Math.round(Number(o.total_qty ?? o.totalQty ?? 0))}</td>
         <td class="num">${money(o.total_amount ?? o.totalAmount)}</td>
         <td>${o.expect_arrival ? String(o.expect_arrival).slice(0, 10) : '—'}</td>
         <td>${dt(o.created_at || o.createdAt)}</td>
-        <td><span class="tag ${o.source === '补货建议' ? 'b' : o.source === '订货申请' ? 'y' : o.source === '库存缺货' ? 'n' : ''}" title="单据来源">${esc(o.source_label || '自建')}</span></td>
+        <td><span class="tag ${o.source === '补货建议' ? 'b' : o.source === '订货申请' ? 'y' : o.source === '库存缺货' ? 'n' : o.source === '调拨缺口' ? 'b' : ''}" title="单据来源">${esc(o.source_label || '自建')}</span></td>
         <td><span class="tag ${STATUS_TAG[o.status] || 'y'}">${esc(STATUS_TXT[o.status] || o.status)}</span></td>
         <td style="white-space:nowrap">
           ${o.status === '草稿' ? `<button class="btn sm" data-submit="${o.id}">提交审批</button>` : ''}
@@ -503,4 +508,6 @@ export async function render(view) {
   // V4.9.7 进入页面固定落在列表页（草稿仍在，点「＋新增订单」可恢复编辑，不再直接跳到新增页）
   newDoc();
   await loadList().catch(() => {});
+  // V5.0.3：缓存页重新可见时重拉列表（状态/到货进度可能已被入库等流程改变）
+  view.__onShow = () => { if (document.contains(view)) loadList().catch(() => {}); };
 }

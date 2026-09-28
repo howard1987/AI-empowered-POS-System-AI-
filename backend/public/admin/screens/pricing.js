@@ -61,7 +61,7 @@ export async function render(view) {
           <div class="kpi" style="margin:0"><div class="v">${data.count}</div><div class="t">待调价商品</div></div>
           <div class="kpi" style="margin:0"><div class="v">${list.filter(x => x.type === 'expiry').length}</div><div class="t">临期</div></div>
           <div class="kpi" style="margin:0"><div class="v">${list.filter(x => x.type === 'stale').length}</div><div class="t">滞销</div></div>
-          <div class="kpi" style="margin:0"><div class="v">¥${money(data.impactTotal)}</div><div class="t">预计让利（按在库量）</div></div>
+          <div class="kpi" style="margin:0"><div class="v">${money(data.impactTotal)}</div><div class="t">预计让利（按在库量）</div></div>
         </div>
         <div class="bar" style="flex-wrap:wrap">
           <button class="btn pri" id="ppApply">✅ 生成调价草稿（勾选项）</button>

@@ -156,7 +156,7 @@ export async function render(view) {
         </div>
       </div>
 
-      <!-- 供应商往来账（V4.14.0 A2：移至 A5 结算单预览下方） -->
+      <!-- 供应商往来账 -->
       <div class="card" style="margin-bottom:14px;padding-bottom:16px">
         <h3>供应商往来账 </h3>
         <div class="tbl-min pg-host" style="padding:8px 18px" id="lList"></div>
@@ -241,9 +241,9 @@ export async function render(view) {
     const arr = rows.items || rows || [];
     const pg = paginate(arr, lgPage, 10);
     view.querySelector('#lList').innerHTML = arr.length ? `
-      <table><thead><tr><th>日期</th><th>方向</th><th>单据</th><th>业务</th><th class="num">借方</th><th class="num">贷方</th><th class="num">余额</th></tr></thead>
-      <tbody>${pg.slice.map(r => `<tr>
-        <td>${dt(r.doc_date || r.created_at)}</td>
+      <table><thead><tr><th class="seq">序号</th><th>日期</th><th>方向</th><th>单据</th><th>业务</th><th class="num">借方</th><th class="num">贷方</th><th class="num">余额</th></tr></thead>
+      <tbody>${pg.slice.map((r, i) => `<tr>
+        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td>${dt(r.doc_date || r.created_at)}</td>
         <td><span class="tag ${Number(r.debit) > 0 ? 'y' : 'g'}">${Number(r.debit) > 0 ? '借' : '贷'}</span></td>
         <td style="font-family:var(--mono)">${esc(r.biz_no || '')}</td>
         <td class="muted">${esc(({ inbound: '采购入库', return: '采购退货', fee: '供应商费用', settlement: '结算付款', inbound_void: '入库作废' })[r.biz_type] || r.biz_type || '')}</td>
@@ -275,7 +275,7 @@ export async function render(view) {
     const kw = (view.querySelector('#rcKw').value || '').trim().toLowerCase();
     const hit = x => !kw || String(x.doc_no || x.docNo || '').toLowerCase().includes(kw)
       || String(x.fee_type || '').toLowerCase().includes(kw) || String(x.direction || '').toLowerCase().includes(kw);
-    const mk = (type, key, x) => {
+    const mk = (type, key, x, idx) => {
       const aud = audited(x);
       const amtN = Number(x.amount) || 0;
       const amtTxt = !aud ? '—' : (key === 'inbounds' ? money(amtN) : '−' + money(amtN));
@@ -285,6 +285,7 @@ export async function render(view) {
       const dtype = key === 'inbounds' ? 'inbound' : key === 'returns' ? 'return' : 'fee';
       return `<tr style="${aud ? '' : 'opacity:.55'}">
         <td><input type="checkbox" ${aud ? `data-pv="${key}" data-id="${x.id}" ${picked[key].has(x.id) ? 'checked' : ''}` : 'disabled'}></td>
+        <td class="num">${idx}</td>
         <td><a style="cursor:pointer;color:var(--info);font-family:var(--mono)" data-doc="${dtype}" data-docid="${docId}" data-no="${esc(x.doc_no || x.docNo || '')}">${esc(x.doc_no || x.docNo || '')}</a></td>
         <td>${type}</td>
         <td class="num" ${amtCls}>${amtTxt}</td>
@@ -293,10 +294,13 @@ export async function render(view) {
           : `<span class="pill r">未审核 · 不可纳入</span> <button class="btn sm" data-doc="${dtype}" data-docid="${docId}" data-no="${esc(x.doc_no || x.docNo || '')}" data-auditgo="1">去审核</button>`}</td>
       </tr>`;
     };
+    const inbR = pv.inbounds.filter(hit);
+    const retR = pv.returns.filter(hit);
+    const feeR = pv.fees.filter(hit);
     const allRows = [
-      ...pv.inbounds.filter(hit).map(x => mk('入库', 'inbounds', x)),
-      ...pv.returns.filter(hit).map(x => mk('退货', 'returns', x)),
-      ...pv.fees.filter(hit).map(x => mk('应收费用', 'fees', x)),
+      ...inbR.map((x, k) => mk('入库', 'inbounds', x, k + 1)),
+      ...retR.map((x, k) => mk('退货', 'returns', x, inbR.length + k + 1)),
+      ...feeR.map((x, k) => mk('应收费用', 'fees', x, inbR.length + retR.length + k + 1)),
     ];
     const pg = paginate(allRows, pvPage, 10);
     const s = pvSum();
@@ -305,7 +309,7 @@ export async function render(view) {
       && pv.fees.every(x => picked.fees.has(x.id))
       && (pv.inbounds.some(x => audited(x)) || pv.returns.some(x => audited(x)) || pv.fees.length > 0);
     box.innerHTML = allRows.length ? `
-      <table style="margin-top:10px"><thead><tr><th style="width:34px"><input type="checkbox" id="pvChkAll" ${allPicked ? 'checked' : ''} title="全选/取消全选（已审核单据）"></th><th>原始单号</th><th>类型</th><th class="num">金额</th><th>状态</th></tr></thead>
+      <table style="margin-top:10px"><thead><tr><th style="width:34px"><input type="checkbox" id="pvChkAll" ${allPicked ? 'checked' : ''} title="全选/取消全选（已审核单据）"></th><th class="seq">序号</th><th>原始单号</th><th>类型</th><th class="num">金额</th><th>状态</th></tr></thead>
       <tbody>${pg.slice.join('')}</tbody></table>${pg.bar}` : '<div class="empty" style="padding:18px">该区间无匹配单据（或单据已被对账单吸收）</div>';
     view.querySelector('#rcPay').textContent = money(pvSum(true).pay); // 本期应付=全部已审核单据合计
     // V4.9.7 修复复选框：勾选只更新汇总与 A5 预览，不整表重绘（勾选状态不再丢失）
@@ -599,14 +603,14 @@ export async function render(view) {
     const pg = paginate(rcArr, rcPage, 10);
     refreshHead(reconAll);
     view.querySelector('#cList').innerHTML = rcArr.length ? `
-      <table><thead><tr><th style="width:34px"></th><th>对账单号</th><th>供应商</th><th>区间</th>
+      <table><thead><tr><th style="width:34px"></th><th class="seq">序号</th><th>对账单号</th><th>供应商</th><th>区间</th>
         <th class="num">货款</th><th class="num">费用收</th><th class="num">费用付</th><th class="num">应付</th><th>状态</th><th></th></tr></thead>
-      <tbody>${pg.slice.map(r => {
+      <tbody>${pg.slice.map((r, i) => {
         const pay = Number(r.payable_total ?? r.payable ?? 0);
         const voidable = r.status === '生成' || r.status === '待供应商确认';
         return `<tr>
         <td>${voidable ? `<input type="checkbox" data-rchk="${r.id}">` : ''}</td>
-        <td style="font-family:var(--mono);font-weight:600">${esc(r.recon_no || r.reconNo || r.id)}</td>
+        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td style="font-family:var(--mono);font-weight:600">${esc(r.recon_no || r.reconNo || r.id)}</td>
         <td>${esc(r.supplier_name || r.supplierName || '')}</td>
         <td class="muted">${String(r.period_from || r.periodFrom || '').slice(0, 10)} ~ ${String(r.period_to || r.periodTo || '').slice(0, 10)}</td>
         <td class="num">${money(r.goods_total ?? 0)}</td>
@@ -655,7 +659,7 @@ export async function render(view) {
     const d = await must(get(`/purchase/recons/${id}`));
     const o = d.recon || {}, its = d.items || [];
     const rows = its.map((x, i) => `<tr>
-      <td class="num">${i + 1}</td><td style="font-family:monospace">${esc(x.doc_no || '')}</td>
+      <td class="num seq">${i + 1}</td><td style="font-family:monospace">${esc(x.doc_no || '')}</td>
       <td>${String(x.doc_date || '').slice(0, 10)}</td><td>${esc(x.line_remark || x.unpaid_amount || '')}</td>
       <td class="num">${Number(x.amount).toFixed(2)}</td></tr>`).join('');
     printDoc(o.recon_no || '对账单', `
@@ -663,7 +667,7 @@ export async function render(view) {
       <div class="meta">单号：<b>${esc(o.recon_no || '')}</b>　供应商：${esc(o.supplier_name || '')}　业务员：${esc(o.salesman || '—')}<br>
         期间：${String(o.period_from || '').slice(0, 10)} ~ ${String(o.period_to || '').slice(0, 10)}　
         状态：${esc(o.status || '')}　确认方式：${esc(o.confirm_type || '未确认')}</div>
-      <table><thead><tr><th>序号</th><th>单据号</th><th>日期</th><th>说明</th><th class="num">金额</th></tr></thead>
+      <table><thead><tr><th class="seq">序号</th><th>单据号</th><th>日期</th><th>说明</th><th class="num">金额</th></tr></thead>
       <tbody>${rows}</tbody>
       <tfoot><tr><td colspan="4">应付合计（货款 ${Number(o.goods_total || 0).toFixed(2)} − 费用收 ${Number(o.fee_income_total || 0).toFixed(2)} + 费用付 ${Number(o.fee_pay_total || 0).toFixed(2)}）</td>
         <td class="num"><b>${Number(o.payable_total || 0).toFixed(2)}</b></td></tr></tfoot></table>
@@ -707,9 +711,9 @@ export async function render(view) {
     view.querySelector('#qSum').textContent = fmt(sum);
     view.querySelector('#qCount').textContent = `共 ${rows.length} 张结算单`;
     view.querySelector('#sList').innerHTML = rows.length ? `
-      <table><thead><tr><th>结算单号</th><th>供应商</th><th>对账单</th><th class="num">结算金额</th><th>付款方式</th><th>状态</th><th>创建</th><th></th></tr></thead>
-      <tbody>${pg.slice.map(r => `<tr>
-        <td style="font-family:var(--mono);font-weight:600">${esc(r.settle_no || r.settleNo || r.id)}</td>
+      <table><thead><tr><th class="seq">序号</th><th>结算单号</th><th>供应商</th><th>对账单</th><th class="num">结算金额</th><th>付款方式</th><th>状态</th><th>创建</th><th></th></tr></thead>
+      <tbody>${pg.slice.map((r, i) => `<tr>
+        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td style="font-family:var(--mono);font-weight:600">${esc(r.settle_no || r.settleNo || r.id)}</td>
         <td>${esc(r.supplier_name || r.supplierName || '')}</td>
         <td class="muted" style="font-family:var(--mono)">${esc(r.recon_no || '')}</td>
         <td class="num">${money(r.amount ?? r.settle_amount ?? 0)}</td>
@@ -753,7 +757,7 @@ export async function render(view) {
         const t = feeTypes.find(x => String(x.id) === String(l.feeTypeId)) || {};
         const dir = l.direction || t.direction || '收';
         return `<tr>
-          <td class="num">${i + 1}</td>
+          <td class="num seq">${i + 1}</td>
           <td><input data-f="tname" data-i="${i}" list="feeTypeDl" value="${esc(l.feeName || t.name || '')}"
                placeholder="输入/选择费用项，新名称自动建档" style="width:100%"></td>
           <td><select data-f="dir" data-i="${i}" style="width:100%">
@@ -815,10 +819,10 @@ export async function render(view) {
     const agArr = ag.items || [];
     const pgA = paginate(agArr, agPage, 10);
     view.querySelector('#agList').innerHTML = agArr.length ? `
-      <table><thead><tr><th>供应商</th><th>类型</th><th>方向</th><th>性质</th><th>模式</th><th class="num">每期</th><th class="num">期数</th>
+      <table><thead><tr><th class="seq">序号</th><th>供应商</th><th>类型</th><th>方向</th><th>性质</th><th>模式</th><th class="num">每期</th><th class="num">期数</th>
         <th>自动补齐</th><th>协议期</th><th>状态</th></tr></thead>
-      <tbody>${pgA.slice.map(a => `<tr>
-        <td>${esc(a.supplier_name)}</td><td>${esc(a.fee_type_name)}</td>
+      <tbody>${pgA.slice.map((a, i) => `<tr>
+        <td class="num seq">${(pgA.page - 1) * 10 + i + 1}</td><td>${esc(a.supplier_name)}</td><td>${esc(a.fee_type_name)}</td>
         <td><span class="tag ${a.direction === '收' ? 'g' : 'y'}">${esc(dirLabel(a.direction))}</span></td>
         <td>${a.fee_nature === '一次性' ? '<span class="tag y">一次性</span>' : '<span class="tag b">周期性</span>'}</td>
         <td>${esc(a.amount_mode)}</td>
@@ -834,9 +838,9 @@ export async function render(view) {
     const pgF = paginate(feArr, fePage, 10);
     view.querySelector('#feeList').innerHTML =
       (feArr.length ? `
-      <table><thead><tr><th>费用单号</th><th>类型</th><th>方向</th><th>期间</th><th class="num">金额</th><th>状态</th><th>备注</th></tr></thead>
-      <tbody>${pgF.slice.map(f => `<tr>
-        <td style="font-family:var(--mono)">${esc(f.fee_no)}</td><td>${esc(f.fee_type_name)}</td>
+      <table><thead><tr><th class="seq">序号</th><th>费用单号</th><th>类型</th><th>方向</th><th>期间</th><th class="num">金额</th><th>状态</th><th>备注</th></tr></thead>
+      <tbody>${pgF.slice.map((f, i) => `<tr>
+        <td class="num seq">${(pgF.page - 1) * 10 + i + 1}</td><td style="font-family:var(--mono)">${esc(f.fee_no)}</td><td>${esc(f.fee_type_name)}</td>
         <td><span class="tag ${f.direction === '收' ? 'g' : 'y'}">${esc(dirLabel(f.direction))}</span></td>
         <td class="muted">${f.period_start ? String(f.period_start).slice(0, 10) + ' ~ ' + String(f.period_end || '').slice(0, 10) : '一次性'}</td>
         <td class="num">${money(f.amount)}</td>

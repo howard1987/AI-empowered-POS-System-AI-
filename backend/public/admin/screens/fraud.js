@@ -1,7 +1,7 @@
 import { get, must, esc, dt, money, toast } from '../api.js';
 import { openDetailModal, paginate, bindPager } from '../common-ui.js';
 
-/** M4a 智能防损看板（V4.14.0 L 改版）：
+/** M4a 智能防损看板：
  *  - 总览 KPI（异常折扣行/异常让利/退款单）与明细表行均可点击 → 弹窗下钻单据列表 → 点单号查订单详情；
  *  - 采购退货/收银差异同样下钻；
  *  - 近7日趋势：每日一组，组内三根柱子「左=异常折扣 中=退款 右=差异班次」横向并排。
@@ -182,8 +182,8 @@ export async function render(view) {
       scope.querySelectorAll('[data-oid]').forEach(a => a.onclick = async () => {
         const dd = await must(get(`/sales/${a.dataset.oid}`));
         const o = dd.order;
-        openDetailModal(`订单详情 ${esc(o.order_no)} `, `
-          <div class="bar muted">渠道 ${esc(o.channel)} · 状态 ${esc(o.status)} · ${esc(o.member_name || '散客')} · 收银员 ${esc(o.cashier_name || '—')} · ${dt(o.created_at)}</div>
+        openDetailModal(`订单详情`, `
+          <div class="bar muted">单号 <b>${esc(o.order_no)}</b> · 渠道 ${esc(o.channel)} · 状态 ${esc(o.status)} · ${esc(o.member_name || '散客')} · 收银员 ${esc(o.cashier_name || '—')} · ${dt(o.created_at)}</div>
           <table style="margin-top:8px"><thead><tr><th>商品</th><th class="num">数量</th><th class="num">原价</th><th class="num">售价</th><th class="num">小计</th><th>批次溯源</th></tr></thead>
           <tbody>${dd.items.map(i => `<tr><td>${esc(i.product_name)}</td><td class="num">${Number(i.qty)}</td>
             <td class="num">${money(i.origin_price)}</td><td class="num">${money(i.unit_price)}</td>

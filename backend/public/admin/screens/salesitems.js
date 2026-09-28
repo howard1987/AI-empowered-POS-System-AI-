@@ -1,7 +1,7 @@
 import { get, must, money, esc, dt, unwrap } from '../api.js';
 import { exportRows } from '../common-ui.js';
 
-/** 销售明细（V4.22.0）：销售商品行级流水（行=单据×商品）。
+/** 销售明细：销售商品行级流水（行=单据×商品）。
  *  查询行：关键字（商品名/条码）/ 收银员 / 渠道 / 时间段；服务端分页每页 15 条；合计（件数/金额/毛利）常驻；导出 CSV / Excel。
  */
 export async function render(view) {
@@ -76,6 +76,9 @@ export async function render(view) {
     const box = view.querySelector('#iList');
     const d = await must(get(`/sales/items?${qs()}&size=15&page=${page}`));
     const rows = d.items || [];
+    // V5.0.1：固定小计/合计行——小计=本页求和，合计=查询范围汇总（后端 sumQty/sumAmount/sumCost/sumProfit）
+    const sum = k => rows.reduce((a, r) => a + Number(r[k] || 0), 0);
+    const costCol = d.sumCost !== undefined && d.sumCost !== null;
     view.querySelector('#iSum').innerHTML =
       `<span>合计：<b>${d.total ?? 0}</b> 行</span>
        <span>数量 <b>${Number(d.sumQty ?? 0)}</b></span>
@@ -92,7 +95,23 @@ export async function render(view) {
         <td class="num">${Number(r.qty)}</td><td class="num">${money(r.unitPrice)}</td>
         <td class="num"><b>${money(r.lineAmount)}</b></td><td class="num">${money(r.lineCost)}</td>
         <td class="num">${money(r.lineProfit)}</td>
-        <td>${esc(r.cashierName || '—')}</td><td>${esc(r.memberName || '—')}</td></tr>`).join('')}</tbody></table>
+        <td>${esc(r.cashierName || '—')}</td><td>${esc(r.memberName || '—')}</td></tr>`).join('')}</tbody>
+      <tfoot>
+        <tr style="font-weight:600;color:var(--ink-2)">
+          <td colspan="6" style="text-align:left">本页小计（${rows.length} 行）</td>
+          <td class="num">${sum('qty')}</td><td></td>
+          <td class="num">${money(sum('lineAmount'))}</td>
+          <td class="num">${money(sum('lineCost'))}</td>
+          <td class="num">${money(sum('lineProfit'))}</td>
+          <td></td><td></td></tr>
+        <tr style="font-weight:700;background:var(--paper2,#faf7ef)">
+          <td colspan="6" style="text-align:left">范围合计（${d.total ?? rows.length} 行）</td>
+          <td class="num">${Number(d.sumQty ?? 0)}</td><td></td>
+          <td class="num">${money(d.sumAmount ?? 0)}</td>
+          <td class="num">${costCol ? money(d.sumCost) : '—'}</td>
+          <td class="num">${money(d.sumProfit ?? 0)}</td>
+          <td></td><td></td></tr>
+      </tfoot></table>
       ${serverBar(page, d.total ?? rows.length)}`
       : '<div class="empty">无明细（换个时间段或清空关键字试试）</div>';
     box.querySelectorAll('tr[data-o]').forEach(tr => tr.ondblclick = () => {

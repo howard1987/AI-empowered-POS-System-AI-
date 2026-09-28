@@ -207,11 +207,15 @@ class DividendEngine {
     return tx(async c => {
       const calc = await this.allocate(netProfit, (sql: string, p: any[]) => cx(c, sql, p));
       const p = await this.params();
+      // V5.0.1：状态如实——没有任何会员分到钱（30 天内无达标消费窗口/全员已封顶）时不得标「已发放」，
+      // 否则期间列表显示已发放、分红明细却查不到数据（口径矛盾，老板误以为发放丢失）。
+      const givenCount = (calc.items as any[]).filter(it => it.amount > 0).length;
+      const status = givenCount > 0 ? '已发放' : '零发放';
       const period = await cx(c,
         `INSERT INTO dividend_periods (store_id, biz_date, net_profit, ratio, pool_amount,
                                        member_count, weight_total, orange_alert, red_alert, status,
                                        gross_profit, hard_cost)
-         VALUES (${curStore()},$1,$2,$3,$4,$5,$6,$7,$8,'已发放',$9,$10) RETURNING id`,
+         VALUES (${curStore()},$1,$2,$3,$4,$5,$6,$7,$8,'${status}',$9,$10) RETURNING id`,
         [bizDate, netProfit, p.ratio / 100, calc.pool, calc.memberCount, calc.weightTotal,
          calc.orangeAlert, calc.redAlert, r2(grossProfit), r2(hardCost)]);
       const expireAt = addDaysStr(bizDate, p.expireDays);
@@ -237,7 +241,10 @@ class DividendEngine {
       await audit(storeId, operatorId, '分红', 'dividend.period.run', 'dividend_period', period[0].id,
         { bizDate, netProfit, pool: calc.pool, given });
       return { periodId: period[0].id, pool: calc.pool, given, memberCount: calc.memberCount,
-               orangeAlert: calc.orangeAlert, redAlert: calc.redAlert };
+               orangeAlert: calc.orangeAlert, redAlert: calc.redAlert,
+               note: status === '零发放'
+                 ? '本期无符合条件的会员（30 天内无达标消费窗口或全员已达封顶），计提金额留存分红池、明细为空'
+                 : '' };
     });
   }
 }

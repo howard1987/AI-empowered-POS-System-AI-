@@ -3,10 +3,10 @@ import { findProduct, fuzzyProducts, showSuggest, hideSug } from './docentry.js'
 import { paginate, bindPager } from '../common-ui.js';
 import { transmitScaleItems } from '../scale-protocols/transmit.js';
 
-/** 商品调价单（V4.8.20 重构）：进价/售价同行修改 + 待审核→审核生效→作废 审核流 */
+/** 商品调价单：进价/售价同行修改 + 待审核→审核生效→作废 审核流 */
 export async function render(view) {
   const today = new Date().toISOString().slice(0, 10);
-  /** 行结构：与采购单据（docentry）对齐，_q = 行内条码格输入缓存（V4.26.2） */
+  /** 行结构：与采购单据（docentry）对齐，_q = 行内条码格输入缓存 */
   const blankLine = () => ({ productId: null, name: '', barcode: '', unit: '', oldSale: '', newSale: null, oldCost: null, newCost: null, supplierId: null, _q: '' });
   let lines = [];
   let pcs = [];
@@ -77,14 +77,14 @@ export async function render(view) {
 
   const $ = s => view.querySelector(s);
 
-  // ── 连锁调价：范围选择 + 门店下拉（V4.26.5） ──
+  // ── 连锁调价：范围选择 + 门店下拉 ──
   let stores = [];
   async function loadStores() {
     try { stores = await must(get('/basic/stores')); } catch { stores = []; }
     const cur = Number(API.user?.storeId || 1);
     $('#pcStore').innerHTML = stores.map(s => `<option value="${s.id}"${Number(s.id) === cur ? ' selected' : ''}>${esc(s.name)}${Number(s.id) === cur ? '（本店）' : ''}</option>`).join('');
   }
-  // 范围/门店切换 → 现价与差额口径都变了：清缓存现价并重刷（V4.26.5）
+  // 范围/门店切换 → 现价与差额口径都变了：清缓存现价并重刷
   function onScopeChange() {
     const local = $('#pcScope').value === 'local';
     $('#pcStoreWrap').style.display = local ? '' : 'none';
@@ -150,7 +150,7 @@ export async function render(view) {
           <button class="btn sm" data-plus="${i}" title="在下方插入一行" style="padding:2px 7px">＋</button>
           <button class="btn sm warn" data-minus="${i}" title="${i === 0 ? '首行不可删除（可清空本行数据）' : '删除本行'}" style="padding:2px 7px" ${i === 0 ? 'disabled' : ''}>−</button>
         </td>
-        <td style="width:36px">${i + 1}</td>
+        <td class="seq" style="width:36px">${i + 1}</td>
         <td><input data-bc="${i}" value="${esc(l._q || '')}" placeholder="扫码/条码/名称"
              style="width:92%;font-family:var(--mono,monospace)"></td>
         <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(l.name || '')}">${l.name ? `<b>${esc(l.name)}</b>` : '<span class="muted">—</span>'}</td>
@@ -234,7 +234,7 @@ export async function render(view) {
     const has = v => v !== null && v !== undefined && v !== '';
     const valid = lines.filter(l => l.productId && (has(l.newSale) || has(l.newCost)));
     if (!valid.length) return toast('请至少为一个商品填写新售价或新进价');
-    // 进价调整但缺供应商 → 弹窗让用户选供应商（V4.26.5）
+    // 进价调整但缺供应商 → 弹窗让用户选供应商
     const needSup = valid.filter(l => has(l.newCost) && !l.supplierId);
     if (needSup.length) {
       const okPick = await pickSuppliers(needSup);
@@ -265,7 +265,7 @@ export async function render(view) {
   });
   $('#pcClear').addEventListener('click', () => { lines = [blankLine()]; drawLines(); });
 
-  // 调价商品缺供应商 → 弹窗逐行选择（V4.26.5）：进价落地供应商基线必须有 supplierId
+  // 调价商品缺供应商 → 弹窗逐行选择：进价落地供应商基线必须有 supplierId
   async function pickSuppliers(rows) {
     let suppliers = [];
     try { suppliers = await must(get('/purchase/suppliers')); } catch { suppliers = []; }
@@ -332,12 +332,12 @@ export async function render(view) {
         const rows = await must(get(`/price-changes/store-prices?storeId=${sid}&keyword=${encodeURIComponent(kw)}`));
         const list = Array.isArray(rows) ? rows : (rows.items || []);
         q1('#spList').innerHTML = list.length ? `
-          <table><thead><tr><th>门店</th><th>商品</th><th>条码</th><th class="num">门店价</th><th class="num">默认价</th>
+          <table><thead><tr><th class="seq">序号</th><th>门店</th><th>商品</th><th>条码</th><th class="num">门店价</th><th class="num">默认价</th>
             <th class="num">差额</th><th>来源单号</th><th class="muted">更新时间</th><th>操作</th></tr></thead>
-          <tbody>${list.map(r => {
+          <tbody>${list.map((r, i) => {
             const d = Number(r.sell_price) - Number(r.base_price);
             return `<tr>
-              <td>🏪 ${esc(r.store_name || ('#' + r.store_id))}</td>
+              <td class="num seq">${i + 1}</td><td>🏪 ${esc(r.store_name || ('#' + r.store_id))}</td>
               <td>${esc(r.product_name || '')}</td>
               <td class="mono muted">${esc(r.barcode || '—')}</td>
               <td class="num" style="color:var(--pri);font-weight:700">${money(r.sell_price)}</td>
@@ -381,12 +381,12 @@ export async function render(view) {
     pcPage = pg.page;
     // V4.9.7 调价管理：主表格数据靠左 · 状态列移到操作列前 · 取消「明细」按钮（双击行弹窗看明细）
     $('#pcList').innerHTML = pcs.length ? `
-      <table><thead><tr><th>单号</th><th>类型</th><th>范围</th><th>生效日期</th><th>行数</th><th>差额</th><th>备注</th><th>制单</th><th>时间</th><th>状态</th><th>操作</th></tr></thead>
-      <tbody>${pg.slice.map(c => {
+      <table><thead><tr><th class="seq">序号</th><th>单号</th><th>类型</th><th>范围</th><th>生效日期</th><th>行数</th><th>差额</th><th>备注</th><th>制单</th><th>时间</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody>${pg.slice.map((c, i) => {
         const neg = Number(c.diff_total) < 0;
         const pending = c.status === 'pending';
         return `<tr data-pcrow="${c.id}" style="cursor:pointer" title="双击查看调价明细">
-        <td class="mono" style="font-weight:600">${esc(c.pc_no)}</td>
+        <td class="num seq">${(pcPage - 1) * 10 + i + 1}</td><td class="mono" style="font-weight:600">${esc(c.pc_no)}</td>
         <td>${typeName(c.price_type)}</td>
         <td>${scopeName(c)}</td>
         <td>${dt(c.effective_date).slice(0, 10)}</td>
@@ -441,10 +441,10 @@ export async function render(view) {
         <div class="muted" style="font-size:12.5px;margin-bottom:10px">
           类型：${typeName(o.price_type)} · 状态：${statusTag(o.status)} · ${scopeTxt} · 生效日期：${o.effective_date ? dt(o.effective_date).slice(0, 10) : '—'} · 备注：${esc(o.remark || '—')}${ovTxt}</div>
         ${its.length ? `
-        <table><thead><tr><th>条码</th><th>商品</th><th>单位</th><th class="num">现售价</th><th class="num">新售价</th>
+        <table><thead><tr><th class="seq">序号</th><th>条码</th><th>商品</th><th>单位</th><th class="num">现售价</th><th class="num">新售价</th>
           <th class="num">现进价</th><th class="num">新进价</th></tr></thead>
-        <tbody>${its.map(i => `<tr>
-          <td class="mono">${esc(i.barcode || '—')}</td>
+        <tbody>${its.map((i, idx) => `<tr>
+          <td class="num seq">${idx + 1}</td><td class="mono">${esc(i.barcode || '—')}</td>
           <td>${esc(i.product_name)}</td><td>${esc(i.base_unit || i.unit || '—')}</td>
           <td class="num">${i.old_price != null ? money(i.old_price) : '—'}</td>
           <td class="num" style="color:var(--pri)">${i.new_price != null ? money(i.new_price) : '—'}</td>
@@ -525,7 +525,7 @@ export async function render(view) {
     };
   }
 
-  /** 生鲜商品一键实际传秤（V4.26.5）：复用共享 transmitScaleItems，替换原 CSV 导出 */
+  /** 生鲜商品一键实际传秤：复用共享 transmitScaleItems，替换原 CSV 导出 */
   async function doScaleTransmit(fresh) {
     let cfg = {};
     try { cfg = await must(get('/scale-transmission/config')); }

@@ -1,7 +1,7 @@
 import { get, must, money, esc, dt, unwrap } from '../api.js';
 import { exportRows } from '../common-ui.js';
 
-/** 销售明细（V4.22.0）：销售商品行级流水（行=单据×商品）。
+/** 销售明细：销售商品行级流水（行=单据×商品）。
  *  查询行：关键字（商品名/条码）/ 收银员 / 渠道 / 时间段；服务端分页每页 15 条；合计（件数/金额/毛利）常驻；导出 CSV / Excel。
  */
 export async function render(view) {
@@ -20,8 +20,7 @@ export async function render(view) {
         <select id="iCashier" style="width:130px"><option value="">全部收银员</option></select>
         <input type="date" id="iFrom"> <span class="muted">至</span> <input type="date" id="iTo">
         <button class="btn pri" id="iGo">查询</button>
-        <button class="btn" id="iCsv">⬇ CSV</button>
-        <button class="btn" id="iXls">⬇ Excel</button>
+        <button class="btn" id="iExport">导出</button>
       </div>
       <div id="iSum" class="bar" style="margin-top:8px;font-weight:600"></div>
       <div id="iList" class="tbl-min" style="height:auto;max-height:calc(15 * 40px + 46px);overflow:auto;margin-top:6px"></div>
@@ -76,23 +75,42 @@ export async function render(view) {
     const box = view.querySelector('#iList');
     const d = await must(get(`/sales/items?${qs()}&size=15&page=${page}`));
     const rows = d.items || [];
+    // V5.0.1：固定小计/合计行——小计=本页求和，合计=查询范围汇总（后端 sumQty/sumAmount/sumCost/sumProfit）
+    const sum = k => rows.reduce((a, r) => a + Number(r[k] || 0), 0);
+    const costCol = d.sumCost !== undefined && d.sumCost !== null;
     view.querySelector('#iSum').innerHTML =
       `<span>合计：<b>${d.total ?? 0}</b> 行</span>
        <span>数量 <b>${Number(d.sumQty ?? 0)}</b></span>
        <span>金额 <b style="color:var(--pri,#8a5a2b)">¥${money(d.sumAmount)}</b></span>
        <span>毛利 <b style="color:var(--ok,#2e9e5b)">¥${money(d.sumProfit)}</b></span>`;
     box.innerHTML = rows.length ? `
-      <table><thead><tr><th>时间</th><th>单号</th><th>渠道</th><th>商品</th><th>条码</th><th>分类</th>
+      <table><thead><tr><th class="seq">序号</th><th>时间</th><th>单号</th><th>渠道</th><th>商品</th><th>条码</th><th>分类</th>
         <th class="num">数量</th><th class="num">单价</th><th class="num">小计</th><th class="num">成本</th><th class="num">毛利</th>
         <th>收银员</th><th>会员</th></tr></thead>
-      <tbody>${rows.map(r => `<tr data-o="${r.orderId}" style="cursor:pointer" title="双击跳转该单详情（销售单据）">
-        <td class="muted">${dt(r.created_at)}</td>
+      <tbody>${rows.map((r, i) => `<tr data-o="${r.orderId}" style="cursor:pointer" title="双击跳转该单详情（销售单据）">
+        <td class="num seq">${i + 1}</td><td class="muted">${dt(r.created_at)}</td>
         <td style="font-family:var(--mono)">${esc(r.order_no)}</td><td>${esc(r.channel || '—')}</td>
         <td><b>${esc(r.productName)}</b></td><td class="muted">${esc(r.barcode || '—')}</td><td class="muted">${esc(r.categoryName || '—')}</td>
         <td class="num">${Number(r.qty)}</td><td class="num">${money(r.unitPrice)}</td>
         <td class="num"><b>${money(r.lineAmount)}</b></td><td class="num">${money(r.lineCost)}</td>
         <td class="num">${money(r.lineProfit)}</td>
-        <td>${esc(r.cashierName || '—')}</td><td>${esc(r.memberName || '—')}</td></tr>`).join('')}</tbody></table>
+        <td>${esc(r.cashierName || '—')}</td><td>${esc(r.memberName || '—')}</td></tr>`).join('')}</tbody>
+      <tfoot>
+        <tr style="font-weight:600;color:var(--ink-2)">
+          <td colspan="6" style="text-align:left">本页小计（${rows.length} 行）</td>
+          <td class="num">${sum('qty')}</td><td></td>
+          <td class="num">${money(sum('lineAmount'))}</td>
+          <td class="num">${money(sum('lineCost'))}</td>
+          <td class="num">${money(sum('lineProfit'))}</td>
+          <td></td><td></td></tr>
+        <tr style="font-weight:700;background:var(--paper2,#faf7ef)">
+          <td colspan="6" style="text-align:left">范围合计（${d.total ?? rows.length} 行）</td>
+          <td class="num">${Number(d.sumQty ?? 0)}</td><td></td>
+          <td class="num">${money(d.sumAmount ?? 0)}</td>
+          <td class="num">${costCol ? money(d.sumCost) : '—'}</td>
+          <td class="num">${money(d.sumProfit ?? 0)}</td>
+          <td></td><td></td></tr>
+      </tfoot></table>
       ${serverBar(page, d.total ?? rows.length)}`
       : '<div class="empty">无明细（换个时间段或清空关键字试试）</div>';
     box.querySelectorAll('tr[data-o]').forEach(tr => tr.ondblclick = () => {
@@ -124,8 +142,10 @@ export async function render(view) {
       lineCost: Number(r.lineCost), lineProfit: Number(r.lineProfit), created_at: String(r.created_at).slice(0, 19),
     }));
   }
-  view.querySelector('#iCsv').onclick = async () => exportRows({ filename: '销售明细', columns: COLS, rows: await fetchAll(), format: 'csv' });
-  view.querySelector('#iXls').onclick = async () => exportRows({ filename: '销售明细', columns: COLS, rows: await fetchAll(), format: 'xls' });
+  view.querySelector('#iExport').onclick = async () => {
+    const rows = await fetchAll();
+    openExportPicker({ filename: '销售明细', columns: COLS, rows });
+  };
 
   view.querySelector('#iGo').onclick = () => { page = 1; list(); };
   view.querySelector('#iKw').addEventListener('keydown', e => { if (e.key === 'Enter') { page = 1; list(); } });

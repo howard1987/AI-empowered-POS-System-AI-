@@ -1,6 +1,6 @@
 {
   "name": "cashier-desktop",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "description": "超市收银系统 - Electron 收银端（双轨构建：modern=Electron44/x64，win7 冻结=Electron22.3.27/ia32；源码共享）",
   "main": "src/main.js",
   "scripts": {

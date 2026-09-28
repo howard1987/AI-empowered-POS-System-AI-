@@ -1,4 +1,5 @@
-import { get, must, money, esc } from '../api.js';
+import { get, must, money, esc, dt } from '../api.js';
+import { openDetailModal } from '../common-ui.js';
 
 /** 经营看板：GET /reports/dashboard?period=day|week|month|quarter */
 export async function render(view) {
@@ -28,9 +29,9 @@ export async function render(view) {
     // ABC 分析（P1-3 原型 #10：累计销售额占比 A≤80% / B≤95% / C 其余）
     const abcRows = (abc.items || []).slice(0, 15);
     const abcHtml = abcRows.length ? `
-      <table><thead><tr><th>商品</th><th>分层</th><th class="num">销量</th><th class="num">销售额</th><th class="num">累计占比</th><th class="num">毛利</th></tr></thead>
-      <tbody>${abcRows.map(r => `<tr>
-        <td>${esc(r.name)}</td>
+      <table><thead><tr><th class="seq">序号</th><th>商品</th><th>分层</th><th class="num">销量</th><th class="num">销售额</th><th class="num">累计占比</th><th class="num">毛利</th></tr></thead>
+      <tbody>${abcRows.map((r, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td>${esc(r.name)}</td>
         <td><span class="tag ${r.className === 'A' ? 'r' : r.className === 'B' ? 'y' : 'b'}">${r.className}</span></td>
         <td class="num">${Number(r.qty)}</td><td class="num">${money(r.revenue)}</td>
         <td class="num">${Number(r.cum_pct).toFixed(1)}%</td><td class="num">${money(r.profit)}</td></tr>`).join('')}</tbody></table>`
@@ -48,9 +49,9 @@ export async function render(view) {
             <div class="kpi"><div class="t">欠款客户</div><div class="v">${rcv.unpaidCustomers}</div></div>
             ${over90 || '<div class="kpi"><div class="t">超 90 天</div><div class="v">0.00</div></div>'}
           </div>
-          ${(rcv.top || []).length ? `<table><thead><tr><th>大客户</th><th class="num">未收</th><th class="num">超90天</th></tr></thead>
-          <tbody>${rcv.top.map(r => `<tr>
-            <td>${esc(r.name)}</td><td class="num" style="color:var(--warn)">${money(r.unpaid)}</td>
+          ${(rcv.top || []).length ? `<table><thead><tr><th class="seq">序号</th><th>大客户</th><th class="num">未收</th><th class="num">超90天</th></tr></thead>
+          <tbody>${rcv.top.map((r, i) => `<tr>
+            <td class="num seq">${i + 1}</td><td>${esc(r.name)}</td><td class="num" style="color:var(--warn)">${money(r.unpaid)}</td>
             <td class="num" style="color:${Number(r.over90) > 0 ? 'var(--err)' : 'inherit'}">${money(r.over90)}</td></tr>`).join('')}</tbody></table>` : ''}`;
       } else {
         rcvHtml = '<div class="empty">暂无大客户未收账款</div>';
@@ -65,9 +66,9 @@ export async function render(view) {
         <div class="kpi"><div class="t">退款率</div><div class="v" style="font-size:18px;color:${Number(f.refundRate) > 5 ? 'var(--err)' : 'inherit'}">${Number(f.refundRate).toFixed(1)}%</div></div>
         <div class="kpi"><div class="t">负毛利单率</div><div class="v" style="font-size:18px;color:${Number(f.negProfitRate) > 3 ? 'var(--err)' : 'inherit'}">${Number(f.negProfitRate).toFixed(1)}%</div></div>
       </div>
-      ${(fraud.byCashier || []).length ? `<table><thead><tr><th>收银员</th><th class="num">单数</th><th class="num">取消</th><th class="num">退款</th><th class="num">退款额</th><th class="num">负毛利单</th></tr></thead>
-      <tbody>${fraud.byCashier.map(r => `<tr>
-        <td>${esc(r.name)}</td><td class="num">${r.orderCount}</td>
+      ${(fraud.byCashier || []).length ? `<table><thead><tr><th class="seq">序号</th><th>收银员</th><th class="num">单数</th><th class="num">取消</th><th class="num">退款</th><th class="num">退款额</th><th class="num">负毛利单</th></tr></thead>
+      <tbody>${fraud.byCashier.map((r, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td>${esc(r.name)}</td><td class="num">${r.orderCount}</td>
         <td class="num" style="color:${red(r.cancelCount)}">${r.cancelCount}</td>
         <td class="num" style="color:${red(r.refundCount)}">${r.refundCount}</td>
         <td class="num" style="color:${red(r.refundAmount)}">${money(r.refundAmount)}</td>
@@ -82,9 +83,9 @@ export async function render(view) {
     }).join(' ');
     const trendHtml = tr.length ? `
       <table><thead><tr>
-        <th>日期</th><th class="num">订单数</th><th class="num">销售额</th>
+        <th class="seq">序号</th><th>日期</th><th class="num">订单数</th><th class="num">销售额</th>
         <th class="num">毛利</th><th class="num">客单价</th><th class="num">销售额环比</th>
-      </tr></thead><tbody>${tr.map((t, i) => {
+      </tr></thead>      <tbody>${tr.map((t, i) => {
         const st = Number(t.salesTotal), od = Number(t.orderCount), pf = Number(t.profitTotal);
         const avg = od > 0 ? st / od : 0;
         let chg = '—', col = 'var(--ink-3)';
@@ -96,8 +97,8 @@ export async function render(view) {
             col = pct > 0 ? '#c0392b' : (pct < 0 ? '#1e8e4e' : 'var(--ink-3)'); // 红涨绿跌
           }
         }
-        return `<tr>
-          <td>${t.bizDate?.slice(0, 10)}</td>
+        return `<tr data-day="${t.bizDate?.slice(0, 10)}" style="cursor:pointer" title="点击查看当日订单明细">
+          <td class="num seq">${i + 1}</td><td>${t.bizDate?.slice(0, 10)}</td>
           <td class="num">${od}</td><td class="num">${money(st)}</td>
           <td class="num">${money(pf)}</td><td class="num">${money(avg)}</td>
           <td class="num" style="color:${col}">${chg}</td>
@@ -124,14 +125,75 @@ export async function render(view) {
       <div class="card" style="margin-top:14px"><h3>大客户应收账龄（M9）</h3>${rcvHtml}</div>
       <div class="grid" style="grid-template-columns:1fr 1fr">
         <div class="card"><h3>周期对比（近 4 个 ${({ day: '日', week: '周', month: '月', quarter: '季' })[period]}）</h3>
-          <table><thead><tr><th>周期</th><th class="num">单数</th><th class="num">销售额</th><th class="num">毛利</th></tr></thead>
-          <tbody>${d.periods.map(p => `<tr><td>${String(p.bucket).slice(0, 10)}</td>
+          <table><thead><tr><th class="seq">序号</th><th>周期</th><th class="num">单数</th><th class="num">销售额</th><th class="num">毛利</th></tr></thead>
+          <tbody>${d.periods.map((p, i) => `<tr><td class="num seq">${i + 1}</td><td>${String(p.bucket).slice(0, 10)}</td>
             <td class="num">${p.orderCount}</td><td class="num">${money(p.salesTotal)}</td><td class="num">${money(p.profitTotal)}</td></tr>`).join('')}</tbody></table></div>
         <div class="card"><h3>分类销售额占比（近 30 日 Top12）</h3>
-          ${d.categoryShare.length ? `<table><thead><tr><th>分类</th><th class="num">销售额</th></tr></thead>
-            <tbody>${d.categoryShare.map(s => `<tr><td>${esc(s.name)}</td><td class="num">${money(s.revenue)}</td></tr>`).join('')}</tbody></table>`
+          ${d.categoryShare.length ? `<table><thead><tr><th class="seq">序号</th><th>分类</th><th class="num">销售额</th></tr></thead>
+            <tbody>${d.categoryShare.map((s, i) => `<tr${s.id ? ` data-cat="${s.id}" style="cursor:pointer" title="点击查看该分类商品销售明细"` : ''}><td class="num seq">${i + 1}</td><td>${esc(s.name)}</td><td class="num">${money(s.revenue)}</td></tr>`).join('')}</tbody></table>`
           : '<div class="empty">暂无数据</div>'}</div>
       </div>`;
+
+    /* ── V5.0.2：卡片/表格点击 → 对应明细弹窗 ── */
+    const range = () => {
+      const days = { day: 1, week: 7, month: 30, quarter: 90 }[period] || 30;
+      const to = new Date().toISOString().slice(0, 10);
+      const from = new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10);
+      return { from, to };
+    };
+    const openOrders = async (from, to, title) => {
+      const d2 = await must(get(`/sales?from=${from}&to=${to}&size=15&page=1`)).catch(() => null);
+      const rows = d2?.items || [];
+      openDetailModal(title, rows.length ? `
+        <table><thead><tr><th class="seq">序号</th><th>单号</th><th>会员</th><th class="num">应收</th><th class="num">毛利</th><th>时间</th></tr></thead>
+        <tbody>${rows.map((o, i) => `<tr><td class="num seq">${i + 1}</td><td style="font-family:var(--mono)">${esc(o.order_no)}</td><td>${esc(o.member_name || '—')}</td>
+          <td class="num"><b>${money(o.payable_amount)}</b></td><td class="num">${money(o.profit_amount)}</td><td class="muted">${dt(o.created_at)}</td></tr>`).join('')}</tbody></table>
+        ${d2?.sums ? `<div class="bar" style="margin-top:10px"><b>合计：</b>销售额 ${money(d2.sums.payable)} · 毛利 ${money(d2.sums.profit)}（共 ${d2.total} 单，弹窗展示最近 15 单）</div>` : ''}`
+        : '<div class="empty">该时段无订单</div>', { width: 760 });
+    };
+    const KPI_KEYS = ['sales', 'profit', 'orders', 'avg', 'members', 'divGiven', 'divUsed'];
+    body.querySelectorAll('.kpis .kpi').forEach((el, i) => {
+      const k = KPI_KEYS[i];
+      if (!k) return;
+      el.style.cursor = 'pointer';
+      el.title = '点击查看明细';
+      el.onclick = async () => {
+        const { from, to } = range();
+        if (['sales', 'profit', 'orders', 'avg'].includes(k)) {
+          return openOrders(from, to, `订单明细（${from} ~ ${to}）`);
+        }
+        if (k === 'members') {
+          const m = await must(get('/members?size=15&page=1')).catch(() => null);
+          const items = m?.items || [];
+          return openDetailModal('新增会员明细（最近注册）', items.length ? `
+            <table><thead><tr><th class="seq">序号</th><th>ID</th><th>姓名</th><th>手机</th><th>注册时间</th></tr></thead>
+            <tbody>${items.map((x, i) => `<tr><td class="num seq">${i + 1}</td><td>${x.id}</td><td><b>${esc(x.name || '—')}</b></td><td class="muted">${esc(x.phone || '')}</td><td class="muted">${dt(x.created_at)}</td></tr>`).join('')}</tbody></table>`
+            : '<div class="empty">暂无会员</div>', { width: 640 });
+        }
+        const dvr = await must(get('/dividend/records')).catch(() => null);
+        const items = Array.isArray(dvr) ? dvr : (dvr?.items || []);
+        return openDetailModal(k === 'divGiven' ? '分红计提明细' : '分红抵扣明细', items.length ? `
+          <table><thead><tr><th class="seq">序号</th><th>会员</th><th class="num">金额</th><th>类型</th><th>时间</th></tr></thead>
+          <tbody>${items.slice(0, 20).map((x, i) => `<tr><td class="num seq">${i + 1}</td><td>${esc(x.member_name || x.name || '—')}</td><td class="num">${money(x.amount)}</td>
+            <td>${esc(x.record_type || '')}</td><td class="muted">${dt(x.created_at)}</td></tr>`).join('')}</tbody></table>`
+          : '<div class="empty">暂无记录</div>', { width: 680 });
+      };
+    });
+    body.querySelectorAll('tr[data-day]').forEach(tr => {
+      tr.onclick = () => openOrders(tr.dataset.day, tr.dataset.day, `订单明细 · ${tr.dataset.day}`);
+    });
+    body.querySelectorAll('tr[data-cat]').forEach(tr => {
+      tr.onclick = async () => {
+        const { from, to } = range();
+        const d2 = await must(get(`/sales/items?categoryId=${tr.dataset.cat}&from=${from}&to=${to}&size=20&page=1`)).catch(() => null);
+        const rows = d2?.items || [];
+        openDetailModal(`分类商品销售明细 · ${tr.children[0].textContent}（${from} ~ ${to}）`, rows.length ? `
+          <table><thead><tr><th class="seq">序号</th><th>时间</th><th>单号</th><th>商品</th><th class="num">数量</th><th class="num">小计</th></tr></thead>
+          <tbody>${rows.map((x, i) => `<tr><td class="num seq">${i + 1}</td><td class="muted">${dt(x.created_at)}</td><td style="font-family:var(--mono)">${esc(x.order_no)}</td>
+            <td>${esc(x.productName)}</td><td class="num">${Number(x.qty)}</td><td class="num"><b>${money(x.lineAmount)}</b></td></tr>`).join('')}</tbody></table>`
+          : '<div class="empty">该时段无此分类销售明细</div>', { width: 760 });
+      };
+    });
   }
   await load();
 }

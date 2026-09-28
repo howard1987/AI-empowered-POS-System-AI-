@@ -2,7 +2,7 @@ import { get, post, must, money, esc, dt, toast } from '../api.js';
 import { openDetailModal, paginate, bindPager } from '../common-ui.js';
 import { attachProductSearch } from '../product-search.js';
 
-/** 促销活动（V4.14.0 P 改版）：两个标签页——
+/** 促销活动：两个标签页——
  *  「促销模板」：模板卡片，点「使用此模板」→ 弹窗配置活动参数（名称/起止/规则）→ 创建；
  *  「促销活动列表」：查询（名称关键字/类型/状态）+ 列表 + 启停/效果（效果弹窗展示）。
  */
@@ -48,7 +48,7 @@ export async function render(view) {
     '定时打折': 'b', '捆绑销售': 'g', '消费后奖励': 'y', '满件折扣': 'g' }[k] || 'b');
   const zhe = v => { const r = Number(v); return r > 0 && r < 1 ? Math.round(r * 100) / 10 : r; };
 
-  /* ── 连锁上下文（V5.0.0 P2-5：总部才显示「投放门店」） ── */
+  /* ── 连锁上下文 ── */
   const chain = { isHq: false, enabled: false, stores: [] };
   (async () => {
     try {
@@ -77,7 +77,7 @@ export async function render(view) {
       if (kind === '第二件半价') return '同商品第 2 件半价';
       if (kind === '定时打折') return `每日 ${r.startTime || '?'}~${r.endTime || '?'} 打${zhe(r.rate)}折`;
       if (kind === '捆绑销售') {
-        const names = (r.items || []).map(x => x.name || `商品#${x.productId}`).join('+');
+        const names = (r.items || []).map((x, i) => x.name || `商品${String(i + 1).padStart(2, '0')}#`).join('+');
         return `${names || '组合'} = ${money(r.bundlePrice)}`;
       }
       if (kind === '消费后奖励') return `消费满 ${Number(r.threshold)} 元 → ${r.rewardType === 'gift' ? `送赠品${r.giftName ? '「' + r.giftName + '」' : ''}${r.needConfirm ? '（需确认）' : ''}` : '发购物券'}`;
@@ -154,6 +154,7 @@ export async function render(view) {
         name: mask.querySelector('#tName').value.trim() || undefined,
         startAt: new Date(startAt).toISOString(), endAt: new Date(endAt).toISOString(),
         startNow: mask.querySelector('#tNow').checked,
+        isStackable: mask.querySelector('#rStack').checked,
         rules: curRules,
         scope: hasScope ? { categoryIds: curScope.categoryIds, productIds: curScope.productIds } : undefined,
       }), '活动已创建（按你修改后的参数生效）');
@@ -185,31 +186,95 @@ export async function render(view) {
           </div>
           <div style="flex:1;min-width:220px">
             <div class="muted" style="font-size:12px;margin-bottom:4px">指定商品（可多选，搜索条码/名称/拼音）</div>
-            <input id="scProd" placeholder="输入关键字或扫码…">
-            <div id="scProdList" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px">
-              ${(curScope.products || []).map((p, i) => `<span class="tag b" style="cursor:pointer" data-scdel="${i}" title="点击移除">${esc(p.name)} ✕</span>`).join('') || '<span class="muted" style="font-size:12px">未添加指定商品</span>'}
+            <div class="bar" style="flex-wrap:nowrap;gap:6px">
+              <button class="btn sm" id="scProdPick" style="flex:none">➕ 添加指定商品</button>
+              <input id="scProdBox" readonly placeholder="未添加指定商品" style="flex:1;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
+                value="${(curScope.products || []).map(p => p.name).join('，')}" title="${esc((curScope.products || []).map(p => p.name).join('，'))}">
             </div>
           </div>
         </div>
         <div class="muted" style="font-size:12px;margin-top:6px">当前：${(cN || pN) ? `品类 ${cN} 个 · 商品 ${pN} 个` : '全部商品（全品类参与）'}；
           满减/满折带范围时门槛按范围内商品金额计（如「饮料品类满30减5」只看饮料小计）。</div>`;
-      box.querySelectorAll('.sc-cat').forEach(cb => cb.onchange = () => {
-        const id = Number(cb.value);
-        if (cb.checked) { if (!curScope.categoryIds.includes(id)) curScope.categoryIds.push(id); }
-        else curScope.categoryIds = curScope.categoryIds.filter(x => x !== id);
-        renderInner();
+      const kidsOfAt = pIdx => { const a = []; for (let i = pIdx + 1; i < flat.length && flat[i].depth > 0; i++) a.push(flat[i]); return a; };
+      box.querySelectorAll('.sc-cat').forEach(cb => {
+        const idx = flat.findIndex(c => Number(c.id) === Number(cb.value));
+        const isRoot = flat[idx] && flat[idx].depth === 0;
+        cb.onchange = () => {
+          const id = Number(cb.value);
+          if (isRoot) {
+            // V5.0.3：一级勾选 → 自动勾选全部所属次级（父级勾选态完全由子级推导，不再单独存父 id）
+            kidsOfAt(idx).forEach(k => {
+              if (cb.checked) { if (!curScope.categoryIds.includes(Number(k.id))) curScope.categoryIds.push(Number(k.id)); }
+              else curScope.categoryIds = curScope.categoryIds.filter(x => x !== Number(k.id));
+            });
+          }
+          if (cb.checked) { if (!curScope.categoryIds.includes(id)) curScope.categoryIds.push(id); }
+          else curScope.categoryIds = curScope.categoryIds.filter(x => x !== id);
+          // 子级变动后父级归位：全勾 → 勾父；部分 → 不勾父（渲染为半选淡态）
+          if (!isRoot) {
+            let pIdx = idx; for (let i = idx; i >= 0; i--) { if (flat[i].depth === 0) { pIdx = i; break; } }
+            if (pIdx !== idx) {
+              const pid = Number(flat[pIdx].id);
+              const kids = kidsOfAt(pIdx);
+              const done = kids.filter(k => curScope.categoryIds.includes(Number(k.id))).length;
+              if (done === kids.length) { if (!curScope.categoryIds.includes(pid)) curScope.categoryIds.push(pid); }
+              else curScope.categoryIds = curScope.categoryIds.filter(x => x !== pid);
+            }
+          }
+          renderInner();
+        };
+        // 半选态渲染：父级部分勾选 → indeterminate 淡色半选；全勾 → 正常勾选
+        if (isRoot) {
+          const kids = kidsOfAt(idx);
+          if (kids.length) {
+            const done = kids.filter(k => curScope.categoryIds.includes(Number(k.id))).length;
+            if (done > 0 && done < kids.length) { cb.checked = false; cb.indeterminate = true; }
+          }
+        }
       });
-      box.querySelectorAll('[data-scdel]').forEach(t => t.onclick = () => {
-        curScope.products.splice(Number(t.dataset.scdel), 1);
-        curScope.productIds = curScope.products.map(p => p.id);
-        renderInner();
-      });
-      attachProductSearch(box.querySelector('#scProd'), { onPick: p => {
-        if (curScope.productIds.includes(Number(p.id))) return toast('该商品已添加', false);
-        curScope.products.push({ id: Number(p.id), name: p.name });
-        curScope.productIds = curScope.products.map(x => x.id);
-        renderInner();
-      } });
+      // V5.0.2：指定商品选择器（弹窗查询 + 复选多选；确定后逗号回填输入框，点击可再选）
+      const openPicker = () => {
+        const pm = document.createElement('div');
+        pm.className = 'modal-mask';
+        const sel = new Map((curScope.products || []).map(p => [Number(p.id), p]));
+        pm.innerHTML = `<div class="modal" style="width:640px;height:min(80vh,700px);display:flex;flex-direction:column">
+          <h3 style="flex:none">选择指定商品 <input id="pkKw" placeholder="条码/名称/拼音，输入即查" style="margin-left:8px;width:220px"></h3>
+          <div id="pkList" style="flex:1;overflow:auto"></div>
+          <div class="bar" style="flex:none;margin-top:8px;justify-content:flex-end">
+            <span class="muted" style="margin-right:auto;font-size:12px">已选 <b id="pkN">0</b> 个（跨查询保留勾选）</span>
+            <button class="btn" id="pkCancel">取消</button>
+            <button class="btn pri" id="pkOk">确定</button></div></div>`;
+        document.body.appendChild(pm);
+        pm.onclick = e => { if (e.target === pm) pm.remove(); };
+        const loadPk = async () => {
+          const kw = encodeURIComponent(pm.querySelector('#pkKw').value.trim());
+          const d = await must(get(`/products?size=50${kw ? `&keyword=${kw}` : ''}`)).catch(() => null);
+          const items = d?.items || [];
+          pm.querySelector('#pkN').textContent = String(sel.size);
+          pm.querySelector('#pkList').innerHTML = items.length ? `<table><tbody>${items.map(p => `
+            <tr><td style="width:30px"><input type="checkbox" data-pk="${p.id}" ${sel.has(Number(p.id)) ? 'checked' : ''}></td>
+            <td><b>${esc(p.name)}</b></td><td class="muted" style="font-family:var(--mono)">${esc(p.barcode || '—')}</td>
+            <td class="num">${Number(p.sell_price ?? 0).toFixed(2)}</td></tr>`).join('')}</tbody></table>`
+            : '<div class="empty">无匹配商品</div>';
+          pm.querySelectorAll('[data-pk]').forEach(cb => cb.onchange = () => {
+            const id = Number(cb.dataset.pk);
+            const p = items.find(x => Number(x.id) === id);
+            if (cb.checked && p) sel.set(id, { id, name: p.name }); else sel.delete(id);
+            pm.querySelector('#pkN').textContent = String(sel.size);
+          });
+        };
+        pm.querySelector('#pkKw').oninput = () => { clearTimeout(openPicker._t); openPicker._t = setTimeout(loadPk, 300); };
+        pm.querySelector('#pkCancel').onclick = () => pm.remove();
+        pm.querySelector('#pkOk').onclick = () => {
+          curScope.products = [...sel.values()];
+          curScope.productIds = curScope.products.map(x => x.id);
+          pm.remove(); renderInner();
+        };
+        pm.querySelector('#pkKw').focus();
+        loadPk();
+      };
+      box.querySelector('#scProdPick').onclick = openPicker;
+      box.querySelector('#scProdBox').onclick = openPicker;
     };
     renderInner();
   }
@@ -264,7 +329,7 @@ export async function render(view) {
         </div>
         <table style="margin-top:6px;max-width:560px" id="rItemTbl"><thead><tr><th>商品</th><th style="width:110px">数量</th><th style="width:60px">操作</th></tr></thead>
         <tbody>${curRules.items.map((it, i) => `<tr>
-          <td>${esc(it.name || `商品#${it.productId}`)}</td>
+          <td>${esc(it.name || `商品${String(i + 1).padStart(2, '0')}#`)}</td>
           <td><input type="number" min="1" step="1" value="${Number(it.qty || 1)}" data-qi="${i}" style="width:80px"></td>
           <td><button class="btn sm warn" data-idel="${i}">删</button></td></tr>`).join('')}</tbody></table>
         ${curRules.items.length < 2 ? '<div class="muted" style="font-size:12px;margin-top:4px">⚠ 至少需要 2 个商品</div>' : ''}
@@ -332,10 +397,16 @@ export async function render(view) {
       box.innerHTML = `<div class="doc-tip">该类型（${esc(kind)}）无需参数，直接设置起止时间创建即可。</div>`;
     }
     // V4.28.9e 通用开关：是否必须会员参与（所有活动类型）——勾选后非会员一律不享受本活动
+    // V5.0.3：「活动叠加」与「会员专享」同排展示
     box.insertAdjacentHTML('beforeend', `
-      <div style="margin-top:10px;display:flex;align-items:center;gap:6px;font-size:13px">
-        <input type="checkbox" id="rMemOnly" ${curRules.memberOnly ? 'checked' : ''}>
-        <label for="rMemOnly" style="font-weight:400;cursor:pointer">会员专享（勾选后非会员不享受本活动）</label></div>`);
+      <div style="margin-top:10px;display:flex;align-items:center;gap:18px;font-size:13px;flex-wrap:wrap">
+        <span style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="rMemOnly" ${curRules.memberOnly ? 'checked' : ''}>
+          <label for="rMemOnly" style="font-weight:400;cursor:pointer">会员专享（勾选后非会员不享受本活动）</label></span>
+        <span style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="rStack" ${curRules.isStackable ? 'checked' : ''}>
+          <label for="rStack" style="font-weight:400;cursor:pointer" title="勾选后本活动可与其它促销/优惠券叠加；不勾选=排他（结算取最优单活动）">活动叠加</label></span>
+      </div>`);
     mask.querySelector('#rMemOnly').onchange = () => { curRules.memberOnly = mask.querySelector('#rMemOnly').checked || undefined; };
   }
 
@@ -412,7 +483,8 @@ export async function render(view) {
   async function detail(id) {
     const d = await must(get(`/promotions/${id}`));
     const p = d.promo, e2 = d.effect;
-    openDetailModal(`活动效果：${esc(p.name)} `, `
+    openDetailModal(`活动效果`, `
+      <div class="bar muted" style="margin-bottom:8px">活动：<b>${esc(p.name)}</b></div>
       <div class="grid kpis">
         <div class="kpi"><div class="t">命中订单数</div><div class="v">${e2.order_hits}</div></div>
         <div class="kpi"><div class="t">整单让利总额</div><div class="v">${money(e2.order_saved)}</div></div>

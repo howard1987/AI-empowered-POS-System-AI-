@@ -1,5 +1,5 @@
 /**
- * 通用 UI 组件（V4.14.0 S2 泛化）：
+ * 通用 UI 组件：
  *   openDetailModal(title, html, opts) → 双击行/点击弹出的订单·单据详情弹窗（宽度自适应，右上关闭）
  *   exportRows({ filename, columns, rows, format }) → CSV / Excel(.xls) 导出，全系统复用
  *   paginate({ rows, page, size }) → 本地分页（每页 10 条，超出翻页）
@@ -18,6 +18,7 @@ export function openDetailModal(title, html, opts = {}) {
     <div class="cdm-body" style="overflow:auto">${html}</div></div>`;
   document.body.appendChild(mask);
   const close = () => { mask.remove(); opts.onClose?.(); };
+  mask.__modalClose = close;   // V5.0.1：供 ui.js 窗口按钮 ✕ / 遮罩点击走统一真关闭
   mask.addEventListener('click', e => { if (e.target === mask) close(); });
   return { mask, close };
 }
@@ -58,7 +59,7 @@ export function exportRows({ filename, columns, rows, format = 'csv' }) {
   return true;
 }
 
-/** 统一分页条（V4.14.9 泛化）：上一页/下一页右对齐 + 页码 + 手输页码跳转。
+/** 统一分页条：上一页/下一页右对齐 + 页码 + 手输页码跳转。
  *  所有含翻页展示的模块统一使用：pagerBar(...) 出 HTML → bindPager(...) 绑事件
  *
  *  ⚠ V4.26.4 修正：sticky 默认值由 true 改 false。

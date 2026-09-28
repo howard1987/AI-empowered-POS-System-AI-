@@ -1,6 +1,6 @@
 import { get, post, must, esc, toast, dt, money } from '../api.js';
 
-/** 组合拆分（V4.8.17）：组合档案（BOM）+ 组装 ZZ-/拆分 CF- 开单（录入即生效）+ 单据浏览 */
+/** 组合拆分：组合档案（BOM）+ 组装 ZZ-/拆分 CF- 开单（录入即生效）+ 单据浏览 */
 export async function render(view) {
   const today = new Date().toISOString().slice(0, 10);
   let prods = [];

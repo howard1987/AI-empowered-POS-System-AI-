@@ -1,5 +1,5 @@
 /**
- * A5 业务单据统一打印（V4.15.7 P3）：
+ * A5 业务单据统一打印：
  *   - 七类：入库 / 退货 / 订货 / 报损 / 盘点 / 调拨 / 对账（一单一页 A5，CSS @page 精确版式）
  *   - 三入口：详情弹窗「打印单据」+ 列表勾选批量 + 审核通过后自动弹（doc.print.auto_a5，可关）
  *   - 权限：docs.print.a5（店长及以上）——按钮显隐 + 留痕端点双重约束
@@ -150,7 +150,7 @@ const DOC_DEFS = {
   },
 };
 
-/* ── A5 模版（V4.15.8 P4）：抬头标题 / 备注显隐 / 联次默认份数（60s 缓存，无模版=默认版式） ── */
+/* ── A5 模版：抬头标题 / 备注显隐 / 联次默认份数（60s 缓存，无模版=默认版式） ── */
 let a5TplCache = {}, a5TplAt = 0;
 async function a5Tpl(bizType, force) {
   if (!force && a5TplCache[bizType] !== undefined && Date.now() - a5TplAt < 60000) return a5TplCache[bizType];
@@ -164,12 +164,27 @@ async function a5Tpl(bizType, force) {
    报损/盘点/调拨/对账等从签名证据链（signature_records）补图——屏幕展示与 A5 打印同一来源 ── */
 const SIG_BIZ = { inbound: 'inbound', return: 'return', order: 'order', loss: 'loss', count: 'count', transfer: 'transfer', recon: '对账确认' };
 async function attachSigs(type, norm, id) {
-  if (norm.signImg) return;   // 详情已带签名（入库/退货/采购订单）不重复查
+  // V5.0.2：签字证据按角色分组——「本店人员（操作员）」与「业务人员（业务员）」各自姓名+签字图配对，
+  // 供 A5 版式把签字落到对应槽位（本店人员签字 / 业务人员签字），不再按顺序盲填、张冠李戴。
   try {
     const r = await must(get(`/purchase/signature-records?bizType=${encodeURIComponent(SIG_BIZ[type] || type)}&bizId=${id}`));
-    const imgs = (r.items || []).map(x => x.image_path).filter(Boolean);
-    if (imgs.length) { norm.signImg = imgs[0]; norm.signImgs = imgs; }
-  } catch { /* 查询失败照常出单（签名栏留白手签），绝不阻断打印 */ }
+    const recs = (r.items || []).filter(x => x.image_path).map(x => ({
+      path: x.image_path,
+      name: x.person_name || x.result_person || '',
+      role: String(x.role_label || '').includes('业务') ? '业务员' : '操作员',
+    }));
+    if (recs.length) {
+      norm.signItems = recs;
+      norm.signImgs = recs.map(s => s.path);
+      if (!norm.signImg) norm.signImg = recs[0].path;
+      norm.signNames = recs.map(s => s.name).filter(Boolean);
+    } else if (norm.signImg && !norm.signItems) {
+      norm.signItems = [{ path: norm.signImg, name: '', role: '操作员' }];
+    }
+  } catch {
+    // 查询失败照常出单（签名栏留白手签），绝不阻断打印
+    if (norm.signImg && !norm.signItems) norm.signItems = [{ path: norm.signImg, name: '', role: '操作员' }];
+  }
 }
 
 /* ── V4.15.9 hiprint 排版模版打印（激光/喷墨 A5/A4）──
@@ -178,6 +193,7 @@ const HIP_META_KEY = {
   '供应商': 'supplier', '日期': 'time', '时间': 'time', '状态': 'status', '制单人': 'operator', '经手人': 'operator',
   '经办人': 'operator', '盘点人': 'counter', '操作员': 'operator', '备注': 'remark', '账期': 'period',
   '调出': 'from', '调入': 'to', '原因': 'reason', '范围': 'scope', '业务员': 'salesman', '预计到货': 'expect',
+  '大客户': 'bigcustomer',
 };
 let hipLockCss = null;
 async function hipPrintCss() {
@@ -191,9 +207,15 @@ function docPrintData(norm) {
     printTime: new Date().toLocaleString('zh-CN', { hour12: false }) };
   for (const [k, v] of (norm.meta || [])) data[HIP_META_KEY[k] || k] = v;
   if (norm.remark) data.remark = norm.remark;
-  // V4.16.4：签名图暴露给模版字段（signImg=首张绝对地址；模版未绑定则打印时兜底追加签名行）
-  const sigs = (Array.isArray(norm.signImgs) && norm.signImgs.length ? norm.signImgs : (norm.signImg ? [norm.signImg] : [])).filter(Boolean);
-  if (sigs.length) { data.signImg = imgUrl(sigs[0]); data.signImgAll = sigs.map(p => imgUrl(p)).join('|'); }
+  // V5.0.2：签名按角色分组暴露给模版字段——
+  //   本店人员：signImg（签字图）/ signName（姓名）；业务人员：signImgBiz / signNameBiz
+  const sigItems = Array.isArray(norm.signItems) && norm.signItems.length ? norm.signItems
+    : (norm.signImgs && norm.signImgs.length ? norm.signImgs.map(p => ({ path: p, name: '', role: '操作员' }))
+      : (norm.signImg ? [{ path: norm.signImg, name: '', role: '操作员' }] : []));
+  const opSigs = sigItems.filter(s => s.role !== '业务员');
+  const bizSigs = sigItems.filter(s => s.role === '业务员');
+  if (opSigs.length) { data.signImg = imgUrl(opSigs[0].path); data.signName = opSigs.map(s => s.name).filter(Boolean).join('、'); }
+  if (bizSigs.length) { data.signImgBiz = imgUrl(bizSigs[0].path); data.signNameBiz = bizSigs.map(s => s.name).filter(Boolean).join('、'); }
   return data;
 }
 async function printDocsHiprint(hp, docs, copies, jobType, metas) {
@@ -203,14 +225,17 @@ async function printDocsHiprint(hp, docs, copies, jobType, metas) {
   for (const norm of docs) {
     const data = docPrintData(norm);
     if (jobType === '重打') data.reprint = '*** 重 打 ***';
-    const sigPaths = (Array.isArray(norm.signImgs) && norm.signImgs.length ? norm.signImgs : (norm.signImg ? [norm.signImg] : [])).filter(Boolean);
+    const sItems = Array.isArray(norm.signItems) && norm.signItems.length ? norm.signItems
+      : (norm.signImgs && norm.signImgs.length ? norm.signImgs.map(p => ({ path: p, name: '', role: '操作员' }))
+        : (norm.signImg ? [{ path: norm.signImg, name: '', role: '操作员' }] : []));
     for (let c = 0; c < copies; c++) {
       const $h = tplHp.getHtml(data);
       let one = ($h && $h[0] ? $h[0].outerHTML : String($h)) || '';
-      // V4.16.4：模版未绑定签名图（HTML 中无 /signatures/ 资源）→ 兜底追加电子签名行，确保打印带签名
-      if (sigPaths.length && !one.includes('/signatures/')) {
-        one += `<div style="display:flex;gap:28px;align-items:flex-end;font-size:12.5px;color:#111;margin:6mm 10mm 0">
-          <span>✍️ 电子签名：${sigPaths.map(p => `<img style="max-height:52px;vertical-align:middle;border:1px dashed #bbb;border-radius:6px" src="${esc(imgUrl(p))}">`).join(' ')}</span></div>`;
+      // V4.16.4：模版未绑定签名图（HTML 中无 /signatures/ 资源）→ 兜底追加电子签名行（姓名+角色配对）
+      if (sItems.length && !one.includes('/signatures/')) {
+        one += `<div style="display:flex;gap:28px;align-items:flex-end;font-size:12.5px;color:#111;margin:6mm 10mm 0;flex-wrap:wrap">
+          <span>✍️ 本店人员签字：${sItems.filter(s => s.role !== '业务员').map(s => `<img style="max-height:52px;vertical-align:middle;border:1px dashed #bbb;border-radius:6px" src="${esc(imgUrl(s.path))}">${s.name ? `<span style="font-size:11px;color:#555">（${esc(s.name)}）</span>` : ''}`).join(' ') || '__________'}</span>
+          <span>✍️ 业务人员签字：${sItems.filter(s => s.role === '业务员').map(s => `<img style="max-height:52px;vertical-align:middle;border:1px dashed #bbb;border-radius:6px" src="${esc(imgUrl(s.path))}">${s.name ? `<span style="font-size:11px;color:#555">（${esc(s.name)}）</span>` : ''}`).join(' ') || '__________'}</span></div>`;
       }
       html += one;
     }
@@ -242,16 +267,29 @@ function docHtml(type, doc, copyIdx, copies, jobType) {
     ? `<tr><td colspan="${nCols - 1}"><b>${esc(doc.totalLabel || '合计')}</b></td><td class="num"><b>${money(doc.totalAmount || 0)}</b></td></tr>`
     : `<tr><td colspan="${qtyIdx + 1}">合计</td><td class="num">${doc.totalQty ?? ''}</td>
         <td colspan="${Math.max(0, nCols - qtyIdx - 3)}"></td><td class="num"><b>${money(doc.totalAmount || 0)}</b></td></tr>`;
-  // V4.16.4 签名落位：全部签名照（证据链可能多张）按顺序落到对应签字槽位，其余并入「电子签名」块同行展示
-  const SIG_SLOTS = ['操作员签字', '审批人', '经办人签字', '盘点人签字', '店长签字'];
-  const sigImgs = (Array.isArray(doc.signImgs) && doc.signImgs.length ? doc.signImgs : (doc.signImg ? [doc.signImg] : []))
-    .filter(Boolean)
-    .map(p => `<img style="max-height:56px;vertical-align:middle;border:1px dashed #bbb;border-radius:6px" src="${esc(imgUrl(p))}">`);
-  let sigUsed = 0;
-  const footers = doc.footer.map(f => {
-    if (sigImgs.length && SIG_SLOTS.includes(f) && sigUsed < sigImgs.length) return `<span>${f}：${sigImgs[sigUsed++]}</span>`;
+  // V5.0.2 签名落位（按角色配对）：本店人员（操作员）签名落到本店签字槽（操作员/经办人/盘点人/店长/制单/审核），
+  //   业务人员（业务员）签名落到「业务」槽；单据无业务槽时独立补「业务人员签字」槽——姓名与签字图一一配对。
+  const sigItems = (Array.isArray(doc.signItems) && doc.signItems.length ? doc.signItems
+    : (doc.signImgs && doc.signImgs.length ? doc.signImgs.map(p => ({ path: p, name: '', role: '操作员' }))
+      : (doc.signImg ? [{ path: doc.signImg, name: '', role: '操作员' }] : [])));
+  const sigHtml = s => `<img style="max-height:56px;vertical-align:middle;border:1px dashed #bbb;border-radius:6px" src="${esc(imgUrl(s.path))}">${s.name ? `<span style="font-size:10.5px;color:#555">（${esc(s.name)}）</span>` : ''}`;
+  const opSigs = sigItems.filter(s => s.role !== '业务员');
+  const bizSigs = sigItems.filter(s => s.role === '业务员');
+  let opUsed = 0, bizUsed = 0;
+  const hasBizSlot = doc.footer.some(f => /业务/.test(f));
+  let footers = doc.footer.map(f => {
+    const biz = /业务/.test(f);
+    const pool = biz ? bizSigs : opSigs;
+    const used = biz ? bizUsed : opUsed;
+    if (used < pool.length) { if (biz) bizUsed++; else opUsed++; return `<span>${f}：${sigHtml(pool[used])}</span>`; }
     return `<span>${f}：__________</span>`;
-  }).join('') + (sigUsed < sigImgs.length ? `<span>✍️ 电子签名：${sigImgs.slice(sigUsed).join(' ')}</span>` : '');
+  }).join('');
+  if (bizSigs.length && !hasBizSlot) {
+    footers += `<span>业务人员签字：${bizSigs.map(sigHtml).join(' ')}</span>`;
+    bizUsed = bizSigs.length;
+  }
+  const rest = [...opSigs.slice(opUsed).map(sigHtml), ...bizSigs.slice(bizUsed).map(sigHtml)];
+  if (rest.length) footers += `<span>✍️ 电子签名：${rest.join(' ')}</span>`;
   return `<div class="page">
     <h2>${esc(doc.title)}（A5）${jobType === '重打' ? '<span style="color:#c0392b;font-size:14px;vertical-align:middle">　*** 重打 ***</span>' : ''}</h2>
     <div class="sub">社区超市收银系统 · 打印时间 ${new Date().toLocaleString('zh-CN', { hour12: false })}</div>

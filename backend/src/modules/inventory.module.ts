@@ -64,6 +64,45 @@ class InventoryController {
     return rows;
   }
 
+  /** V5.0.1 门店报表钻取：低库存/负库存商品明细（mode=low|negative；storeId 仅总部节点可代查，供一键进货/调拨） */
+  @Get('abnormal')
+  async abnormal(@Query('storeId') storeIdQ?: string, @Query('mode') mode = 'low') {
+    const want = Number(storeIdQ) || 0;
+    const sid = want && (await isHqStore(curStore())) ? want : curStore();
+    const m = mode === 'negative' ? 'negative' : 'low';
+    const rows = await q(
+      `SELECT p.id AS product_id, p.name, p.barcode, p.spec, p.base_unit, p.min_stock, p.sell_price,
+              COALESCE(ic.qty_total,0)::float8 AS qty_total, COALESCE(ic.qty_on_order,0)::float8 AS qty_on_order,
+              sup.name AS supplier_name, p.supplier_default_id
+         FROM products p
+         LEFT JOIN inventory_current ic ON ic.product_id = p.id AND ic.store_id = $1
+         LEFT JOIN suppliers sup ON sup.id = p.supplier_default_id
+        WHERE p.deleted_at IS NULL AND p.track_inventory
+          AND ( ($2 = 'negative' AND COALESCE(ic.qty_total,0) < 0)
+             OR ($2 = 'low' AND COALESCE(ic.qty_total,0) >= 0 AND COALESCE(ic.qty_total,0) <= p.min_stock) )
+        ORDER BY COALESCE(ic.qty_total,0) ASC, p.id
+        LIMIT 200`, [sid, m]);
+    return { storeId: Number(sid), mode: m, items: rows.map((r: any) => ({
+      ...r,
+      product_id: Number(r.product_id), qty_total: Number(r.qty_total), qty_on_order: Number(r.qty_on_order),
+      min_stock: Number(r.min_stock), sell_price: Number(r.sell_price) })) };
+  }
+
+  /** V5.0.1 一键调拨辅助：商品在各门店（含总部仓）的可用库存（stock.transfer 权限），供自动选源店生成调拨单 */
+  @Get('cross-store')
+  @RequirePerms('stock.transfer')
+  async crossStore(@Query('productId') productId?: string) {
+    const pid = Number(productId);
+    if (!pid) throw new BizException(40003, 'productId 必填');
+    const rows = await q(
+      `SELECT s.id AS store_id, s.name AS store_name,
+              COALESCE((SELECT SUM(b.remain_qty) FROM batches b
+                         WHERE b.store_id = s.id AND b.product_id = $1
+                           AND b.status = '在库' AND b.remain_qty > 0), 0)::float8 AS qty
+         FROM stores s ORDER BY s.id`, [pid]);
+    return rows.map((r: any) => ({ ...r, store_id: Number(r.store_id), qty: Number(r.qty) }));
+  }
+
   /**
    * 批次查询（FIFO 溯源：批次=供应商×入库单×批次号 V4.3.5）
    * V4.9.3：支持 供应商 / 单据号（入库单号等）/ 商品ID / 商品名称 / 商品条码 多条件；
@@ -526,6 +565,59 @@ class InventoryController {
 
   /* ═══════════ 报损（拍照报损 V4.4.0：整单拍照 ≥1 张应用层强制；批次优先临期） ═══════════ */
 
+  /* ── V5.0.3 手机拍摄指令：PC 发起 → 同账号 PWA 消息页拍摄上传 → PC 轮询取回路径 ── */
+
+  /** 发起照片拍摄指令（返回 token 供 PC 轮询）。
+   *  默认 bizType='loss' 用于报损；采购退货等业务传 bizType='return' 即可复用同一套移动端回传机制。 */
+  @Post('losses/photo-request')
+  async createLossPhotoRequest(
+    @Body() b: { bizType?: string; label?: string },
+    @CurrentUser() user: AuthUser) {
+    const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`.slice(0, 40);
+    const bizType = b?.bizType || 'loss';
+    const label = b?.label || `报损照片 ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`;
+    const auditOp = bizType === 'return' ? 'return.photo.request' : 'loss.photo.request';
+    const auditCat = bizType === 'return' ? '采购' : '库存';
+    await tx(async c =>
+      cx(c, `INSERT INTO mobile_photo_requests (token, store_id, biz_type, label, status, employee_id)
+             VALUES ($1,$2,$3,$4,'待拍摄',$5)`,
+        [token, user.storeId || 1, bizType, label, user.sub]));
+    await audit(curStore(), user.sub, auditCat, auditOp, 'mobile_photo_request', 0, { token, bizType });
+    return { token };
+  }
+
+  /** 店员端：同账号待拍摄清单（PWA 消息页轮询） */
+  @Get('losses/photo-requests/pending')
+  async pendingLossPhotos(@CurrentUser() user: AuthUser) {
+    return { items: await q(
+      `SELECT id, token, label, created_at FROM mobile_photo_requests
+        WHERE store_id=$1 AND employee_id=$2 AND status='待拍摄'
+        ORDER BY id DESC LIMIT 20`, [user.storeId || 1, user.sub]) };
+  }
+
+  /** PC 端轮询：拍摄状态 */
+  @Get('losses/photo-requests/:token')
+  async lossPhotoStatus(@Param('token') token: string) {
+    const rows = await q1(
+      `SELECT status, file_path AS "filePath" FROM mobile_photo_requests WHERE token=$1`, [token]);
+    if (!rows) throw new BizException(40404, '拍摄指令不存在', 404);
+    return rows;
+  }
+
+  /** 店员端回传：token + 已上传文件路径（/upload 得到的 path） */
+  @Post('losses/photo-requests/:token/submit')
+  async submitLossPhoto(@Param('token') token: string,
+                        @Body() b: { filePath: string },
+                        @CurrentUser() user: AuthUser) {
+    if (!b?.filePath) throw new BizException(40003, '缺少照片路径');
+    const r = await tx(async c =>
+      cx(c, `UPDATE mobile_photo_requests SET status='已上传', file_path=$2, done_at=now()
+              WHERE token=$1 AND employee_id=$3 AND status='待拍摄' RETURNING id`,
+        [token, String(b.filePath).slice(0, 250), user.sub]));
+    if (!r.length) throw new BizException(50010, '拍摄指令不存在或已回传');
+    return { ok: true };
+  }
+
   /** 报损单列表（状态 / 日期筛选） */
   @Get('losses')
   async lossesList(
@@ -566,20 +658,35 @@ class InventoryController {
          VALUES (${curStore()},$1,$2,$3,'待审核',$4) RETURNING id`,
         [no, reason, b.photoPath, user.sub]);
       const id = Number(rows[0].id);
+      // V5.0.3 商品与报损：stock.loss_allow_zero 开启时，零/负库存商品允许报损——
+      // 在库批次不足（含零批次）→ 按「无批次」行记账（batch_id 空，成本取该商品最近一次进价，无则 0）
+      const allowZero = await this.settings.getBool('stock.loss_allow_zero', false);
       let total = 0;
       const lines: any[] = [];
       for (const it of b.items) {
         const qty = r3(Number(it.qty));
         if (!(qty > 0)) throw new BizException(40003, '报损数量必须大于 0');
-        const allocs = await this.fifoAlloc(c, it.productId, qty, true);
-        if (allocs.length !== 1) throw new BizException(50016, '报损需整批归属（请核对批次）');
+        let batchId: number | null = null;
+        let cost = 0;
+        try {
+          const allocs = await this.fifoAlloc(c, it.productId, qty, true);
+          if (allocs.length !== 1) throw new BizException(50016, '报损需整批归属（请核对批次）');
+          batchId = allocs[0].batchId;
+          cost = allocs[0].cost;
+        } catch (e: any) {
+          if (!(allowZero && e && e.code === 50014)) throw e;   // 仅「批次不足」走无批次兜底；其余原样抛出
+          const lc = await cx(c,
+            `SELECT inbound_cost FROM batches WHERE product_id=$1 ORDER BY inbound_date DESC, id DESC LIMIT 1`,
+            [it.productId]);
+          cost = Number(lc[0]?.inbound_cost) || 0;
+        }
         const item = await cx(c,
           `INSERT INTO loss_items (loss_id, product_id, batch_id, qty, unit_cost, remark)
            VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-          [id, it.productId, allocs[0].batchId, qty, allocs[0].cost, it.remark ?? null]);
-        total += qty * allocs[0].cost;
-        lines.push({ itemId: Number(item[0].id), productId: it.productId, batchId: allocs[0].batchId,
-                     qty, unitCost: allocs[0].cost });
+          [id, it.productId, batchId, qty, cost, it.remark ?? null]);
+        total += qty * cost;
+        lines.push({ itemId: Number(item[0].id), productId: it.productId, batchId,
+                     qty, unitCost: cost });
       }
       await cx(c, `UPDATE loss_records SET total_cost=$2 WHERE id=$1`, [id, r2(total)]);
       await audit(curStore(), user.sub, '进销存', 'loss.create', 'loss_record', id, { no, reason, total: r2(total) });
@@ -604,9 +711,10 @@ class InventoryController {
         WHERE l.id=$1`, [id]);
     if (!l) throw new BizException(40404, '报损单不存在', 404);
     const items = await q(
-      `SELECT i.*, p.name AS product_name, p.base_unit, b.batch_no
+      `SELECT i.*, p.name AS product_name, p.base_unit, b.batch_no,
+              CASE WHEN i.batch_id IS NULL THEN '无批次（零库存报损）' ELSE b.batch_no END AS batch_no_disp
          FROM loss_items i JOIN products p ON p.id = i.product_id
-         JOIN batches b ON b.id = i.batch_id
+         LEFT JOIN batches b ON b.id = i.batch_id
         WHERE i.loss_id=$1 ORDER BY i.id`, [id]);
     return { ...l, id: Number(l.id), items };
   }
@@ -627,16 +735,19 @@ class InventoryController {
       if (!items.length) throw new BizException(50016, '报损单无明细，不能审核');
       const byProduct = new Map<number, number>();
       for (const it of items) {
-        const bt = await cx(c,
-          `SELECT id, remain_qty FROM batches WHERE id=$1 AND status='在库' FOR UPDATE`, [it.batch_id]);
-        if (!bt.length) throw new BizException(50016, `批次#${it.batch_id} 已不在库，无法报损`);
-        if (Number(bt[0].remain_qty) < Number(it.qty)) {
-          throw new BizException(50014, `批次剩余 ${bt[0].remain_qty}，不足报损 ${it.qty}`);
+        if (it.batch_id != null) {
+          const bt = await cx(c,
+            `SELECT id, remain_qty FROM batches WHERE id=$1 AND status='在库' FOR UPDATE`, [it.batch_id]);
+          if (!bt.length) throw new BizException(50016, `批次#${it.batch_id} 已不在库，无法报损`);
+          if (Number(bt[0].remain_qty) < Number(it.qty)) {
+            throw new BizException(50014, `批次剩余 ${bt[0].remain_qty}，不足报损 ${it.qty}`);
+          }
+          await cx(c,
+            `UPDATE batches SET remain_qty = remain_qty - $2,
+                status = CASE WHEN remain_qty - $2 <= 0 THEN '报损' ELSE status END
+              WHERE id=$1`, [it.batch_id, it.qty]);
         }
-        await cx(c,
-          `UPDATE batches SET remain_qty = remain_qty - $2,
-              status = CASE WHEN remain_qty - $2 <= 0 THEN '报损' ELSE status END
-            WHERE id=$1`, [it.batch_id, it.qty]);
+        // V5.0.3：batch_id 为空的「无批次」行（零/负库存报损）跳过批次扣减，仅记流水——允许扣成负库存
         await cx(c,
           `INSERT INTO stock_flows (store_id, product_id, batch_id, direction, qty, unit_cost, ref_type, ref_id, ref_item_id, employee_id)
            VALUES (${curStore()},$1,$2,'出库',$3,$4,'loss',$5,$6,$7)`,
@@ -1005,7 +1116,7 @@ class InventoryController {
         const po = await cx(c,
           `INSERT INTO purchase_orders (store_id, po_no, supplier_id, status, source, po_scope, remark, applicant_id)
            VALUES ($1,$2,$3,'草稿','调拨缺口','hq',$4,$5) RETURNING id`,
-          [fromStore, poNo, supplierId, `调拨单 ${tr.transfer_no} 发货缺口自动生成`, user.sub]);
+          [fromStore, poNo, supplierId, `调拨单 ${tr.transfer_no} 自动生成`, user.sub]);
         demandPoId = Number(po[0].id);
         let amt = 0;
         for (const s of shortfalls) {

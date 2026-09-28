@@ -2,7 +2,7 @@ import { API, get, post, del, must, esc, dt, toast, imgUrl } from '../api.js';
 import { confirmBox } from '../ui.js';
 import { paginate, bindPager, pagerBar } from '../common-ui.js';
 
-/** 授权管理（V4.25.1 由「签名管理」扩展）：签字授权 + 设备授权统一入口，挂「系统」菜单
+/** 授权管理：签字授权 + 设备授权统一入口，挂「系统」菜单
  *  V4.14.8 签字1~4：
  *   ① 采集时 AI 识别签名姓名 → 自动匹配供应商业务员（非供应商侧不关联），样本自动入库；
  *   ② 完整性甄别在服务端 attach（签名姓名须完整包含单据署名，张五/刘三类不符拒绝）；
@@ -270,6 +270,29 @@ export async function render(view) {
     tryReadName();
   };
 
+  // V5.0.3：书写停顿 1.8s 防抖自动识别——无需手动点「AI 识别」；识别结果填姓名框（可手改）；失败静默
+  let sigRecT = null, sigRecBusy = false;
+  pad.addEventListener('pointerup', () => {
+    if (shots.length || resampleId) return;                   // 样本已记录/重采模式：不再自动识别
+    if (view.querySelector('#sgName').value.trim()) return;   // 已有姓名（手填或已识别）：不覆盖
+    clearTimeout(sigRecT);
+    sigRecT = setTimeout(async () => {
+      if (sigRecBusy) return;
+      if (padState.strokes < 1 || padInk(pad) / (pad.width * pad.height) < 0.002) return;
+      if (view.querySelector('#sgName').value.trim()) return;
+      sigRecBusy = true;
+      try {
+        const r = await post('/ai/signature/read', { image: pad.toDataURL('image/png') });
+        const nm = String((r?.data || r)?.name || '').trim();
+        if (nm && !view.querySelector('#sgName').value.trim()) {
+          view.querySelector('#sgName').value = nm;
+          toast(`AI 识别姓名：${nm}（可修改）`, true);
+        }
+      } catch { /* 识别服务不可达：静默，仍可手动点「AI 识别」或手填 */ }
+      sigRecBusy = false;
+    }, 1800);
+  });
+
   /* ── 签字样本表（复选框批量 + 单行删除 + 人员分类筛选；V4.16.5 分页 10 条/页） ── */
   let sgRows = [], sgCat = '', sgPage = 1, recPage = 1;   // 两表各自独立页码
   const sgRowById = {};   // id → {name, imgs[]}（点「样本数」弹窗预览用）
@@ -293,8 +316,8 @@ export async function render(view) {
     list.innerHTML = rows.length ? `
       <table><thead><tr>
         <th style="width:34px"><input type="checkbox" id="sgAll"></th>
-        <th>ID</th><th>签字人</th><th>人员分类</th><th>身份</th><th>供应商业务员</th><th>样本数</th><th>画像</th><th>状态</th><th>操作</th></tr></thead>
-      <tbody>${rows.map(t => {
+        <th class="seq">序号</th><th>ID</th><th>签字人</th><th>人员分类</th><th>身份</th><th>供应商业务员</th><th>样本数</th><th>画像</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody>${rows.map((t, i) => {
         const profN = Math.max(Number(t.sample_count) || 1, (t.profile?.images || []).length);
         // 同一人员的全部签名照片路径（画像 3 遍；旧数据回落单图）——行内不摆图，点「样本数」弹窗预览
         const sigImgs = (t.profile?.images?.length ? t.profile.images : [t.image_path]).filter(Boolean);
@@ -302,7 +325,7 @@ export async function render(view) {
         const n = sigImgs.length;
         return `<tr>
         <td><input type="checkbox" class="sg-chk" data-id="${t.id}"></td>
-        <td>${t.id}</td><td>${esc(t.person_name)}</td><td>${catTag(t.person_cat)}${String(t.person_cat) === '待确认' ? ` <button class="btn mini" data-catfix="${t.id}" data-nm="${esc(t.person_name)}">改分类</button>` : ''}</td><td class="muted">${esc(t.role_title || '—')}</td>
+        <td class="num seq">${(sgPage - 1) * 10 + i + 1}</td><td>${t.id}</td><td>${esc(t.person_name)}</td><td>${catTag(t.person_cat)}${String(t.person_cat) === '待确认' ? ` <button class="btn mini" data-catfix="${t.id}" data-nm="${esc(t.person_name)}">改分类</button>` : ''}</td><td class="muted">${esc(t.role_title || '—')}</td>
         <td class="muted">${esc(t.supplier_name || (t.supplier_id ? '#' + t.supplier_id : '—'))}</td>
         <td style="text-align:center">${n > 0
           ? `<span data-prev="${t.id}" title="点击预览签字样本" style="cursor:pointer;color:#e03131;font-weight:700;text-decoration:underline;text-underline-offset:3px">${n}</span>`
@@ -318,8 +341,14 @@ export async function render(view) {
     bindPager(list, p => { sgPage = p; drawSigs(); });
     syncBatchBar();
     const all = view.querySelector('#sgAll');
-    if (all) all.onchange = () => view.querySelectorAll('.sg-chk').forEach(c => { c.checked = all.checked; syncBatchBar(); });
-    view.querySelectorAll('.sg-chk').forEach(c => c.onchange = syncBatchBar);
+    if (all) {
+      all.onchange = () => view.querySelectorAll('.sg-chk').forEach(c => { c.checked = all.checked; syncBatchBar(); });
+      // V5.0.3：行勾选变化时同步表头全选框（部分取消 → 表头自动取消勾选，可再次全选/取消全选）
+      view.querySelectorAll('.sg-chk').forEach(c => c.onchange = () => {
+        all.checked = view.querySelectorAll('.sg-chk').length > 0 && [...view.querySelectorAll('.sg-chk')].every(x => x.checked);
+        syncBatchBar();
+      });
+    }
     view.querySelectorAll('[data-sig]').forEach(b => b.onclick = async () => {
       const toStatus = Number(b.dataset.s) === 1 ? 0 : 1;
       const id = Number(b.dataset.sig);
@@ -350,7 +379,7 @@ export async function render(view) {
     // V4.17.0 P13④：存量样本无效检测（近空白/纯色块双阈值，canvas 逐张分析打标）
     analyzeInvalid(rows);
   }
-  /* ── 无效样本检测（V4.17.0 P13④）：墨量 <0.3% 疑似空白 / >85% 疑似纯色块，打标不自动删 ── */
+  /* ── 无效样本检测：墨量 <0.3% 疑似空白 / >85% 疑似纯色块，打标不自动删 ── */
   const sgInvalidIds = new Set();   // 疑似无效样本的模板 id（跨页累积）
   const INK_MIN = 0.003, INK_MAX = 0.85;
   function inkRatioOfUrl(url) {
@@ -455,7 +484,7 @@ export async function render(view) {
   }
   view.querySelector('#sgPrevClose').onclick = () => { view.querySelector('#sgPrevModal').style.display = 'none'; };
 
-  /* ── 改分类弹窗（V4.17.0 P13②） ── */
+  /* ── 改分类弹窗 ── */
   let catfixId = 0;
   function openCatFix(id, name) {
     catfixId = id;
@@ -522,15 +551,15 @@ export async function render(view) {
     const bar = pagerBar({ page: pg.page, pages: pg.pages, total: pg.total, size: 10, sticky: false });
     const list = view.querySelector('#sgRecList');
     list.innerHTML = rows.length ? `
-      <table><thead><tr><th>ID</th><th>类型</th><th class="num">业务ID</th><th>签字人</th><th>角色</th><th>场景</th><th>操作人</th><th>样本</th><th>备注</th><th>时间</th></tr></thead>
-      <tbody>${rows.map(r => {
+      <table><thead><tr><th class="seq">序号</th><th>ID</th><th>类型</th><th class="num">业务ID</th><th>签字人</th><th>角色</th><th>场景</th><th>操作人</th><th>样本</th><th>备注</th><th>时间</th></tr></thead>
+      <tbody>${rows.map((r, i) => {
         // V4.17.0：样本编辑行（scene 以「编辑」开头）角色显示「管理」；其余维持 操作员/业务员
         const isEdit = String(r.scene || '').startsWith('编辑');
         const role = r.role_label
           || (isEdit ? '管理'
             : ((r.scene === '操作员签名' || String(r.person_name || '') === String(r.operator_name || '')) ? '操作员' : '业务员'));
         return `<tr>
-        <td>${r.id}</td><td class="muted">${isEdit ? '样本编辑' : esc(r.biz_type)}</td><td class="num">${r.biz_id}</td>
+        <td class="num seq">${(recPage - 1) * 10 + i + 1}</td><td>${r.id}</td><td class="muted">${isEdit ? '样本编辑' : esc(r.biz_type)}</td><td class="num">${r.biz_id}</td>
         <td>${esc(r.person_name || '—')}</td>
         <td><span class="tag ${isEdit ? 'y' : (role === '操作员' ? 'b' : 'g')}">${role}</span></td>
         <td><span class="tag ${r.scene === '调用' ? 'b' : 'y'}">${esc(r.scene)}</span></td>

@@ -83,9 +83,9 @@ export async function render(view) {
       <div class="card"><h3>打印机管理 </h3>
         <div style="text-align:right;margin:0 0 8px">
           ${canPr() ? `<button class="btn pri" id="pAdd">＋ 新增打印机</button>` : ''}</div>
-        <table><thead><tr><th>名称</th><th>品牌</th><th>类型</th><th>连接</th><th>纸宽/纸型</th><th>自动重连</th><th>状态</th><th>最近测试</th><th style="width:230px">操作</th></tr></thead>
-        <tbody>${ps.length ? ps.map(p => `<tr>
-          <td><b>${esc(p.name)}</b>${p.is_default ? ' <span class="pill b">默认</span>' : ''}</td>
+        <table><thead><tr><th class="seq">序号</th><th>名称</th><th>品牌</th><th>类型</th><th>连接</th><th>纸宽/纸型</th><th>自动重连</th><th>状态</th><th>最近测试</th><th style="width:230px">操作</th></tr></thead>
+        <tbody>${ps.length ? ps.map((p, i) => `<tr>
+          <td class="num seq">${i + 1}</td><td><b>${esc(p.name)}</b>${p.is_default ? ' <span class="pill b">默认</span>' : ''}</td>
           <td class="muted">${esc(p.brand || '通用')}</td>
           <td>${(p.printer_type || '小票') === '标签' ? '🏷️ 标签机' : '🧾 小票机'}</td>
           <td class="muted">${esc(p.conn_type)}${p.conn_addr ? ' · ' + esc(p.conn_addr) : ''}</td>
@@ -98,7 +98,7 @@ export async function render(view) {
               ${p.is_default ? '' : `<button class="btn sm" data-def="${p.id}">设默认</button>`}
               <button class="btn sm" data-edit="${p.id}">编辑</button>
               <button class="btn sm r" data-del="${p.id}">删除</button>` : '<span class="muted">无权限</span>'}
-          </td></tr>`).join('') : `<tr><td colspan="9" class="empty">暂无打印机，点击右上角新增</td></tr>`}
+          </td></tr>`).join('') : `<tr><td colspan="10" class="empty">暂无打印机，点击右上角新增</td></tr>`}
         </tbody></table></div>
       <div class="card"><h3>打印历史 </h3>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px" id="pjFilter">
@@ -118,13 +118,13 @@ export async function render(view) {
       const pg = paginate(rows, curPage, 10);
       curPage = pg.page;
       const box = body.querySelector('#pjBox');
-      box.innerHTML = `<table><thead><tr><th>类型</th><th>打印机</th><th>模板</th><th>业务</th><th>单号</th><th>状态</th><th>耗时</th><th>时间</th><th>操作人</th><th style="width:80px">操作</th></tr></thead>
-        <tbody>${rows.length ? pg.slice.map(j => {
+      box.innerHTML = `<table><thead><tr><th class="seq">序号</th><th>类型</th><th>打印机</th><th>模板</th><th>业务</th><th>单号</th><th>状态</th><th>耗时</th><th>时间</th><th>操作人</th><th style="width:80px">操作</th></tr></thead>
+        <tbody>${rows.length ? pg.slice.map((j, i) => {
           const jobTxt = j.job_type === '测试页' ? '🧪 测试页' : j.job_type === 'A5打印' ? '📄 A5打印'
             : j.job_type === '弹箱' ? '💵 弹箱' : j.job_type === '重打' ? '🖨️ 重打' : '🖨️ ' + esc(j.job_type || '打印');
           const canRe = j.job_type === 'A5打印' && j.biz_id && ['inbound', 'return', 'order', 'loss', 'count', 'transfer', 'recon'].includes(j.biz_type) && canPrintA5();
           return `<tr>
-          <td>${jobTxt}</td>
+          <td class="num seq">${(curPage - 1) * 10 + i + 1}</td><td>${jobTxt}</td>
           <td>${esc(j.printer_name)}</td>
           <td>${esc(j.template_name || '—')}</td>
           <td class="muted">${BIZ_CN[j.biz_type] || esc(j.biz_type || '—')}</td>
@@ -182,19 +182,22 @@ export async function render(view) {
     const curType = cur.printer_type || '小票';
     const m = modal(`
       <h3 style="margin:0 0 12px">${id ? '编辑打印机' : '新增打印机'}</h3>
-      <div class="fld"><label>名称（前台小票机 / 价签标签机 …）</label>
-        <input id="pfName" value="${esc(cur.name || '')}" placeholder="如：前台小票机"></div>
+      <div class="fld" style="flex-direction:column;align-items:flex-start;gap:3px"><label style="min-width:0;text-align:left">名称</label>
+        <input id="pfName" value="${esc(cur.name || '')}" placeholder="如：前台小票机" style="width:100%">
+        <div class="muted" style="font-size:11px">用于区分用途，如：前台小票机 / 价签标签机 …</div></div>
       <div class="fld"><label>设备类型</label>
         <select id="pfType">${['小票', '标签'].map(t =>
           `<option value="${t}" ${curType === t ? 'selected' : ''}>${t === '小票' ? '小票机（ESC/POS 卷纸）' : '标签机（TSPL/ZPL 价签·秤贴）'}</option>`).join('')}</select></div>
       <div class="fld"><label>连接方式</label>
         <select id="pfConn">${['USB', '网口', '蓝牙', '串口'].map(c =>
           `<option ${cur.conn_type === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
-      <div class="fld"><label>连接地址（网口填 IP:port，如 192.168.1.50:9100；串口/USB 可留空）</label>
-        <input id="pfAddr" value="${esc(cur.conn_addr || '')}" placeholder="如：192.168.1.50:9100"></div>
-      <div class="fld"><label>品牌（通用适配：芯烨/佳博/得力/爱普生=ESC/POS；汉印/佳博/TSC=TSPL、斑马=ZPL）</label>
-        <select id="pfBrand">${['芯烨', '佳博', '得力', '爱普生', '汉印', 'TSC', '斑马', '通用'].map(b =>
-          `<option ${(cur.brand || '通用') === b ? 'selected' : ''}>${b}</option>`).join('')}</select></div>
+      <div class="fld" style="flex-direction:column;align-items:flex-start;gap:3px"><label style="min-width:0;text-align:left">连接地址</label>
+        <input id="pfAddr" value="${esc(cur.conn_addr || '')}" placeholder="如：192.168.1.50:9100" style="width:100%">
+        <div class="muted" style="font-size:11px">网口填 IP:port（如 192.168.1.50:9100）；串口/USB 可留空</div></div>
+      <div class="fld" style="flex-direction:column;align-items:flex-start;gap:3px"><label style="min-width:0;text-align:left">品牌</label>
+        <select id="pfBrand" style="width:100%">${['芯烨', '佳博', '得力', '爱普生', '汉印', 'TSC', '斑马', '通用'].map(b =>
+          `<option ${(cur.brand || '通用') === b ? 'selected' : ''}>${b}</option>`).join('')}</select>
+        <div class="muted" style="font-size:11px">通用适配：芯烨/佳博/得力/爱普生=ESC/POS；汉印/佳博/TSC=TSPL、斑马=ZPL</div></div>
       <div class="fld" id="pfWidthRow"><label>纸宽</label>
         <select id="pfWidth">${[58, 80].map(w => `<option value="${w}" ${Number(cur.width_mm || 80) === w ? 'selected' : ''}>${w}mm</option>`).join('')}</select></div>
       <div class="fld" id="pfLabelRow" style="display:none"><label>标签纸型（价签/秤贴）</label>
@@ -260,9 +263,9 @@ export async function render(view) {
             <b>${k.online}<small class="muted">/${k.total}</small></b></div>`).join('')}
         </div></div>
       <div class="card"><h3>设备档案</h3>
-        <table><thead><tr><th>设备</th><th>类型</th><th>型号</th><th>连接</th><th>绑定收银台</th><th>状态</th><th>心跳</th><th style="width:150px">操作</th></tr></thead>
-        <tbody>${devs.length ? devs.map(d => `<tr>
-          <td><b>${KIND_ICON[d.kind] || ''} ${esc(d.name)}</b></td>
+        <table><thead><tr><th class="seq">序号</th><th>设备</th><th>类型</th><th>型号</th><th>连接</th><th>绑定收银台</th><th>状态</th><th>心跳</th><th style="width:150px">操作</th></tr></thead>
+        <tbody>${devs.length ? devs.map((d, i) => `<tr>
+          <td class="num seq">${i + 1}</td><td><b>${KIND_ICON[d.kind] || ''} ${esc(d.name)}</b></td>
           <td class="muted">${esc(d.kind)}</td>
           <td class="muted">${esc(d.model || '—')}</td>
           <td class="muted">${esc(d.conn_type || '—')}${d.conn_addr ? ` · ${esc(d.conn_addr)}` : ''}</td>
@@ -271,7 +274,7 @@ export async function render(view) {
           <td class="muted">${idle(d)}</td>
           <td class="ops">${canDev() ? `<button class="btn sm" data-edit="${d.id}">编辑</button>
             <button class="btn sm r" data-del="${d.id}">删除</button>` : '<span class="muted">无权限</span>'}</td>
-        </tr>`).join('') : `<tr><td colspan="8" class="empty">暂无设备档案，点击右上角新增</td></tr>`}
+        </tr>`).join('') : `<tr><td colspan="9" class="empty">暂无设备档案，点击右上角新增</td></tr>`}
         </tbody></table></div>`;
 
     if (canDev()) {

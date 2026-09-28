@@ -189,7 +189,7 @@
   .seg button.on{background:var(--pri);border-color:var(--pri);color:#f7f3e6;}
   .seg button.dis{opacity:.45;}
   .cs-cashq{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;}
-  .cs-cashq button{border:1px solid var(--line);background:var(--card);border-radius:9px;padding:8px 14px;font-size:13.5px;font-weight:700;color:var(--pri);cursor:pointer;}
+  .cs-cashq button{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:11px 20px;font-size:15.5px;font-weight:700;color:var(--pri);cursor:pointer;}
   .cs-cashin{display:flex;align-items:center;gap:8px;}
   .cs-cashin label{font-size:13px;color:var(--ink-3);flex:none;}
   .cs-cashin input{flex:1;padding:11px 12px;border:1px solid var(--line);border-radius:10px;font-size:19px;font-weight:700;}
@@ -275,7 +275,7 @@
     .cs-scanbtn{padding:8px 30px;}
     .cs-sb-btn{height:52px;font-size:14.5px;}
     #csMemK{width:150px;padding:10px 12px;font-size:14px;}
-    .cs-cashq button{padding:12px 18px;font-size:15px;}
+    .cs-cashq button{padding:14px 24px;font-size:17px;}
     .seg button{padding:13px 0;font-size:15px;}
     .cs-stockpill{padding:3px 9px;font-size:11.5px;}
     #csCartHead,#csClear{min-height:34px;}
@@ -2576,23 +2576,28 @@ window.CashierShell = (function () {
         };
       } catch { /* 台位模块不可用则隐藏该行 */ }
     })();
+    // V5.0.1：顾客实收默认跟随实时应收（券/积分冲减后自动更新）；人工改过（输入/点快捷键）则不再覆盖
+    let cashTouched = false;
     const updCashQ = () => {
-      const opts = [c.due, 50, 100, 200].filter((v, i, a) => a.indexOf(v) === i && v > 0);
+      const opts = [c.due, 5, 10, 20, 50, 100, 200].filter((v, i, a) => a.indexOf(v) === i && v > 0);
       m.querySelector('#csCashQ').innerHTML = opts.map(v => `<button data-v="${v}">¥${v % 1 === 0 ? v : money(v)}</button>`).join('');
       m.querySelectorAll('#csCashQ [data-v]').forEach(b => b.onclick = () => {
+        cashTouched = true;
         m.querySelector('#csCashIn').value = Number(b.dataset.v).toFixed(2); updChange();
       });
+      const inp = m.querySelector('#csCashIn');
+      if (inp && !cashTouched) inp.value = Number(c.due).toFixed(2);   // 默认填充实际结算金额
     };
-    const updChange = () => {
+    const updChange = (due = c.due) => {
       const paid = Number(m.querySelector('#csCashIn').value) || 0;
-      const diff = paid - c.due;
+      const diff = paid - due;
       const el = m.querySelector('#csChange');
       el.textContent = diff < -0.005 ? '还差 ¥' + money(-diff) : '¥' + money(Math.max(0, diff));
       el.style.color = diff < -0.005 ? 'var(--bad)' : 'var(--ok)';
       // V4.21.0：客显现金引导——应收/实收/找零大字
-      pushDisplay({ status: 'pay_cash', due: c.due, paid, change: Math.max(0, diff), guide: diff < -0.005 ? '还需支付 ¥' + money(-diff) : (paid > 0 ? '请收好找零' : '请递给收银员现金') });
+      pushDisplay({ status: 'pay_cash', due, paid, change: Math.max(0, diff), guide: diff < -0.005 ? '还需支付 ¥' + money(-diff) : (paid > 0 ? '请收好找零' : '请递给收银员现金') });
     };
-    m.querySelector('#csCashIn').addEventListener('input', updChange);
+    m.querySelector('#csCashIn').addEventListener('input', () => { cashTouched = true; updChange(); });
     // V4.21.0 P16 收款双键：结算弹窗空格 = 收款但不打小票（仅现金通道；输入框/按钮聚焦时不劫持）
     sheet.addEventListener('keydown', e => {
       if (e.key !== ' ' || payType !== 'cash') return;
@@ -2637,7 +2642,7 @@ window.CashierShell = (function () {
       const c2 = calc();
       m.querySelector('.cs-paynum').innerHTML = `<em>¥</em>${money(c2.due)}`;
       m.querySelector('.cs-paydetail').textContent = `商品 ¥${money(c2.goods)}${c2.memSave > 0 ? ` · 会员省 ¥${money(c2.memSave)}` : ''}${c2.couponCut > 0 ? ` · 券 ¥${money(c2.couponCut)}` : ''}${c2.discAmt > 0 ? ` · 整单折扣 ¥${money(c2.discAmt)}` : ''}${promo.amount > 0 ? ` · 促销 ¥${money(promo.amount)}` : ''}${c2.ptsCut > 0 ? ` · 积分抵现 ¥${money(c2.ptsCut)}` : ''}${c2.autoRound > 0 ? ` · 抹零 ¥${money(c2.autoRound)}` : ''}${manualRound > 0 ? ` · 手动抹零 ¥${money(manualRound)}` : ''}`;
-      updCashQ(); updChange(); renderSummary();
+      updCashQ(); updChange(c2.due); renderSummary();
     };
     m.__refreshDue = refreshDue;   // 供券面板勾选时实时刷新应收
     // 整单折扣：预设规则直接套用；自定义折扣率需 pos.discount.custom 权限（服务端同口径校验+留痕）
@@ -2821,7 +2826,8 @@ window.CashierShell = (function () {
     const addOne = (cp) => {
       const obj = { id: Number(cp.id), name: cp.name || cp.cpName || '券', type: cp.type, threshold: Number(cp.threshold) || 0, discount: Number(cp.discount) || 0, status: '未使用', scope: cp.scope || null, stackable: cp.stackable ?? true };
       if (!memberCouponsRaw.some(x => x.id === obj.id)) memberCouponsRaw.push(obj);
-      deselectedIds.delete(obj.id); recomputeCoupons(); syncCpBtn(); renderSummary();
+      deselectedIds.delete(obj.id); recomputeCoupons(); syncCpBtn();
+      m.__refreshDue ? m.__refreshDue() : renderSummary();   // V5.0.1：选券后弹窗总额实时刷新
     };
     syncCpBtn();
     cpBtn && (cpBtn.onclick = async () => {
@@ -2837,7 +2843,7 @@ window.CashierShell = (function () {
             <div class="s">门槛 ¥${money(cp.threshold || 0)} · ${cp.type === '满减券' ? '减 ¥' + money(cp.discount) : cp.type === '折扣券' ? Number(cp.discount) * 10 + ' 折' : esc(cp.type || '')}</div></div></div>`).join('')}
           <button class="btn ghost" id="csCpClose" style="width:100%;margin-top:8px">清除本单券</button></div>`;
         document.body.appendChild(mm);
-        mm.querySelector('#csCpClose').onclick = () => { clearCoupons(); syncCpBtn(); mm.remove(); renderSummary(); };
+        mm.querySelector('#csCpClose').onclick = () => { clearCoupons(); syncCpBtn(); mm.remove(); m.__refreshDue ? m.__refreshDue() : renderSummary(); };
         mm.querySelectorAll('[data-cp]').forEach(r => r.onclick = () => { addOne(list.find(x => Number(x.id) === Number(r.dataset.cp))); mm.remove(); toast('已加入本单可用券'); });
       } catch (e) { toast(e.message || e); }
     });
@@ -2864,6 +2870,13 @@ window.CashierShell = (function () {
       const ptsPay = ptsCut > 0 ? [{ channel: '积分抵扣', amount: Number(ptsCut.toFixed(2)) }] : [];
       if (payType === 'cash') {
         const paid = Number(m.querySelector('#csCashIn').value) || 0;
+        // V5.0.1：积分全额抵现（应收冲减为 0）→ 只提交积分通道，不再附带 0 元现金通道
+        //（此前 0 元现金被后端 40003「支付金额必须大于 0」拒单，导致积分抵到 0 反而无法完成支付）
+        if (due <= 0.004 && ptsPay.length) {
+          m.remove();
+          await doCheckout(ptsPay, 0, { skipPrint: skipPrintOnce });
+          return;
+        }
         if (paid < due - 0.005) { toast('实收不足应收：请补足或改组合支付'); return; }
         m.remove();
         await doCheckout([{ channel: '现金', amount: Number(due.toFixed(2)) }, ...ptsPay], paid - due, { skipPrint: skipPrintOnce });

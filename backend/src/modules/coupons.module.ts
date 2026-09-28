@@ -230,10 +230,15 @@ export class CouponsController {
          b.totalQty != null ? Number(b.totalQty) : null, perMember,
          b.scope ? JSON.stringify(b.scope) : null, code || null, stackable]);
       const cp = rows[0];
-      // 空大类码自动生成（id 全局唯一 → 门店内唯一）
+      // V5.0.2 空大类码自动生成：类型前缀-日期-当日序号（满减MJ/折扣ZK/兑换DH/次卡CK），如 MJ-2026092701
       if (!cp.code) {
-        await cx(c, `UPDATE coupons SET code='CP'||lpad(id::text,6,'0') WHERE id=$1 AND code IS NULL`, [cp.id]);
-        cp.code = 'CP' + String(cp.id).padStart(6, '0');
+        const PFX = ({ '满减券': 'MJ', '折扣券': 'ZK', '兑换券': 'DH', '次卡': 'CK' } as Record<string, string>)[cp.type] || 'CP';
+        const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const seqRow = await cx(c, `SELECT count(*)+1 AS n FROM coupons WHERE store_id=$1 AND code LIKE $2`,
+          [user.storeId, `${PFX}-${ymd}%`]);
+        const auto = `${PFX}-${ymd}${String(Number(seqRow[0].n)).padStart(2, '0')}`;
+        await cx(c, `UPDATE coupons SET code=$2 WHERE id=$1 AND code IS NULL`, [cp.id, auto]);
+        cp.code = auto;
       }
       // V5.0 入库流水：创建即入库总量（不限量 total_qty 为空则不控库存，不记流水）
       const totalQty = Number(cp.total_qty || 0);
@@ -251,6 +256,7 @@ export class CouponsController {
     return q(
       `SELECT cp.id, cp.code, cp.name, cp.type, cp.threshold, cp.discount, cp.valid_days,
               cp.total_qty, cp.issued_qty, cp.per_member, cp.scope, cp.status, cp.stackable,
+              cp.created_at,
               cp.total_qty - cp.issued_qty AS in_stock,
               count(mc.id) FILTER (WHERE mc.status='未使用')::int AS unused_count,
               count(mc.id) FILTER (WHERE mc.status='已使用')::int AS used_count,
@@ -259,18 +265,20 @@ export class CouponsController {
               (cp.total_qty IS NOT NULL) AS stock_controlled
          FROM coupons cp LEFT JOIN member_coupons mc ON mc.coupon_id = cp.id
         WHERE cp.store_id = $1
-        GROUP BY cp.id ORDER BY cp.id DESC`, [user.storeId]);
+        GROUP BY cp.id ORDER BY cp.created_at DESC, cp.id DESC`, [user.storeId]);
   }
 
-  /** 发券：指定会员或全员（total_qty 池 + per_member 限领，事务 FOR UPDATE 防超发） */
+  /** 发券：指定会员或全员（total_qty 池 + per_member 限领，事务 FOR UPDATE 防超发）
+   *  V5.0.3：支持每人多张 qty（≤per_member 限额；限领 1 张的券 qty 无效按 1 发） */
   @Post(':id/issue')
   @RequirePerms('coupon.manage')
-  issue(@Param('id') id: string, @Body() b: { memberIds?: number[]; all?: boolean }, @CurrentUser() user: AuthUser) {
+  issue(@Param('id') id: string, @Body() b: { memberIds?: number[]; all?: boolean; qty?: number }, @CurrentUser() user: AuthUser) {
     return tx(async c => {
       const cps = await cx(c, `SELECT * FROM coupons WHERE id=$1 AND store_id=$2 FOR UPDATE`, [id, user.storeId]);
       if (!cps.length) throw new BizException(40004, '券模板不存在');
       const cp = cps[0];
       if (cp.status !== 1) throw new BizException(50044, '券模板已停用');
+      const qty = Math.min(Math.max(1, Number(b.qty) || 1), Math.max(1, Number(cp.per_member) || 1));
 
       let memberIds: number[];
       if (b.all) {
@@ -287,10 +295,10 @@ export class CouponsController {
       for (const mid of memberIds) {
         const owned = await cx(c,
           `SELECT count(*)::int AS n FROM member_coupons WHERE coupon_id=$1 AND member_id=$2`, [id, mid]);
-        if (owned[0].n >= cp.per_member) continue; // 限领内的不再重复发
+        if (owned[0].n + qty > cp.per_member) continue; // 超出限领的不再发
         toIssue.push(mid);
       }
-      const newCount = toIssue.length;
+      const newCount = toIssue.length * qty;
       if (cp.total_qty != null && cp.issued_qty + newCount > cp.total_qty) {
         throw new BizException(50038, `发放总量不足：剩余 ${cp.total_qty - cp.issued_qty} 张，需 ${newCount} 张`);
       }
@@ -298,11 +306,24 @@ export class CouponsController {
       const exp = new Date(d.getFullYear(), d.getMonth(), d.getDate() + cp.valid_days);
       const expStr = `${exp.getFullYear()}-${String(exp.getMonth() + 1).padStart(2, '0')}-${String(exp.getDate()).padStart(2, '0')}`;
       // VQA-C4：批量发券合并为 2 条 SQL（原每人 2 次往返）——多会员群发券不再线性放大事务时长
-      const insRows = await cx(c,
+      //   V5.0.3：generate_series 展开每人 qty 张
+      const insRows = toIssue.length ? await cx(c,
         `INSERT INTO member_coupons (coupon_id, member_id, expire_at, operator_id, issue_source)
-             SELECT $1, unnest($2::bigint[]), $3, $4, '手动' RETURNING id`, [id, toIssue, expStr, user.sub]);
-      if (insRows.length)
-        await cx(c, `UPDATE member_coupons SET code='MC'||lpad(id::text,8,'0') WHERE id = ANY($1::bigint[]) AND code IS NULL`, [insRows.map(r => r.id)]);
+             SELECT $1, m, $3, $4, '手动' FROM unnest($2::bigint[]) m, generate_series(1, $5::int) RETURNING id`,
+        [id, toIssue, expStr, user.sub, qty]) : [];
+      if (insRows.length) {
+        // V5.0.2：小码按大类码拆分流水号——{大类码}-0001 起 4 位递增（如 MJ-2026092701-0001）
+        //   （V5.0.3 修复：窗口函数不能直接用于 UPDATE SET，改经子查询编号）
+        const seqRow = await cx(c,
+          `SELECT COALESCE(MAX(NULLIF(regexp_replace(code, '^.*-', ''), '')::int), 0) AS n
+             FROM member_coupons WHERE coupon_id=$1 AND code LIKE $2`, [id, `${cp.code}-%`]);
+        await cx(c,
+          `UPDATE member_coupons mc SET code = $2 || '-' || lpad((t.rn + $3)::text, 4, '0')
+             FROM (SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn
+                     FROM member_coupons WHERE id = ANY($1::bigint[]) AND code IS NULL) t
+             WHERE mc.id = t.id`,
+          [insRows.map(r => r.id), cp.code, Number(seqRow[0].n)]);
+      }
       
       await cx(c, `UPDATE coupons SET issued_qty = issued_qty + $2 WHERE id=$1`, [id, newCount]);
       // V5.0 发放出库流水（调拨：在库→会员持有，可用库存不变；逐实例留痕见 member_coupons）
@@ -335,8 +356,14 @@ export class CouponsController {
       const ins = await cx(c,
         `INSERT INTO member_coupons (coupon_id, member_id, expire_at, operator_id, issue_source) VALUES ($1,$2,$3,$4,'自领') RETURNING *`,
         [b.couponId, b.memberId, expStr, user?.sub ?? null]);
-      // V4.19.0 券码手输：发券即生成券码
-      await cx(c, `UPDATE member_coupons SET code='MC'||lpad(id::text,8,'0') WHERE id=$1 AND code IS NULL`, [ins[0].id]);
+      // V4.19.0 券码手输：发券即生成券码（V5.0.2 按 {大类码}-4位流水）
+      {
+        const seqRow = await cx(c,
+          `SELECT COALESCE(MAX(NULLIF(regexp_replace(code, '^.*-', ''), '')::int), 0) AS n
+             FROM member_coupons WHERE coupon_id=$1 AND code LIKE $2`, [b.couponId, `${cp.code}-%`]);
+        await cx(c, `UPDATE member_coupons SET code=$2 WHERE id=$1 AND code IS NULL`,
+          [ins[0].id, `${cp.code}-${String(Number(seqRow[0].n) + 1).padStart(4, '0')}`]);
+      }
       await cx(c, `UPDATE coupons SET issued_qty = issued_qty + 1 WHERE id=$1`, [b.couponId]);
       // V5.0 发放出库流水
       const sa = await couponStockAfter(c, Number(b.couponId));
@@ -373,7 +400,9 @@ export class CouponsController {
   @Post('lookup-code')
   async lookupCode(@Body() b: { code?: string; memberId?: number }, @CurrentUser() user: AuthUser) {
     const code = String(b.code || '').trim().toUpperCase();
-    if (!/^MC\d{8}$/.test(code)) throw new BizException(40003, '券码格式应为 MC + 8 位数字（印在纸质券上）');
+    // V5.0.2：兼容 MC+8位 与新格式 大类码-日期-4位流水（如 MJ-2026092701-0001）
+    if (!/^(MC\d{8}|[A-Z]{2,4}-\d{8,12}-\d{4})$/.test(code))
+      throw new BizException(40003, '券码格式应为 MC+8位数字 或 大类码-日期-4位流水（印在券面）');
     const rows = await q(
       `SELECT mc.id, mc.member_id, mc.status, mc.expire_at, mc.times_used, cp.name, cp.type, cp.threshold, cp.discount, cp.scope
          FROM member_coupons mc JOIN coupons cp ON cp.id = mc.coupon_id

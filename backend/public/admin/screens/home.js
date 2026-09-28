@@ -84,6 +84,81 @@ async function showQrLoginModal(target = 'pwa') {
 
 const CAT_COLORS = ['#4d8a54', '#e8912d', '#4a7fb5', '#b5544a', '#8a7ba8', '#c9c2b4'];
 
+/* ═══ V5.0.3 首页节日倒计时条 ═══
+   公历固定节日 + 星期规则节日（母亲/父亲/感恩节）+ 农历节日（内置 2026–2030 公历换算表，
+   表外/缺项年份自动跳过农历项，公历项不受影响）。
+   展示未来一年内的节日，按日历日期先后排列（1月1日、2月14日…依次）。 */
+const FEST_LUNAR = {   // 农历节日公历日期表：春节/端午/七夕/中秋/重阳（元宵=春节+14 天、除夕=春节-1 天自动推导）
+  2026: { chunjie: '02-17', duanwu: '06-19', qixi: '08-19', zhongqiu: '09-25', zhongyang: '10-18' },
+  2027: { chunjie: '02-06', duanwu: '06-09', qixi: '08-08', zhongqiu: '09-15', zhongyang: '10-08' },
+  2028: { chunjie: '01-26', duanwu: '05-28', qixi: '08-26', zhongqiu: '10-03', zhongyang: '10-26' },
+  2029: { chunjie: '02-13', duanwu: '06-16', qixi: '08-16', zhongqiu: '09-22', zhongyang: '10-16' },
+  2030: { chunjie: '02-03', duanwu: '06-05', qixi: '08-05', zhongqiu: '09-12' },
+};
+const FEST_FIXED = [   // [月-日, 名称]
+  ['01-01', '元旦'], ['02-14', '情人节'], ['03-08', '妇女节'], ['03-12', '植树节'],
+  ['03-15', '消费者权益日'], ['04-01', '愚人节'], ['04-05', '清明节'], ['05-01', '劳动节'],
+  ['05-04', '青年节'], ['05-12', '护士节'], ['05-20', '520'], ['06-01', '儿童节'],
+  ['06-18', '618购物节'], ['08-01', '建军节'], ['09-10', '教师节'], ['10-01', '国庆节'],
+  ['10-31', '万圣夜'], ['11-11', '双11购物节'], ['12-12', '双12购物节'],
+  ['12-24', '平安夜'], ['12-25', '圣诞节'],
+];
+/** 第 month 月第 nth 个周 day（0=周日）的日期，如母亲节=5月第2个周日 */
+function nthWeekday(year, month, nth, day) {
+  const d = new Date(year, month - 1, 1);
+  const offset = (day - d.getDay() + 7) % 7;
+  return new Date(year, month - 1, 1 + offset + (nth - 1) * 7);
+}
+function festCollection(year) {
+  const list = FEST_FIXED.map(([md, name]) => ({ date: new Date(`${year}-${md}T00:00:00`), name }));
+  list.push({ date: nthWeekday(year, 5, 2, 0), name: '母亲节' });
+  list.push({ date: nthWeekday(year, 6, 3, 0), name: '父亲节' });
+  list.push({ date: nthWeekday(year, 11, 4, 4), name: '感恩节' });
+  const L = FEST_LUNAR[year];
+  if (L) {
+    const mk = (md, name) => list.push({ date: new Date(`${year}-${md}T00:00:00`), name });
+    const cj = new Date(`${year}-${L.chunjie}T00:00:00`);
+    mk(L.duanwu, '端午节'); mk(L.qixi, '七夕'); mk(L.zhongqiu, '中秋节');
+    if (L.zhongyang) mk(L.zhongyang, '重阳节');
+    list.push({ date: cj, name: '春节' });
+    list.push({ date: new Date(cj.getTime() + 14 * 864e5), name: '元宵节' });
+    list.push({ date: new Date(cj.getTime() - 864e5), name: '除夕' });
+  }
+  return list;
+}
+function renderFestBar(view) {
+  const bar = view.querySelector('#festBar');
+  const scroll = view.querySelector('#festScroll');
+  if (!bar || !scroll) return;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const DAY = 864e5;
+  // V5.0.3：按日历日期先后排列（1月1日、2月14日…依次），窗口扩到未来一年
+  const items = [...festCollection(today.getFullYear()), ...festCollection(today.getFullYear() + 1)]
+    .map(x => ({ ...x, left: Math.round((x.date - today) / DAY) }))
+    .filter(x => x.left >= 0 && x.left <= 366)
+    .sort((a, b) => a.date - b.date)
+    .slice(0, 40);
+  if (!items.length) return;
+  const near = items[0]?.left;
+  const pad = n => String(n).padStart(2, '0');
+  scroll.innerHTML = items.map(x => {
+    const cls = x.left === 0 ? 'today' : x.left === near ? 'near' : '';
+    const cnt = x.left === 0 ? '<b>今天</b>' : `剩<b>${x.left}</b>天`;
+    return `<div class="fest-item ${cls}" title="${x.name}：${x.date.getFullYear()}-${pad(x.date.getMonth() + 1)}-${pad(x.date.getDate())}">
+      <div class="d">${pad(x.date.getMonth() + 1)}-${pad(x.date.getDate())}</div>
+      <div class="c">${cnt}</div><div class="n">${esc(x.name)}</div></div>`;
+  }).join('');
+  bar.style.display = 'flex';
+  const prev = view.querySelector('#festPrev'), next = view.querySelector('#festNext');
+  // V5.0.3：箭头不做 disabled（避免灰色被误解为失效），滚动到头自然钳位；scrollBy 平滑失败时回退 scrollLeft
+  const go = dx => {
+    try { scroll.scrollBy({ left: dx, behavior: 'smooth' }); }
+    catch { scroll.scrollLeft = Math.max(0, Math.min(scroll.scrollLeft + dx, scroll.scrollWidth - scroll.clientWidth)); }
+  };
+  prev.onclick = () => go(-280);
+  next.onclick = () => go(280);
+}
+
 /** 后台首页（P1-4 / 原型 #1）：全局搜索 + 经营数据 + 待办预警 + 快捷入口 */
 export async function render(view) {
   view.innerHTML = `
@@ -98,8 +173,14 @@ export async function render(view) {
         <span class="pill b" style="flex:0 0 auto">⭐ 搜索直达 ${MODULES.length} 个模块</span>
       </div>
       <div style="padding:0 18px 12px;font-size:11.5px;color:var(--ink-3)">支持功能名、别名与业务关键字模糊匹配（如“补货”→采购订单、“过期”→库存批次、“签字”→对账结算）；搜商品 / 会员 / 单号请到对应模块内搜索</div>
+      <div class="fest-bar" id="festBar" style="display:none">
+        <button class="fest-arrow" id="festPrev" title="向左">◂</button>
+        <div class="fest-scroll" id="festScroll"></div>
+        <button class="fest-arrow" id="festNext" title="向右">▸</button>
+      </div>
     </div>
     <div id="homeBody"></div>`;
+  renderFestBar(view);
 
   // ═══ 全局搜索（本地索引模糊匹配；Enter / 点击直达） ═══
   const gsInput = view.querySelector('#gsInput');
@@ -154,17 +235,36 @@ export async function render(view) {
   if (low.length) alerts.push({ icon: '🔻', cls: 'y', to: 'stock',
     text: `${low.length} 个商品库存偏低（≤ 最低库存）`, pill: '库存管理 ▸' });
 
-  // 近 7 日柱图
-  const max = Math.max(...d.trend.map(t => Number(t.salesTotal)), 0);
-  const bars = d.trend.map((t, i) => {
-    const h = max ? Math.max(Number(t.salesTotal) / max * 100, 2) : 2;
-    const last = i === d.trend.length - 1;
-    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
-      <small style="font-size:10px;color:var(--ink-3)">${Number(t.salesTotal).toFixed(1)}</small>
-      <div style="width:100%;height:${h}%;background:linear-gradient(180deg,${last ? '#e8912d' : '#6aa36f'},${last ? '#d4791a' : '#4d8a54'});border-radius:4px 4px 0 0"></div>
-      <small style="font-size:10px;${last ? 'font-weight:700;color:var(--ink-2)' : 'color:var(--ink-3)'}">${String(t.bizDate).slice(5, 10)}${last ? ' 今日' : ''}</small>
-    </div>`;
-  }).join('');
+  // 近 7 日柱图（V5.0.3：单位可切换 元/千元/万元，选择记忆到 localStorage）
+  const SALES_UNIT_KEY = 'home_sales_unit';
+  const salesTrend = d.trend;
+  function paintSales7(unit) {
+    const div = unit === '元' ? 1 : unit === '千元' ? 1e3 : 1e4;
+    const fmt = v => { const r = v / div; return r >= 100 ? r.toFixed(0) : r >= 10 ? r.toFixed(1) : r.toFixed(2); };
+    const max = Math.max(...salesTrend.map(t => Number(t.salesTotal)), 0);
+    const bars = salesTrend.map((t, i) => {
+      const h = max ? Math.max(Number(t.salesTotal) / max * 100, 2) : 2;
+      const last = i === salesTrend.length - 1;
+      return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
+        <small style="font-size:10px;color:var(--ink-3)">${fmt(Number(t.salesTotal))}</small>
+        <div style="width:100%;height:${h}%;background:linear-gradient(180deg,${last ? '#e8912d' : '#6aa36f'},${last ? '#d4791a' : '#4d8a54'});border-radius:4px 4px 0 0"></div>
+        <small style="font-size:10px;${last ? 'font-weight:700;color:var(--ink-2)' : 'color:var(--ink-3)'}">${String(t.bizDate).slice(5, 10)}${last ? ' 今日' : ''}</small>
+      </div>`;
+    }).join('');
+    const avg = salesTrend.length ? salesTrend.reduce((s, t) => s + Number(t.salesTotal), 0) / salesTrend.length : 0;
+    const box = view.querySelector('#sales7Box');
+    if (!box) return;
+    box.innerHTML = `
+      <div style="display:flex;align-items:flex-end;gap:14px;height:110px;padding:0 4px;border-bottom:1px solid var(--line)">${bars}</div>
+      <div style="font-size:10.5px;color:var(--ink-3);margin-top:6px">日均 ${fmt(avg)} ${unit} · 点击柱图直达报表中心（同口径：已完成订单）</div>`;
+    view.querySelectorAll('#salesUnitSeg [data-u]').forEach(b => {
+      const on = b.dataset.u === unit;
+      b.style.background = on ? 'var(--pri)' : 'transparent';
+      b.style.color = on ? '#fff' : 'var(--ink-3)';
+      b.style.fontWeight = on ? '700' : '400';
+      b.onclick = () => { try { localStorage.setItem(SALES_UNIT_KEY, b.dataset.u); } catch { } paintSales7(b.dataset.u); };
+    });
+  }
 
   // 分类销售占比（近 30 日 Top8）
   const catTotal = d.categoryShare.reduce((s, x) => s + Number(x.revenue), 0);
@@ -187,11 +287,11 @@ export async function render(view) {
     </div>
     <div class="grid" style="grid-template-columns:1.15fr .85fr;margin-top:14px">
       <div class="grid" style="gap:16px;align-content:start">
-        <div class="card"><h3>近 7 日营业额（万元）</h3>
-          <div style="padding:12px 16px 14px">
-            <div style="display:flex;align-items:flex-end;gap:14px;height:110px;padding:0 4px;border-bottom:1px solid var(--line)">${bars}</div>
-            <div style="font-size:10.5px;color:var(--ink-3);margin-top:6px">日均 ${money(max ? d.trend.reduce((s, t) => s + Number(t.salesTotal), 0) / d.trend.length : 0)} · 点击柱图直达报表中心（同口径：已完成订单）</div>
-          </div>
+        <div class="card"><h3>近 7 日营业额
+          <span id="salesUnitSeg" style="margin-left:auto;display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;font-weight:400">
+            ${['元', '千元', '万元'].map(u => `<button data-u="${u}" style="border:none;padding:3px 10px;font-size:11.5px;cursor:pointer;color:var(--ink-3);background:transparent">${u}</button>`).join('')}
+          </span></h3>
+          <div id="sales7Box" style="padding:12px 16px 14px"></div>
         </div>
         <div class="card"><h3>🥧 分类销售占比（近 30 日 Top8）</h3>
           <div style="padding:12px 16px 14px;display:flex;gap:16px;align-items:center">
@@ -232,6 +332,7 @@ export async function render(view) {
         </div>
       </div>
     </div>`;
+  paintSales7((() => { try { return localStorage.getItem(SALES_UNIT_KEY) || '元'; } catch { return '元'; } })());
 
   // 扫码登录（快捷入口 → 弹窗出码；按入口分别指向店员端 PWA / 老板端）
   view.querySelectorAll('[data-qr]').forEach(b => b.onclick = () => showQrLoginModal(b.dataset.qrTarget === 'boss' ? 'boss' : 'pwa'));

@@ -1,7 +1,7 @@
 import { get, post, must, money, esc, dt, toast } from '../api.js';
 import { openDetailModal, paginate, bindPager } from '../common-ui.js';
 
-/** 交接班（V4.14.0 B）：
+/** 交接班：
  *  当前班次：开班仅两个输入——①POS 编号（哪台收银机交班）②备用金（开班时钱箱里放的零钱，
  *  用来找零；交班时现金应收=备用金+本班现金销售，实盘与之比对得长短款）。
  *  班次报表：双击记录行弹窗查看该班次详情（汇总+当日订单入口）。

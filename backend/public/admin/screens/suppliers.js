@@ -68,7 +68,7 @@ export async function render(view) {
           <div class="fld" style="grid-column:1/-1"><label>地址</label><input id="nAddr" placeholder="供应商地址（选填）"></div>
           <div class="fld" style="grid-column:1/-1"><label>备注</label><input id="nRemark"></div>
         </div>
-        <div class="doc-tip">💡 联营扣点 = 联营供应商销售商品毛利的百分比（整数，如 15 = 15%），仅「联营」可填；购销供应商该行锁定。费用（陈列/返利等）默认不计入分红池基数（V4.3.6）。</div>
+        <div class="doc-tip">💡 联营扣点 = 联营供应商销售商品毛利的百分比（整数，如 15 = 15%），仅「联营」可填；购销供应商该行锁定。费用（陈列/返利等）默认不计入分红池基数。</div>
         <div class="doc-foot">
           <button class="btn" id="nDelete" style="display:none;color:#c0392b;border-color:#e6b0aa">🗑 删除该供应商</button>
           <button class="btn" id="nCancel">取消</button>

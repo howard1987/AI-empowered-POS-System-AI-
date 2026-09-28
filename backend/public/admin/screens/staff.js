@@ -1,8 +1,8 @@
-import { get, post, must, esc, dt, toast, del } from '../api.js';
-import { confirmBox, promptBox } from '../ui.js';
+import { get, post, must, esc, dt, toast, del, imgUrl } from '../api.js';
+import { confirmBox, promptBox, zoomImg } from '../ui.js';
 import { openCollectPad } from './signpad.js';
 
-/** 员工与权限（V4.8.21）：员工弹窗创建（工号留空自动 SY/CN/DZ/EM 前缀）+ 自定义角色（权限点勾选矩阵） */
+/** 员工与权限：员工弹窗创建（工号留空自动 SY/CN/DZ/EM 前缀）+ 自定义角色（权限点勾选矩阵） */
 export async function render(view) {
   let roles = [];
   view.innerHTML = `
@@ -21,7 +21,14 @@ export async function render(view) {
       <div class="doc-tools">
         <span style="font-weight:700;font-size:14.5px">员工列表</span>
         <span class="muted" style="font-size:11.5px">工号规则：收银员 SY0001 · 仓管 CN0001 · 店长 DZ0001 · 通用 EM0001（创建时留空自动生成）</span>
-        <span style="margin-left:auto;display:flex;gap:8px">
+        <span style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <span id="eEmpOps" style="display:none;gap:6px;align-items:center">
+            <button class="btn sm pri" id="eOpRehire">▶ 复职</button>
+            <button class="btn sm" id="eOpReset">🔑 重置密码</button>
+            <button class="btn sm" id="eOpAuth">🔢 授权码</button>
+            <button class="btn sm" id="eOpSig">✍️ 签名</button>
+            <button class="btn sm" id="eOpDel" style="color:#c0392b;border-color:#e6b0aa">🗑 删除</button>
+          </span>
           <button class="btn" id="rNewRole">🎭 新建角色</button>
           <button class="btn pri" id="eNew">➕ 新建员工</button>
         </span>
@@ -71,7 +78,7 @@ export async function render(view) {
       </div>
     </div>`;
 
-  /* ── 账号安全：本人修改密码 / 设置密保（V4.13.9 B8） ── */
+  /* ── 账号安全：本人修改密码 / 设置密保 ── */
   view.querySelector('#secPwd').onclick = async () => {
     const o = view.querySelector('#secOld').value, n = view.querySelector('#secNew').value;
     if (!o || !n) return toast('请填写当前密码与新密码', false);
@@ -171,25 +178,45 @@ export async function render(view) {
     const rows = await must(get('/auth/employees'));
     const arr = rows.items || rows || [];
     const empSel = window.__empSel || (window.__empSel = new Set());   // V4.14.9 批量勾选（页面缓存内保持）
+    // V5.0.2：员工电子签名预览（签字样本按 person_name 匹配最新一张）
+    const sigMap = new Map();
+    try {
+      const sg = await get('/purchase/signatures').catch(() => null);
+      for (const t of (sg?.items || [])) {
+        const nm = String(t.person_name || '').trim();
+        if (nm && t.image_path && !sigMap.has(nm)) sigMap.set(nm, t.image_path);
+      }
+    } catch { /* 签字库不可达则显示未采集 */ }
     view.querySelector('#eList').innerHTML = `
-      <div class="bar" style="padding:4px 2px 0">
+      <div class="bar" style="padding:4px 2px 0;flex-wrap:wrap">
         <button class="btn sm" id="eBatOff" style="display:none">⏸ 批量停用 (<b>0</b>)</button>
         <button class="btn sm pri" id="eBatOn" style="display:none">▶ 批量复职 (<b>0</b>)</button>
         <span class="muted" style="font-size:12px" id="eSelN"></span>
       </div>
       ${arr.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="eChkAll" title="全选/取消全选（ADMIN 除外）"></th><th>工号</th><th>姓名</th><th>手机</th><th>角色</th><th>状态</th><th>授权码</th><th>最近登录</th><th></th></tr></thead>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="eChkAll" title="全选/取消全选（ADMIN 除外）"></th><th>工号</th><th>账户名</th><th>姓名</th><th>手机</th><th>角色</th><th>状态</th><th>授权码</th><th>创建日期</th><th>最近登录</th><th>签名</th><th></th></tr></thead>
       <tbody>${arr.map(e => `<tr>
-        <td onclick="event.stopPropagation()">${e.empNo !== 'ADMIN' ? `<input type="checkbox" data-echk="${e.id}" ${empSel.has(Number(e.id)) ? 'checked' : ''}>` : ''}</td>
-        <td><b>${esc(e.empNo)}</b></td><td>${esc(e.name)}</td><td>${esc(e.phone || '—')}</td>
+        <td onclick="event.stopPropagation()"><input type="checkbox" data-echk="${e.id}" ${empSel.has(Number(e.id)) ? 'checked' : ''}></td>
+        <td><b>${esc(e.empNoOfficial || e.empNo)}</b></td><td class="muted" style="font-family:var(--mono)">${esc(e.empNo)}</td><td>${esc(e.name)}</td><td>${esc(e.phone || '—')}</td>
         <td>${(e.roles || []).map(r => `<span class="tag b">${esc(r.name)}</span>`).join(' ') || '<span class="muted">无</span>'}</td>
         <td><span class="tag ${e.status === '在职' ? 'g' : 'r'}">${esc(e.status)}</span></td>
         <td>${e.authCodeSet ? '<span class="tag g" title="收银员改价/打折时，该工号可现场授权">已设置</span>' : '<span class="muted" title="未设置：该工号无法在收银台审批改价/打折">未设置</span>'}</td>
+        <td class="muted">${e.createdAt ? dt(e.createdAt).slice(0, 10) : '—'}</td>
         <td class="muted">${e.lastLoginAt ? dt(e.lastLoginAt) : '从未'}</td>
-        <td>${e.empNo !== 'ADMIN' ? `<button class="btn sm ${e.status === '在职' ? 'warn' : 'pri'}" data-t="${e.id}" data-s="${e.status === '在职' ? '停用' : '在职'}">${e.status === '在职' ? '停用' : '复职'}</button>` : ''}
+        <td style="white-space:nowrap">${sigMap.get(String(e.name).trim())
+          ? `<img src="${imgUrl(sigMap.get(String(e.name).trim()))}" data-sigv="${esc(e.name)}" style="max-height:30px;border:1px dashed var(--line);border-radius:5px;cursor:zoom-in;background:#fff" title="电子签名预览（点击放大）">
+             <span class="tag g" data-resig="${esc(e.name)}" style="cursor:pointer" title="点击补采/重采">已采集 · 重采</span>`
+          : '<span class="tag y" data-resig="' + esc(e.name) + '" style="cursor:pointer" title="点击采集签名">未采集 · 采集</span>'}</td>
+        <td style="white-space:nowrap">
+          ${e.empNo !== 'ADMIN' && e.status === '在职' ? `<button class="btn sm warn" data-t="${e.id}" data-s="停用" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}">停用</button>` : ''}
+          <span style="display:none">
+            ${e.empNo !== 'ADMIN' && e.status !== '在职' ? `<button class="btn sm pri" data-t="${e.id}" data-s="在职" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}">复职</button>` : ''}
             <button class="btn sm" data-rp="${e.id}" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}">重置密码</button>
-            <button class="btn sm" data-ac="${e.id}" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}" data-set="${e.authCodeSet ? 1 : 0}" title="店长授权码：收银员改价/打折时的现场授权凭据（独立于登录密码，4~8 位数字）">授权码</button>
-            <button class="btn sm" data-sig="${e.id}" data-nm="${esc(e.name)}" title="采集该员工电子签名，存入签字样本（对账/单据确认可自动带出）">✍️ 签名</button>${e.status !== '在职' && e.empNo !== 'ADMIN' ? `<button class="btn sm" data-del="${e.id}" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}" style="color:#c0392b;border-color:#e6b0aa" title="仅可删除无任何业务记录的停用账号；有流水的员工请保留停用">删除</button>` : ''}</td>
+            <button class="btn sm" data-ac="${e.id}" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}" data-set="${e.authCodeSet ? 1 : 0}" title="店长授权码">授权码</button>
+            <button class="btn sm" data-sig="${e.id}" data-nm="${esc(e.name)}" title="采集该员工电子签名">✍️ 签名</button>
+            ${e.status !== '在职' && e.empNo !== 'ADMIN' ? `<button class="btn sm" data-del="${e.id}" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}" title="仅可删除无任何业务记录的停用账号">删除</button>` : ''}
+          </span>
+        </td>
       </tr>`).join('')}</tbody></table>` : '<div class="empty">暂无员工</div>'}`;
     // V4.14.9 批量停用/复职
     const syncBat = () => {
@@ -198,8 +225,37 @@ export async function render(view) {
       if (off) { off.style.display = n ? '' : 'none'; off.querySelector('b').textContent = String(n); }
       if (on) { on.style.display = n ? '' : 'none'; on.querySelector('b').textContent = String(n); }
       const sn = view.querySelector('#eSelN'); if (sn) sn.textContent = n ? `已选 ${n} 人` : '';
+      // V5.0.2：勾选单人 → 显示该员工的操作按钮（复职/重置密码/授权码/签名/删除）；未勾选不展示
+      const ops = view.querySelector('#eEmpOps');
+      if (ops) {
+        const one = n === 1 ? arr.find(e => Number(e.id) === [...empSel][0]) : null;
+        ops.style.display = one ? 'inline-flex' : 'none';
+        if (one) {
+          ops.querySelector('#eOpRehire').style.display = one.status === '停用' ? '' : 'none';
+          ops.querySelector('#eOpDel').style.display = one.status !== '在职' ? '' : 'none';
+        }
+      }
     };
     syncBat();
+    // V5.0.2：工具条按钮 → 触发行内隐藏按钮（复用既有确认/留痕流程）
+    const fireRowBtn = (sel, attr) => { const b = view.querySelector(`[${attr}="${sel}"]`); if (b) b.click(); };
+    const oneId = () => [...empSel][0];
+    view.querySelector('#eOpRehire') && (view.querySelector('#eOpRehire').onclick = () => { const id = oneId(); if (id) fireRowBtn(id, 'data-t'); });
+    view.querySelector('#eOpReset') && (view.querySelector('#eOpReset').onclick = () => { const id = oneId(); if (id) fireRowBtn(id, 'data-rp'); });
+    view.querySelector('#eOpAuth') && (view.querySelector('#eOpAuth').onclick = () => { const id = oneId(); if (id) fireRowBtn(id, 'data-ac'); });
+    view.querySelector('#eOpSig') && (view.querySelector('#eOpSig').onclick = () => { const id = oneId(); if (id) fireRowBtn(id, 'data-sig'); });
+    view.querySelector('#eOpDel') && (view.querySelector('#eOpDel').onclick = () => { const id = oneId(); if (id) fireRowBtn(id, 'data-del'); });
+    // 签名预览放大
+    view.querySelectorAll('[data-sigv]').forEach(img => img.onclick = () => zoomImg(img.src));
+    // V5.0.3：状态文字点击 → 快速补采/重采（管理员同样可采）
+    view.querySelectorAll('[data-resig]').forEach(t => t.onclick = () => {
+      openCollectPad(view, {
+        personName: t.dataset.resig,
+        title: `✍️ 采集签字 · ${t.dataset.resig}（员工）`,
+        tip: '采集后存入「系统 → 授权管理」签字样本；对账确认/单据签字可自动带出',
+        onDone: () => emps(),
+      });
+    });
     view.querySelectorAll('[data-echk]').forEach(cb => cb.onchange = () => {
       const id = Number(cb.dataset.echk);
       if (cb.checked) empSel.add(id); else empSel.delete(id);

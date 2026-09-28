@@ -388,6 +388,7 @@ class PurchaseController {
                 WHEN '订货申请' THEN COALESCE(em.name, '店员') || '（移动端店员）'
                 WHEN '库存缺货' THEN '库存管理（缺货转订货）'
                 WHEN '智能生成' THEN '智能生成'
+                WHEN '调拨缺口' THEN '调拨（自动生成）'
                 ELSE '自建（' || COALESCE(em.name, '管理员') || '）'
               END AS source_label,
               (SELECT count(*) FROM purchase_order_items i WHERE i.po_id = o.id) AS item_count
@@ -846,6 +847,14 @@ class PurchaseController {
 
       await cx(c, `UPDATE inbound_orders SET status='已审核', audited_by=$2, audited_at=now(), total_amount=$3 WHERE id=$1`,
         [id, user.sub, Math.round(total * 100) / 100]);
+      // V5.0.3：审核是入库的确认点——关联采购订单在此重算到货进度，全部到齐即「已完成」
+      if ((ord as any).po_id) {
+        const remain = await cx(c,
+          `SELECT count(*)::int AS n FROM purchase_order_items WHERE po_id=$1 AND arrived_qty < order_qty`,
+          [(ord as any).po_id]);
+        await cx(c, `UPDATE purchase_orders SET status=$2, updated_at=now() WHERE id=$1`,
+          [(ord as any).po_id, remain[0].n > 0 ? '到货中' : '已完成']);
+      }
       await audit(curStore(), user.sub, '进销存', 'inbound.audit', 'inbound', id, { no: ord.inbound_no, total });
 
       // ── V5.0.0 批次6（M6-6 / R14）：供应商直送门店 = 两步记账、一步物流 ──
@@ -885,12 +894,13 @@ class PurchaseController {
   @Get('inbounds/:id')
   async inboundDetail(@Param('id', ParseIntPipe) id: number) {
     const ord = await q1(`SELECT io.*, s.name AS supplier_name, e.name AS maker_name,
-                                 st.image_path AS sign_image_path
+                                 st.image_path AS sign_image_path, po.po_no
                             FROM inbound_orders io
                             JOIN suppliers s ON s.id = io.supplier_id
                             LEFT JOIN employees e ON e.id = io.employee_id
                             LEFT JOIN signature_records sr ON sr.id = io.sign_record_id
                             LEFT JOIN signature_templates st ON st.id = sr.template_id
+                            LEFT JOIN purchase_orders po ON po.id = io.po_id
                            WHERE io.id=$1`, [id]);
     if (!ord) throw new BizException(40404, '入库单不存在', 404);
     const items = await q(
@@ -1086,10 +1096,11 @@ class PurchaseController {
   @Post('returns/:id/evidence-request')
   async requestReturnEvidence(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
     const r = await q1(
+      // V5.0.3：换凭证场景允许已有凭证的待审核单重新派单重拍（去掉"无凭证"限制）
       `UPDATE purchase_returns SET evidence_requested_at=now()
-        WHERE id=$1 AND status='待审核' AND (evidence_path IS NULL OR evidence_path='') RETURNING id, return_no`,
+        WHERE id=$1 AND status='待审核' RETURNING id, return_no`,
       [id]);
-    if (!r) throw new BizException(50016, '退货单不存在、已上传凭证或状态不允许');
+    if (!r) throw new BizException(50016, '退货单不存在或状态不允许（仅待审核可重拍）');
     await audit(curStore(), user.sub, '进销存', 'return.evidence.request', 'purchase_return', id, {});
     return r;
   }
@@ -1098,10 +1109,12 @@ class PurchaseController {
   @Get('returns/:id')
   async returnDetail(@Param('id', ParseIntPipe) id: number) {
     const ord = await q1(
-      `SELECT r.*, s.name AS supplier_name, e.name AS maker_name, st.image_path AS sign_image_path
+      `SELECT r.*, s.name AS supplier_name, e.name AS maker_name, st.image_path AS sign_image_path,
+              au.name AS auditor_name, to_char(r.audited_at, 'YYYY-MM-DD HH24:MI') AS audited_at_txt
          FROM purchase_returns r
          LEFT JOIN suppliers s ON s.id = r.supplier_id
          LEFT JOIN employees e ON e.id = r.employee_id
+         LEFT JOIN employees au ON au.id = r.audited_by
          LEFT JOIN signature_records sr ON sr.id = r.sign_record_id
          LEFT JOIN signature_templates st ON st.id = sr.template_id
         WHERE r.id=$1`, [id]);

@@ -114,8 +114,8 @@ export class AiModelsController {
       else if (mode === 'manual' && path) {
         const pm = probePath(path);
         if (pm.ok) { models = pm.models.map(n => ({ name: n })); source = `path://${pm.root}`; reachable = true; }
-        else err = `自动探测失败：${p.err || '不可达'}；手动路径：${pm.err}`;
-      } else err = `自动探测失败：${p.err || '不可达'}`;
+        else err = `自动探测失败：${p.err || '不可达'}；手动路径：${pm.err}。请确认服务器已安装并启动 Ollama（命令行运行 ollama serve），或在 AI 模型管理中改用手动识别`;
+      } else err = `自动探测失败：${p.err || '不可达'}。请确认服务器已安装并启动 Ollama（命令行运行 ollama serve），或在 AI 模型管理中改用手动识别`;
     }
     const selectedIn = models.some((m: any) => m.name === selected);
     return {
@@ -169,7 +169,7 @@ export class AiModelsController {
   async auto(@CurrentUser() u: AuthUser) {
     const base = String(await getSetting('ai.llm.base', DEFAULT_BASE));
     const p = await probeBase(base);
-    if (!p.ok) throw new BizException(40004, `自动探测失败（${base}）：${p.err}，请改用手动识别`);
+    if (!p.ok) throw new BizException(40004, `自动探测失败（${base}）：${p.err}。请确认 Ollama 已启动（ollama serve），或改用手动识别`);
     await setSetting('ai.llm.mode', 'auto');
     await audit(u.storeId, u.sub, 'AI', 'ai.model.auto', 'setting', undefined, { base, models: p.models.length });
     return { ok: true, base, models: p.models };

@@ -94,8 +94,9 @@ class MembersController {
     const pn = Math.max(1, Number(page) || 1);
     const sz = Math.min(100, Math.max(1, Number(size) || 20));
     const canSeePhone = !!user && (user.perms.includes('*') || user.perms.includes('member.balance.adjust'));
+    // V5.0.3：会员号/电话改模糊匹配（此前仅整号精确命中，发券弹窗按段搜索查不到）
     const where = `m.deleted_at IS NULL AND m.store_id = ${Number(user.storeId)}
-      AND ($1 = '' OR m.phone=$1 OR m.card_no=$1
+      AND ($1 = '' OR m.phone ILIKE '%'||$1||'%' OR m.card_no ILIKE '%'||$1||'%'
       OR m.name ILIKE '%'||$1||'%' OR m.pinyin_code ILIKE '%'||$1||'%')`;
     const phoneSel = canSeePhone ? 'm.phone' :
       `CASE WHEN m.phone IS NULL OR m.phone='' THEN '' ELSE LEFT(m.phone,3)||'****'||RIGHT(m.phone,4) END AS phone`;

@@ -16,6 +16,10 @@ export async function render(view) {
   const today = new Date().toISOString().slice(0, 10);
   const monthStart = today.slice(0, 8) + '01';
   view.innerHTML = `
+    <style>
+      .shoot-btn { display:inline-flex; flex-direction:column; align-items:center; justify-content:center; width:64px; height:64px; padding:4px; gap:2px; font-size:12px; line-height:1.2; white-space:normal; text-align:center; }
+      .shoot-btn .shoot-icon { font-size:22px; line-height:1; }
+    </style>
     <div id="tab-new" style="display:none">
       <div class="card">
         <div class="doc-tools">
@@ -35,8 +39,8 @@ export async function render(view) {
           <div class="fld"><label>退货原因</label><input id="rMemo" placeholder="退货原因/备注"></div>
           <div class="fld"><label>凭证</label>
             <span style="display:flex;gap:6px;align-items:center;flex:1;min-width:0">
-              <button class="btn sm" id="rEviCam" title="检测本机摄像头：有则直接拍摄，无则派单移动端">📷 拍摄</button>
-              <button class="btn sm" id="rEviPic" title="从本机选择图片上传">🖼 选择图片</button>
+              <button class="btn sm shoot-btn" id="rEviCam" title="本机摄像头拍摄 / 派单手机拍摄"><span class="shoot-icon">📷</span><span>拍摄</span></button>
+              <button class="btn sm shoot-btn" id="rEviPic" title="从本机选择图片上传"><span class="shoot-icon">🖼</span><span>选择</span><span>图片</span></button>
               <input type="file" id="rEviFile" accept="image/*" style="display:none">
               <img id="rEviPrev" src="" style="display:none;height:34px;border-radius:6px;border:1px solid var(--line)">
               <span id="rEviTip" class="muted" style="font-size:11.5px">未上传（可后置补传；也可派单给移动端拍摄）</span>
@@ -62,16 +66,16 @@ export async function render(view) {
 
     <div id="tab-list">
       <div class="card">
-        <div class="doc-head" style="grid-template-columns:1.5fr 1fr 1.2fr auto;align-items:end">
-          <div class="fld"><label>单据日期</label><span style="display:flex;gap:4px;align-items:center"><input id="qFrom" type="date" value="${monthStart}" style="flex:1;min-width:0"><span style="color:var(--ink-3)">~</span><input id="qTo" type="date" value="${today}" style="flex:1;min-width:0"></span></div>
-          <div class="fld"><label>供应商</label><input id="qSup" placeholder="输入名称快速匹配（留空=全部）" style="min-width:150px"></div>
-          <div class="fld"><label>审核状态</label><span id="qStat" style="display:flex;gap:2px;flex-wrap:wrap">
+        <div class="doc-head" style="display:flex;flex-wrap:nowrap;align-items:end;gap:14px">
+          <div class="fld" style="flex:none"><label>单据日期</label><span style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap"><input id="qFrom" type="date" value="${monthStart}" style="flex:1;min-width:0"><span style="color:var(--ink-3)">~</span><input id="qTo" type="date" value="${today}" style="flex:1;min-width:0"></span></div>
+          <div class="fld" style="flex:none"><label>供应商</label><input id="qSup" placeholder="输入名称快速匹配（留空=全部）" style="width:170px"></div>
+          <div class="fld" style="flex:none"><label>审核状态</label><span id="qStat" style="display:flex;gap:2px;flex-wrap:nowrap">
             <button class="btn sm segbtn" data-v="待审核">待审核</button>
             <button class="btn sm segbtn" data-v="已审核">已审核</button>
             <button class="btn sm segbtn" data-v="已取消">已取消</button>
             <button class="btn sm segbtn" data-v="已作废">已作废</button>
             <button class="btn sm segbtn on" data-v="">全部</button></span></div>
-          <div class="fld"><label>&nbsp;</label><span style="display:flex;gap:6px;flex-wrap:wrap">
+          <div class="fld" style="flex:1;min-width:0"><label>&nbsp;</label><span style="display:flex;gap:6px;flex-wrap:nowrap;justify-content:flex-end">
             <button class="btn pri" id="qGo">🔍 查询</button>
             <button class="btn" id="qRefresh">刷新</button>
             <button class="btn" id="qBatch">批量审核</button>
@@ -110,6 +114,19 @@ export async function render(view) {
           <button class="btn" id="camCancel">取消</button>
           <span style="flex:1"></span>
           <button class="btn pri" id="camShot">📸 拍摄并上传</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-mask" id="shootChoiceModal" style="display:none">
+      <div class="modal" style="width:340px">
+        <h3>选择拍摄方式</h3>
+        <div style="display:flex;gap:14px;justify-content:center;padding:10px 0 18px">
+          <button class="btn shoot-btn" id="shootLocal"><span class="shoot-icon">📷</span><span>本机</span><span>摄像头</span></button>
+          <button class="btn shoot-btn" id="shootMobile"><span class="shoot-icon">📱</span><span>手机</span><span>拍摄</span></button>
+        </div>
+        <div class="doc-foot">
+          <span style="flex:1"></span>
+          <button class="btn" id="shootCancel">取消</button>
         </div>
       </div>
     </div>`;
@@ -214,7 +231,38 @@ export async function render(view) {
   };
   /* V4.9.6 摄像头检测：有则本机 getUserMedia 拍摄；无则派单同账号移动端 */
   const dispatchMobile = () => {
-    toast('本机未检测到摄像头。请先保存退货单，保存后可一键派单移动端拍摄（同账号 PWA 消息页接收指令）', false);
+    toast('本机未检测到摄像头。请点击「拍摄」选择「手机拍摄」，由同账号 PWA 消息页拍摄回传', false);
+  };
+  const openShootChoice = () => {
+    const modal = view.querySelector('#shootChoiceModal');
+    modal.style.display = 'flex';
+    const close = () => { modal.style.display = 'none'; };
+    view.querySelector('#shootCancel').onclick = close;
+    view.querySelector('#shootLocal').onclick = () => { close(); openCamera(); };
+    view.querySelector('#shootMobile').onclick = () => { close(); startMobileShoot(); };
+  };
+  const startMobileShoot = async () => {
+    try {
+      const d = await must(post('/inventory/losses/photo-request', {
+        bizType: 'return',
+        label: `退货凭证 ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`
+      }), '已发送手机拍摄指令');
+      const token = d.token;
+      const tip = view.querySelector('#rEviTip');
+      tip.textContent = '等待手机拍摄回传…';
+      let tries = 0;
+      const timer = setInterval(async () => {
+        if (++tries > 40) { clearInterval(timer); tip.textContent = '手机回传超时，可重新选择拍摄方式'; return; }
+        try {
+          const r = await get('/inventory/losses/photo-requests/' + encodeURIComponent(token));
+          if (r.status === '已上传' && r.filePath) {
+            clearInterval(timer);
+            setEvidence(r.filePath);
+            toast('📷 退货凭证已回传');
+          }
+        } catch { /* 继续轮询 */ }
+      }, 3000);
+    } catch (e) { toast(e.message || '发送拍摄指令失败', false); }
   };
   const openCamera = async () => {
     let hasCam = false;
@@ -241,7 +289,7 @@ export async function render(view) {
       await uploadDataUrl(canvas.toDataURL('image/jpeg', 0.85), '凭证已拍摄上传');
     };
   };
-  view.querySelector('#rEviCam').onclick = openCamera;
+  view.querySelector('#rEviCam').onclick = openShootChoice;
   view.querySelector('#rEviPic').onclick = () => {
     const f = view.querySelector('#rEviFile');
     f.removeAttribute('capture');
@@ -360,11 +408,18 @@ export async function render(view) {
     const o = d.order || {}, its = d.items || [];
     detailId = Number(id);
     view.querySelector('#retModalTitle').textContent = `退货单 ${o.return_no || ''}`;
+    // V5.0.3：首行补展示 日期/操作员电子签字/审核人（审核人含时间；无数据显示「无」）
+    const signImgHtml = o.sign_image_path
+      ? `　操作员签字：<img src="${esc(imgUrl(o.sign_image_path))}" style="height:34px;vertical-align:middle;border:1px dashed var(--line);border-radius:6px;background:#fff" title="退货操作员电子签字">`
+      : '　操作员签字：无';
     view.querySelector('#retMeta').innerHTML = `
-      供应商：<b>${esc(o.supplier_name || '')}</b>　
-      状态：<span class="tag ${o.status === '已审核' ? 'g' : (o.status === '已取消' || o.status === '已作废') ? 'r' : 'y'}">${esc(o.status || '')}</span>　
-      制单人：${esc(o.maker_name || '—')}　
-      备注：${esc(o.remark || '—')}`;
+      供应商：<b>${esc(o.supplier_name || '无')}</b>　
+      状态：<span class="tag ${o.status === '已审核' ? 'g' : (o.status === '已取消' || o.status === '已作废') ? 'r' : 'y'}">${esc(o.status || '无')}</span>　
+      制单人：${esc(o.maker_name || '无')}　
+      日期：${(o.created_at || '').slice(0, 10) || '无'}　
+      审核人：${o.auditor_name ? `<b>${esc(o.auditor_name)}</b>${o.audited_at_txt ? `<span class="muted">（${esc(o.audited_at_txt)}）</span>` : ''}` : '无'}　
+      备注：${esc(o.remark || '无')}
+      ${signImgHtml}`;
     view.querySelector('#retItems').innerHTML = its.length ? `
       <table><thead><tr><th>序号</th><th>条码</th><th>商品</th><th>单位</th><th class="num">数量</th>
         <th class="num">原批次价</th><th class="num">金额</th><th>批次</th><th>到期日期</th><th>行备注</th></tr></thead>
@@ -406,8 +461,28 @@ export async function render(view) {
     openA5Print('return', [detailId]);
   };
 
-  /* ── 列表行补凭证：拍摄 / 选择图片 ── */
+  /* ── 列表行补/换凭证：先选来源（本地上传 / 退回重拍）── */
   function openEviPicker(id) {
+    const mask = document.createElement('div');
+    mask.className = 'modal-mask';
+    mask.innerHTML = `<div class="modal" style="width:420px"><h3>📎 更换退货凭证</h3>
+      <div class="doc-tip">「本地上传凭证」直接从电脑选择图片上传；「退回重拍」向移动端（同账号 PWA 消息页置顶）发送重拍指令，店员用手机摄像头重拍回传后自动回显。</div>
+      <div class="bar" style="justify-content:flex-end;margin-top:14px">
+        <button class="btn" id="evLocal">📁 本地上传凭证</button>
+        <button class="btn pri" id="evReshoot">📷 退回重拍</button>
+      </div></div>`;
+    document.body.appendChild(mask);
+    mask.onclick = e => { if (e.target === mask) mask.remove(); };
+    mask.querySelector('#evLocal').onclick = () => { mask.remove(); pickLocalEvidence(id); };
+    mask.querySelector('#evReshoot').onclick = async () => {
+      mask.remove();
+      try {
+        await must(post(`/purchase/returns/${id}/evidence-request`), '已发送移动端重拍指令（同账号 PWA 消息页置顶）');
+        watchEvidence(id);
+      } catch { /* must() 已 toast */ }
+    };
+  }
+  function pickLocalEvidence(id) {
     const inp = document.createElement('input');
     inp.type = 'file'; inp.accept = 'image/*';
     inp.onchange = async () => {
@@ -551,4 +626,6 @@ export async function render(view) {
   newDoc();
   await bindSupplierProducts();
   await loadList().catch(() => {});
+  // V5.0.3：缓存页重新可见时重拉列表（审核/凭证回传等状态可能已在别处变化）
+  view.__onShow = () => { if (document.contains(view)) loadList().catch(() => {}); };
 }

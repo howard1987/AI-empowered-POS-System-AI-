@@ -328,7 +328,7 @@ export async function render(view) {
     fa(cats, []);
     return out;
   };
-  // 分类商品数固定统计（V4.9.4）：来自 /products/category-counts，不随当前筛选变化
+  // 分类商品数固定统计：来自 /products/category-counts，不随当前筛选变化
   let catCounts = {};    // { categoryId: n }
   let fixedTotal = 0;    // 全部商品固定总数
   async function loadCatCounts() {
@@ -626,14 +626,16 @@ export async function render(view) {
       <table class="tb" style="width:100%;font-size:12.5px">
         <thead><tr>
           <th style="width:34px"><input type="checkbox" id="pChkAll" title="全选/取消全选本页" ${items.length && items.every(p => delSel.has(Number(p.id))) ? 'checked' : ''}></th>
+          <th class="seq">序号</th>
           <th>商品名称</th><th>条码</th><th>规格</th><th>单位</th><th>分类</th>
           <th class="num">进货价</th><th class="num">售价</th><th class="num">会员价</th>
           <th class="num">批发价</th><th style="text-align:center">会员折扣</th><th class="num">利润率</th><th class="num">库存</th><th>供货商</th>
         </tr></thead>
-        <tbody>${items.map(p => {
+        <tbody>${items.map((p, i) => {
           const st = statusOf(p);
           return `<tr data-pid="${p.id}" style="cursor:pointer;${Number(p.id) === selId ? 'background:var(--green-soft)' : ''}" title="点击看详情，双击编辑">
             <td onclick="event.stopPropagation()"><input type="checkbox" data-pchk="${p.id}" ${delSel.has(Number(p.id)) ? 'checked' : ''}></td>
+            <td class="num seq">${i + 1}</td>
             <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis"><b>${emojiOf(p)} ${hl(p.name, kw)}</b>
               <span class="tag ${st.c}" style="font-size:10px;padding:1px 6px;margin-left:4px">${st.t}</span>${p.is_weighted ? ' <span class="tag b" style="font-size:10px;padding:1px 6px">散称</span>' : ''}${chain.enabled ? ownerTag(p) : ''}</td>
             <td style="font-family:var(--mono)">${hl(p.barcode || (p.is_weighted ? 'PLU ' + (p.goods_no || '') : '—'), kw)}</td>
@@ -848,7 +850,7 @@ export async function render(view) {
     };
   };
 
-  /* ── 价签批量打印（V4.15.7 P2）：勾选商品 → 选标签机/份数 → 网口直发 / 串口 WebSerial ── */
+  /* ── 价签批量打印：勾选商品 → 选标签机/份数 → 网口直发 / 串口 WebSerial ── */
   view.querySelector('#pTags').onclick = async () => {
     const ids = [...delSel];
     if (!ids.length) return;
@@ -868,10 +870,10 @@ export async function render(view) {
           `<option value="${p.id}">${esc(p.name)}（${esc(p.brand || '通用')} · ${esc(p.label_size || '40x30')} · ${esc(p.conn_type)}${p.conn_addr ? ' ' + esc(p.conn_addr) : ''}）</option>`).join('')}</select></div>
       <div class="fld" style="max-width:420px"><label>每品份数</label>
         <input id="ptCopies" type="number" min="1" max="50" value="1" style="width:100px"></div>
-      <table style="margin-top:6px"><thead><tr><th>商品</th><th>条码</th><th>单位</th><th>规格</th>
+      <table style="margin-top:6px"><thead><tr><th class="seq">序号</th><th>商品</th><th>条码</th><th>单位</th><th>规格</th>
         <th class="num">售价</th><th class="num">促销价</th></tr></thead>
-      <tbody>${items.map(i => `<tr>
-        <td><b>${esc(i.name)}</b></td><td class="mono">${esc(i.barcode || '—')}</td><td>${esc(i.unit || '—')}</td>
+      <tbody>${items.map((i, idx) => `<tr>
+        <td class="num seq">${idx + 1}</td><td><b>${esc(i.name)}</b></td><td class="mono">${esc(i.barcode || '—')}</td><td>${esc(i.unit || '—')}</td>
         <td class="muted">${esc(i.spec || '—')}</td><td class="num">${money(i.price)}</td>
         <td class="num" style="color:${i.promoPrice != null ? 'var(--warn)' : 'inherit'}">${i.promoPrice != null ? money(i.promoPrice) : '—'}</td></tr>`).join('')}</tbody></table>
       <div class="bar" style="justify-content:flex-end;margin-top:10px;gap:10px">
@@ -1000,19 +1002,19 @@ export async function render(view) {
         <div style="padding-top:12px;border-top:1px dashed var(--line);margin-top:10px">
           <div class="muted" style="font-size:12px;margin-bottom:6px">🔄 多单位换算</div>
           <table class="tb" style="width:100%;font-size:12px;text-align:left;table-layout:auto"><thead><tr>
-              <th style="white-space:nowrap">包装单位</th><th style="white-space:nowrap">换算到基本单位</th><th style="white-space:nowrap;min-width:150px">该包装条码</th></tr></thead>
+              <th class="seq">序号</th><th style="white-space:nowrap">包装单位</th><th style="white-space:nowrap">换算到基本单位</th><th style="white-space:nowrap;min-width:150px">该包装条码</th></tr></thead>
           <tbody>
-            <tr><td style="white-space:normal"><b>${esc(p.base_unit || '')}</b>（基本）</td><td style="white-space:normal">1 ${esc(p.base_unit || '')}</td><td class="mono" style="white-space:normal;word-break:break-all;min-width:150px">${esc(p.barcode || '—')}</td></tr>
-            ${units.map(u => `<tr><td style="white-space:normal"><b>${esc(u.unit_name)}</b></td><td style="white-space:normal">1 ${esc(u.unit_name)} = ${Number(u.rate)} ${esc(p.base_unit || '')}</td>
+            <tr><td class="num">—</td><td style="white-space:normal"><b>${esc(p.base_unit || '')}</b>（基本）</td><td style="white-space:normal">1 ${esc(p.base_unit || '')}</td><td class="mono" style="white-space:normal;word-break:break-all;min-width:150px">${esc(p.barcode || '—')}</td></tr>
+            ${units.map((u, i) => `<tr><td class="num seq">${i + 1}</td><td style="white-space:normal"><b>${esc(u.unit_name)}</b></td><td style="white-space:normal">1 ${esc(u.unit_name)} = ${Number(u.rate)} ${esc(p.base_unit || '')}</td>
               <td class="mono" style="white-space:normal;word-break:break-all;min-width:150px">${esc(u.barcode || '—')}</td></tr>`).join('')}
           </tbody></table>
         </div>` : ''}
       ${(d.supplierPrices || []).length ? `
         <div style="padding-top:12px">
           <div class="muted" style="font-size:12px;margin-bottom:6px">🚚 供应商进价历史（最近 ${Math.min(5, d.supplierPrices.length)} 次）</div>
-          <table class="tb" style="width:100%;font-size:12px"><thead><tr><th>供应商</th><th class="num">进价</th><th class="num">历史最低</th><th>来源单据</th><th>时间</th></tr></thead>
-          <tbody>${d.supplierPrices.slice(0, 5).map(s => `<tr>
-            <td>${esc(s.supplier_name || '供应商' + s.supplier_id)}</td>
+          <table class="tb" style="width:100%;font-size:12px"><thead><tr><th class="seq">序号</th><th>供应商</th><th class="num">进价</th><th class="num">历史最低</th><th>来源单据</th><th>时间</th></tr></thead>
+          <tbody>${d.supplierPrices.slice(0, 5).map((s, i) => `<tr>
+            <td class="num seq">${i + 1}</td><td>${esc(s.supplier_name || '供应商' + s.supplier_id)}</td>
             <td class="num">${money(s.price)}</td>
             <td class="num muted">${money(s.min_price)}</td>
             <td class="muted mono">${esc(s.source_doc || '—')}</td>
@@ -1106,6 +1108,16 @@ export async function render(view) {
   const unitModal = view.querySelector('#unitModal');
   const $ = sel => view.querySelector(sel);
 
+  // V5.0.3：库存下限/上限强制非负整数（step=1 仍可键入小数，此处统一取整）
+  for (const id of ['mMinStock', 'mMaxStock', 'eMinStock', 'eMaxStock']) {
+    const el = $('#' + id);
+    if (el) el.onchange = () => { el.value = el.value === '' ? '' : String(Math.max(0, Math.floor(Number(el.value) || 0))); };
+  }
+  // V5.0.3：业务文本输入禁用浏览器账号/密码自动填充启发式（保存时误弹「保存密码」）
+  view.querySelectorAll?.('#pModal input[type="text"], #pModal input:not([type])').forEach(inp => {
+    if (!inp.hasAttribute('autocomplete') && !inp.hasAttribute('list')) inp.setAttribute('autocomplete', 'off');
+  });
+
   // 基本单位字典（前端维护；「＋」弹窗可扩充，本次会话内全表单共用）
   const COMMON_UNITS = ['个', '瓶', '袋', '盒', '箱', '提', '罐', '听', '支', '桶', '包', '卷', '双', '套', '片', '块', '斤', '公斤', '克', '升', '毫升'];
   let unitList = [...COMMON_UNITS];
@@ -1155,7 +1167,7 @@ export async function render(view) {
     onPick: v => { if (!unitList.includes(v)) { unitList.push(v); renderUnitSel(); } },
     emptyHint: '无匹配——可直接输入新单位，保存后自动加入单位库',
   });
-  // 分类/供货商同款面板（V4.9.14）：getList 惰性取值，面板弹出时才读最新数据
+  // 分类/供货商同款面板：getList 惰性取值，面板弹出时才读最新数据
   const catChainName = c => c.chain.map(x => x.name).join(' / ');
   const attachCatPicker = el => el && attachPickPanel(el, {
     getList: kw => {
@@ -1377,6 +1389,7 @@ export async function render(view) {
     const price = Number($('#mPrice').value);
     const keepNum = Number($('#mKeep').value);
     if (!barcode) return toast('条码必填（预包装商品请用扫码枪扫入或手输）', false);
+    if (!/^\d+$/.test(barcode)) return toast('条码须为纯数字（不支持字母或字母+数字组合）', false);
     if (!name) return toast('商品名称必填', false);
     // 单位：输入式（查询选择，无的自动更新单位表）
     const unitName = $('#mUnit').value.trim();
@@ -1480,9 +1493,9 @@ export async function render(view) {
       const r = await must(get(`/products/pool?q=${encodeURIComponent(kw)}&size=100`));
       cnt.textContent = `共 ${r.total} 条`;
       list.innerHTML = r.items.length ? `
-        <table><thead><tr><th>条码</th><th>名称</th><th>规格</th><th>单位</th><th>品牌</th><th>类别</th><th class="num">参考价</th><th class="num">被查次数</th><th>批次</th></tr></thead>
-        <tbody>${r.items.map(x => `<tr>
-          <td>${esc(x.barcode)}</td><td>${esc(x.name)}</td><td>${esc(x.spec || '—')}</td>
+        <table><thead><tr><th class="seq">序号</th><th>条码</th><th>名称</th><th>规格</th><th>单位</th><th>品牌</th><th>类别</th><th class="num">参考价</th><th class="num">被查次数</th><th>批次</th></tr></thead>
+        <tbody>${r.items.map((x, i) => `<tr>
+          <td class="num seq">${i + 1}</td><td>${esc(x.barcode)}</td><td>${esc(x.name)}</td><td>${esc(x.spec || '—')}</td>
           <td>${esc(x.unit || '—')}</td><td>${esc(x.brand || '—')}</td><td>${esc(x.category || '—')}</td>
           <td class="num">${x.price != null ? money(x.price) : '—'}</td>
           <td class="num">${Number(x.hits || 0)}</td><td class="muted">${esc(x.batch_no || '—')}</td></tr>`).join('')}</tbody></table>`
@@ -1834,7 +1847,7 @@ export async function render(view) {
       .filter(u => u.unit_name !== (p.base_unit || '') && Number(u.rate) > 0)
       .map(u => ({ unitName: u.unit_name, rate: Number(u.rate), barcode: u.barcode || null }));
     renderEAlias(); renderEPkg();
-    view.querySelector('#emTitle').textContent = `✏️ 编辑商品（${p.goods_no || pid}）`;
+    view.querySelector('#emTitle').textContent = '✏️ 编辑商品';
     view.querySelector('#eBarcode').value = p.barcode || '';
     view.querySelector('#eName').value = p.name || '';
     $('#eUnit').value = p.base_unit || '个';
@@ -1848,9 +1861,8 @@ export async function render(view) {
     view.querySelector('#eWholesale').value = p.wholesale_price ?? '';
     view.querySelector('#eDiscount').value = (p.member_discount != null && Number(p.member_discount) > 0) ? '1' : '';
     view.querySelector('#eKeep').value = p.keep_days ?? '';
-    // 保质期单位自动推导：365 整除→年，30 整除→月，其余→天
-    const kd = Number(p.keep_days) || 0;
-    view.querySelector('#eKeepUnit').value = kd > 0 && kd % 365 === 0 ? '365' : kd > 0 && kd % 30 === 0 ? '30' : '1';
+    // V5.0.3：保质期单位默认「天」（不再按整除自动切月/年，避免与录入习惯不一致）
+    view.querySelector('#eKeepUnit').value = '1';
     // 分类/供货商：输入式回填（显示完整链名 / 供应商名）
     const catHit = flatCats().find(c => Number(c.id) === Number(p.category_id));
     view.querySelector('#eCatIn').value = catHit ? catHit.chain.map(x => x.name).join(' / ') : '';
@@ -1899,6 +1911,7 @@ export async function render(view) {
     const unitVal = view.querySelector('#eUnit').value.trim();
     const keepNum = Number(view.querySelector('#eKeep').value);
     if (!barcode) return toast('条码必填', false);
+    if (!/^\d+$/.test(barcode)) return toast('条码须为纯数字（不支持字母或字母+数字组合）', false);
     if (!name) return toast('名称必填', false);
     if (!unitVal) return toast('单位必填', false);
     if (!(price > 0)) return toast('售价必填（>0）', false);

@@ -194,7 +194,7 @@ export async function render(view) {
   async function doTransmit() {
     const sel = selectedRows();
     if (!sel.length) { toast('请先勾选要传秤的商品', false); return; }
-    // 配置来自「系统设置 → 传秤工具」，后端直读；实际下发走共享模块 transmitScaleItems（V4.26.5）
+    // 配置来自「系统设置 → 传秤工具」，后端直读；实际下发走共享模块 transmitScaleItems
     const cfg = config;
     if (cfg.portType === 'serial' && !ScaleSerial.supported()) {
       toast('当前浏览器不支持 Web Serial，请改用网口 TCP 或导出 CSV', false);

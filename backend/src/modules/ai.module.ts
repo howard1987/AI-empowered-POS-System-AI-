@@ -7,7 +7,7 @@
  *   - 训练闭环：任务（采集/训练/评估）→ 随手拍提交样本 → 店长审核 → 训练完成产出模型版本 → 单活部署切换
  *   - OCR 入库：POST /ai/ocr-intake —— 文本行解析（名称,条码,售价,保质期天），preview 校验 / apply 批量建档
  */
-import { Body, Controller, Get, Module, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Module, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { BizException } from '../common/http';
 import { q, q1, r2, tx, audit, seqLock } from '../common/db';
@@ -646,6 +646,19 @@ export class AiController {
     const p = await q1(`SELECT id, store_id FROM products WHERE id=$1 AND deleted_at IS NULL`, [Number(b.productId)]);
     if (!p) throw new BizException(40404, '商品不存在', 404);
     return tx(async c => {
+      // V5.0.1：自由训练也纳入工单体系——按提交批次自动生成/归并当日「自由训练采集」工单
+      // （AICJ+日期-FREE），样本挂 task_id 可溯源；训练台任务工单表格直接可见。
+      const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const taskNo = `AICJ${ymd}-FREE`;
+      let task = await cx(c, `SELECT id FROM ai_tasks WHERE task_no=$1`, [taskNo]);
+      if (!task.length) {
+        task = await cx(c,
+          `INSERT INTO ai_tasks (store_id, task_type, task_no, scope, target_count, assigned_to, created_by, remark)
+           VALUES ($1,'采集',$2,$3,$4,$5,$6,'自由训练（随手拍）按提交批次自动生成') RETURNING id`,
+          [p.store_id, taskNo, JSON.stringify({ free: true }), images.length, user.sub, user.sub]);
+      } else {
+        await cx(c, `UPDATE ai_tasks SET target_count = target_count + $2 WHERE id=$1`, [task[0].id, images.length]);
+      }
       for (const img of images) {
         const ip = String(img.path || ''); // P1-H3 写入侧收口（同采集任务）
         if (!ip || ip.includes('..') || /^[a-zA-Z]:|^[/\\]/.test(ip) || !/^(\/uploads\/|img:\/\/)/.test(ip)) {
@@ -653,13 +666,44 @@ export class AiController {
         }
         const ann = { ...(b.annotation || {}), angle: img.angle, free: true };
         await cx(c,
-          `INSERT INTO ai_samples (store_id, product_id, image_path, source, annotation)
-           VALUES ($1,$2,$3,'随手拍',$4)`,
-          [p.store_id, b.productId, img.path, JSON.stringify(ann)]);
+          `INSERT INTO ai_samples (store_id, product_id, image_path, source, annotation, task_id)
+           VALUES ($1,$2,$3,'随手拍',$4,$5)`,
+          [p.store_id, b.productId, img.path, JSON.stringify(ann), task[0].id]);
       }
-      await audit(p.store_id, user.sub, 'AI', 'ai.sample.free', 'product', Number(b.productId), { count: images.length });
-      return { sampleCount: images.length, note: '随手拍样本已入库，等待店长审核' };
+      await audit(p.store_id, user.sub, 'AI', 'ai.sample.free', 'product', Number(b.productId), { count: images.length, taskNo });
+      return { sampleCount: images.length, taskNo, note: `随手拍样本已入库（已归入工单 ${taskNo}），等待店长审核` };
     });
+  }
+
+  /** V5.0.2 商品消费频次（近 90 天销量降序）：「按商品明细发布采集任务」按需采集优先级排序 */
+  @RequirePerms('ai.train.launch')
+  @Get('products-frequency')
+  async productsFrequency(@CurrentUser() user: AuthUser) {
+    const rows = await q(
+      `SELECT si.product_id, count(*)::int AS freq
+         FROM sale_items si JOIN sales_orders o ON o.id = si.order_id
+        WHERE o.store_id = $1 AND o.created_at >= CURRENT_DATE - INTERVAL '90 days'
+        GROUP BY si.product_id`, [user.storeId]);
+    const map = new Map<number, number>();
+    for (const r of rows) map.set(Number(r.product_id), Number(r.freq));
+    return { freq: Object.fromEntries(map) };
+  }
+
+  /** V5.0.2 删除任务工单：仅「待执行 / 待审核」可删；挂接样本解除关联（样本保留），审计留痕 */
+  @RequirePerms('ai.train.launch')
+  @Delete('tasks/:id')
+  async delTask(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
+    const t = await q1<any>(`SELECT * FROM ai_tasks WHERE id=$1`, [id]);
+    if (!t) throw new BizException(40404, '工单不存在', 404);
+    if (!['待执行', '待审核'].includes(String(t.status))) {
+      throw new BizException(40003, `该工单状态为「${t.status}」，仅未开始/待审核的工单可删除`);
+    }
+    await tx(async c => {
+      await cx(c, `UPDATE ai_samples SET task_id = NULL WHERE task_id = $1`, [id]);
+      await cx(c, `DELETE FROM ai_tasks WHERE id = $1`, [id]);
+    });
+    await audit(user.storeId, user.sub, 'AI', 'ai.task.delete', 'ai_task', id, { taskNo: t.task_no });
+    return { ok: true };
   }
 
   /** 店长审核样本（待审核 → 已入库/不合格） */

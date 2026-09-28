@@ -46,11 +46,7 @@ export async function render(view) {
     </style>
     <div class="card" style="display:flex;flex-direction:column;height:calc(100dvh - 214px);min-height:520px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 16px 0">
-        ${segHtml('htSeg', [
-          { v: 'return',   label: '跨店退货' },
-          { v: 'ledger',   label: '门店往来' },
-          { v: 'variance', label: '进价差异单' },
-        ], tab)}
+        <span id="htSeg"></span>
         <div id="htExtra"></div>
       </div>
       <div id="htBody" style="flex:1;overflow:auto;padding:12px 16px 16px"></div>
@@ -282,6 +278,11 @@ export async function render(view) {
     };
   }
 
+  view.querySelector('#htSeg').innerHTML = segHtml([
+    { k: 'return',   t: '跨店退货' },
+    { k: 'ledger',   t: '门店往来' },
+    { k: 'variance', t: '进价差异单' },
+  ], tab);
   bindSeg(view.querySelector('#htSeg'), v => { tab = v; load(); });
   await load();
 }

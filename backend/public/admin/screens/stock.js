@@ -2,7 +2,7 @@ import { get, post, put, must, money, esc, dt, toast, unwrap } from '../api.js';
 import { openDetailModal } from '../common-ui.js';
 import { showProductDetail } from './product-detail.js';
 
-/** 库存批次（V4.9.3）：
+/** 库存批次：
  *  · 库存总览：名称/条码/规格/库存/在途/库存金额/下限/保质期/最近到期日/供应商/状态，12 行分页
  *  · 临期预警：处置状态（未处理/处理中/已退换）+ 处置时限 + 超时处罚；已退换商品出库后自动取消
  *  · 批次查询：供应商/单据号/商品ID/名称/条码多条件，点行看详情；命中入库单号可看入库商品情况
@@ -248,7 +248,7 @@ export async function render(view) {
   $('#sJump').addEventListener('change', jumpPage);
 
   /* ═══════════ 临期预警（处置闭环） ═══════════ */
-  // 处置时限设置读取/保存（V4.9.7 单位改「天」，内部仍存小时）
+  // 处置时限设置读取/保存
   (async () => {
     try {
       const st = await must(get('/settings'));
@@ -403,4 +403,7 @@ export async function render(view) {
 
   $('#sExp').innerHTML = '<div class="empty">加载中…</div>';
   await Promise.all([list(), loadExp()]);
+  // V5.0.3：页面缓存复用——再次进入本屏时自动重拉库存总览与临期预警，
+  // 保证商品档案/销售/报损导致的批次与库存变化（含「最近到期日」随剩余量推移）即时可见
+  view.__onShow = () => { if (document.contains(view)) { list().catch(() => {}); loadExp().catch(() => {}); } };
 }

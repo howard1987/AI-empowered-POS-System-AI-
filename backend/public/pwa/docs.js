@@ -266,6 +266,7 @@ View.docDetail = async function (v, arg) {
 // ── 消息 Tab：待办审批 + 临期预警 ──
 View.msg = async function (v) {
   v.innerHTML = `<div class="sec">待办</div><div id="msgTodo"><div class="empty">加载中…</div></div>
+    <div class="sec">报损照片拍摄（店长/店员）</div><div id="msgLoss"><div class="empty">加载中…</div></div>
     <div class="sec">退货凭证补拍（店长/店员）</div><div id="msgEvi"><div class="empty">加载中…</div></div>
     <div class="sec">临期预警（批次）</div><div id="msgExp"><div class="empty">加载中…</div></div>`;
   const todo = $('#msgTodo');
@@ -323,6 +324,41 @@ View.msg = async function (v) {
       toast('处置到位（已退/换货）');
       View.msg(v);
     });
+    // V5.0.3 报损照片拍摄指令：PC 报损单「拍摄」按钮派单 → 手机拍摄上传回传（同账号）
+    const lossBox = $('#msgLoss');
+    try {
+      const lr = unwrap(await call('GET', '/inventory/losses/photo-requests/pending'));
+      if (!lr.length) lossBox.innerHTML = '<div class="empty">暂无待拍摄报损照片</div>';
+      else lossBox.innerHTML = lr.map(r => `
+        <div class="row">
+          <div class="grow">
+            <div class="t">报损照片 <span class="pill yellow">待拍摄</span></div>
+            <div class="s">${esc(r.label || '')} · ${dt(r.created_at)}</div>
+          </div>
+          <button class="btn" style="width:auto;padding:8px 12px;font-size:13px" data-lossph="${esc(r.token)}">📷 拍摄回传</button>
+        </div>`).join('');
+      lossBox.querySelectorAll('[data-lossph]').forEach(b => b.onclick = () => {
+        const inp = document.createElement('input');
+        inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'environment';
+        inp.onchange = async () => {
+          const f = inp.files[0];
+          if (!f) return;
+          if (f.size > 8 * 1024 * 1024) { toast('照片不能超过 8MB'); return; }
+          try {
+            const dataUrl = await new Promise((res, rej) => {
+              const rd = new FileReader();
+              rd.onload = () => res(rd.result); rd.onerror = () => rej(new Error('读取失败'));
+              rd.readAsDataURL(f);
+            });
+            const up = await call('POST', '/upload', { image: dataUrl });
+            await call('POST', '/inventory/losses/photo-requests/' + b.dataset.lossph + '/submit', { filePath: up.data?.path || up.path });
+            toast('✅ 报损照片已回传（PC 端可见）');
+            View.msg(v);
+          } catch (e) { toast(e.message || '回传失败'); }
+        };
+        inp.click();
+      });
+    } catch { lossBox.innerHTML = '<div class="empty">拍摄清单加载失败</div>'; }
     // V4.9.5 退货凭证补拍：PC 端派单（或全部待审核无凭证单）→ 手机摄像头拍摄上传回传
     const eviBox = $('#msgEvi');
     try {

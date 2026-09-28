@@ -3,6 +3,7 @@ import { signCell, signBtn, handleSignInfo, mountSignActions, openSignPad } from
 import { openA5Print, autoPrintA5AfterAudit, canPrintA5 } from '../docprint.js';
 import { paginate, bindPager } from '../common-ui.js';
 import { anchorNav } from '../ui-polish.js';   // V4.26.4 长页面锚点导航
+import { renderLines, makeLine } from './docentry.js';   // V5.0.3：报损/调拨明细改用与采购订单同款「扫码定位 + 默认一行」模式
 
 /** 库存作业（盘点任务 / 报损 / 调拨，后端 /inventory/count-tasks|counts|losses|transfers）
  *  · V4.15.7 P3：三张单（报损/盘点/调拨）接入 A5 统一打印——详情弹窗打印 + 列表勾选批量 + 审核后自动弹 */
@@ -22,6 +23,10 @@ export async function render(view, opts = {}) {
   const canTransferAudit = (API.user?.perms || []).includes('hq.stock.transfer.audit') || (API.user?.perms || []).includes('stock.transfer.audit');
 
   view.innerHTML = `
+    <style>
+      .shoot-btn { display:inline-flex; flex-direction:column; align-items:center; justify-content:center; width:64px; height:64px; padding:4px; gap:2px; font-size:12px; line-height:1.2; white-space:normal; text-align:center; }
+      .shoot-btn .shoot-icon { font-size:22px; line-height:1; }
+    </style>
     <div id="tab-count">
       <div class="card page-new" style="display:none">
         <div class="doc-tools">
@@ -91,26 +96,26 @@ export async function render(view, opts = {}) {
             <button class="btn pri" id="lsSave">💾 保存报损单</button>
           </span>
         </div>
-        <div class="doc-head" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr))">
-          <div class="fld"><label class="req">原因类型</label><select id="lsReason">${REASON_TYPES.map(r => `<option>${r}</option>`).join('')}</select></div>
-          <div class="fld"><label>备注</label><input id="lsMemo" placeholder="备注（选填）"></div>
-        </div>
-        <div class="doc-head" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr))">
-          <div class="fld">
-            <label class="req">报损照片（拍摄或选择，≥1 张）</label>
-            <input id="lsPhotoFile" type="file" accept="image/*" capture="environment" style="padding:6px">
-          </div>
-          <div class="fld" style="display:flex;align-items:center;gap:10px">
-            <img id="lsPhotoPrev" style="display:none;max-height:64px;border-radius:8px;border:1px solid var(--line)">
+        <div class="doc-head" style="display:flex;flex-wrap:nowrap;align-items:end;gap:14px">
+          <div class="fld" style="flex:none"><label class="req">原因类型</label><select id="lsReason" style="width:150px">${REASON_TYPES.map(r => `<option>${r}</option>`).join('')}</select></div>
+          <div class="fld" style="flex:1;min-width:180px"><label>备注</label><input id="lsMemo" placeholder="备注（选填）" autocomplete="off"></div>
+          <div class="fld" style="flex:none"><label class="req">报损照片（≥1 张）</label>
+            <span style="display:flex;gap:6px;flex-wrap:nowrap;align-items:center">
+              <input id="lsPhotoFile" type="file" accept="image/*" style="display:none">
+              <button class="btn shoot-btn" id="lsPhotoPick" title="从本机选择图片上传"><span class="shoot-icon">🖼</span><span>选择</span><span>图片</span></button>
+              <button class="btn shoot-btn" id="lsPhotoShoot" title="本机摄像头拍摄 / 发送指令到同账号手机端拍摄回传"><span class="shoot-icon">📷</span><span>拍摄</span></button>
+            </span></div>
+          <div class="fld" style="flex:none;flex-direction:row;align-items:center;gap:10px;padding-bottom:5px">
+            <img id="lsPhotoPrev" style="display:none;max-height:40px;border-radius:8px;border:1px solid var(--line)">
             <span class="muted" id="lsPhotoTip" style="font-size:12px">未上传照片</span>
           </div>
         </div>
         <div class="doc-grid" style="padding:6px 18px 4px">
           <table>
-            <thead><tr><th style="width:44px">序号</th><th style="min-width:220px">商品（行内直选）</th><th>单位</th>
-              <th style="width:130px">数量</th><th style="width:50px">操作</th></tr></thead>
-            <tbody id="lsLines"><tr><td colspan="5" class="empty">空单：点「➕ 添加行」添加明细（批次自动归属：临期优先）</td></tr></tbody>
-            <tfoot><tr><td colspan="3">合计</td><td class="num" id="lsSumQty">0</td><td></td></tr></tfoot>
+            <thead><tr><th style="width:70px">＋/−</th><th style="width:38px">序号</th><th style="width:150px">条码</th><th>名称</th><th>单位</th>
+              <th>类别</th><th>规格</th><th style="width:110px">数量</th><th>行备注</th></tr></thead>
+            <tbody id="lsLines"></tbody>
+            <tfoot><tr><td colspan="7">合计</td><td class="num" id="lsSumQty">0</td><td></td></tr></tfoot>
           </table>
         </div>
         <div class="doc-tip">💡 照片直接拍摄/上传（留存证据链）；保存后须操作员电子签名，审核通过即扣减对应批次与库存。</div>
@@ -151,10 +156,10 @@ export async function render(view, opts = {}) {
         </div>
         <div class="doc-grid" style="padding:6px 18px 4px">
           <table>
-            <thead><tr><th style="width:44px">序号</th><th style="min-width:220px">商品（行内直选）</th><th>单位</th>
-              <th style="width:130px">数量</th><th style="width:50px">操作</th></tr></thead>
-            <tbody id="trLines"><tr><td colspan="5" class="empty">空单：点「➕ 添加行」添加明细（批次整体转移，成本不变）</td></tr></tbody>
-            <tfoot><tr><td colspan="3">合计</td><td class="num" id="trSumQty">0</td><td></td></tr></tfoot>
+            <thead><tr><th style="width:70px">＋/−</th><th style="width:38px">序号</th><th style="width:150px">条码</th><th>名称</th><th>单位</th>
+              <th>类别</th><th>规格</th><th style="width:110px">数量</th><th>行备注</th></tr></thead>
+            <tbody id="trLines"></tbody>
+            <tfoot><tr><td colspan="7">合计</td><td class="num" id="trSumQty">0</td><td></td></tr></tfoot>
           </table>
         </div>
         <div class="doc-tip">💡 调出/调入门店均下拉选择；保存后操作员电子签名，确认执行时扣源批次并生成转入批次，库存流水双边记账。</div>
@@ -184,6 +189,30 @@ export async function render(view, opts = {}) {
         <div class="doc-foot">
           <span style="flex:1"></span>
           <button class="btn" id="opsPrint">🖨 打印单据 A5</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-mask" id="shootChoiceModal" style="display:none">
+      <div class="modal" style="width:340px">
+        <h3>选择拍摄方式</h3>
+        <div style="display:flex;gap:14px;justify-content:center;padding:10px 0 18px">
+          <button class="btn shoot-btn" id="shootLocal"><span class="shoot-icon">📷</span><span>本机</span><span>摄像头</span></button>
+          <button class="btn shoot-btn" id="shootMobile"><span class="shoot-icon">📱</span><span>手机</span><span>拍摄</span></button>
+        </div>
+        <div class="doc-foot">
+          <span style="flex:1"></span>
+          <button class="btn" id="shootCancel">取消</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-mask" id="camModal" style="display:none">
+      <div class="modal" style="width:560px">
+        <h3>📷 拍摄报损照片</h3>
+        <video id="camVideo" autoplay playsinline style="width:100%;border-radius:10px;background:#000;min-height:300px"></video>
+        <div class="doc-foot">
+          <button class="btn" id="camCancel">取消</button>
+          <span style="flex:1"></span>
+          <button class="btn pri" id="camShot">📸 拍摄并上传</button>
         </div>
       </div>
     </div>`;
@@ -234,39 +263,24 @@ export async function render(view, opts = {}) {
   const prodOpts = (sel) => `<option value="">— 选择商品 —</option>` +
     products.map(p => `<option value="${p.id}" ${String(sel) === String(p.id) ? 'selected' : ''}>${esc(p.name)} · ${esc(p.barcode || p.goods_no || '')}</option>`).join('');
 
-  /* ── 通用：行内直录明细表 ── */
+  /* ── 通用：行内直录明细表（V5.0.3：与新建采购订单同款——扫码/条码/名称定位商品，
+        默认预置一行待填充；＋/− 插删行；回车跳列、行末自动加行） ── */
   function makeLines(tbId, sumId, statId) {
-    const lines = [];
+    const lines = [makeLine()];   // 默认一行待填充
     function draw() {
       const tb = view.querySelector('#' + tbId);
-      if (!lines.length) {
-        tb.innerHTML = `<tr><td colspan="5" class="empty">空单：点「➕ 添加行」添加明细</td></tr>`;
-      } else {
-        tb.innerHTML = lines.map((l, i) => {
-          const p = products.find(x => String(x.id) === String(l.productId)) || {};
-          return `<tr>
-            <td class="num">${i + 1}</td>
-            <td><select data-i="${i}" style="width:100%">${prodOpts(l.productId)}</select></td>
-            <td>${esc(p.base_unit || '—')}</td>
-            <td><input data-i="${i}" type="number" step="0.001" min="0" value="${l.qty ?? ''}" style="width:100%"></td>
-            <td><button class="btn sm warn" data-del="${i}">删</button></td>
-          </tr>`;
-        }).join('');
-        tb.querySelectorAll('select').forEach(s => s.onchange = () => {
-          lines[Number(s.dataset.i)].productId = s.value ? Number(s.value) : ''; draw();
-        });
-        tb.querySelectorAll('input[type=number]').forEach(inp => inp.onchange = () => {
-          lines[Number(inp.dataset.i)].qty = inp.value; draw();
-        });
-        tb.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { lines.splice(Number(b.dataset.del), 1); draw(); });
-      }
-      const q = lines.reduce((s, l) => s + (Number(l.qty) || 0), 0);
-      view.querySelector('#' + sumId).textContent = String(q);
-      view.querySelector('#' + statId).textContent = lines.length ? `录入中 · ${lines.length} 行` : '录入中';
+      renderLines(tb, lines, {
+        products, unitsCache: {}, price: false, sell: false, prodDate: false, stock: false,
+        onSum: () => {
+          const q = lines.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+          view.querySelector('#' + sumId).textContent = String(Math.round(q * 1000) / 1000);
+          view.querySelector('#' + statId).textContent = lines.length ? `录入中 · ${lines.length} 行` : '录入中';
+        },
+      });
     }
     draw();
-    return { lines, draw, add: () => { lines.push({ productId: '', qty: '' }); draw(); },
-             reset: () => { lines.length = 0; draw(); } };
+    return { lines, draw, add: () => { lines.push(makeLine()); draw(); },
+             reset: () => { lines.length = 0; lines.push(makeLine()); draw(); } };
   }
 
   /* ═══════════ 盘点任务 ═══════════ */
@@ -333,10 +347,10 @@ export async function render(view, opts = {}) {
     if (kw) rows = rows.filter(o => String(o.task_no || '').toLowerCase().includes(kw) || String(o.name || '').toLowerCase().includes(kw));
     const pg = paginate(rows, skPage, 10);
     view.querySelector('#skList').innerHTML = rows.length ? `
-      <table><thead><tr><th>任务号</th><th>名称</th><th>范围</th><th class="num">进度</th>
+      <table><thead><tr><th class="seq">序号</th><th>任务号</th><th>名称</th><th>范围</th><th class="num">进度</th>
         <th>状态</th><th>指派给</th><th>创建</th><th style="width:220px">操作</th></tr></thead>
-      <tbody>${pg.slice.map(o => `<tr data-taskrow="${o.id}" style="cursor:pointer" title="双击查看任务明细">
-        <td style="font-family:var(--mono);font-weight:600">${esc(o.task_no)}</td>
+      <tbody>${pg.slice.map((o, i) => `<tr data-taskrow="${o.id}" style="cursor:pointer" title="双击查看任务明细">
+        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td style="font-family:var(--mono);font-weight:600">${esc(o.task_no)}</td>
         <td>${esc(o.name)}</td>
         <td>${esc(o.category_names || o.scope_type)}</td>
         <td class="num">${o.counted_sku}/${o.total_sku}</td>
@@ -371,9 +385,9 @@ export async function render(view, opts = {}) {
        备注：${esc(o.remark || '—')}`,
       Object.keys(groups).map(g => `
         <div style="font-weight:700;margin:10px 0 4px">📂 ${esc(g)}</div>
-        <table><thead><tr><th>商品</th><th>单位</th><th class="num">账面</th><th class="num">实盘</th><th class="num">差异</th><th>实盘时间</th></tr></thead>
-        <tbody>${groups[g].map(it => { const d = it.diff_qty != null ? Number(it.diff_qty) : null;
-          return `<tr><td>${esc(it.product_name)}</td><td>${esc(it.base_unit || '—')}</td>
+        <table><thead><tr><th class="seq">序号</th><th>商品</th><th>单位</th><th class="num">账面</th><th class="num">实盘</th><th class="num">差异</th><th>实盘时间</th></tr></thead>
+        <tbody>${groups[g].map((it, i) => { const d = it.diff_qty != null ? Number(it.diff_qty) : null;
+          return `<tr><td class="num seq">${i + 1}</td><td>${esc(it.product_name)}</td><td>${esc(it.base_unit || '—')}</td>
             <td class="num">${Number(it.book_qty)}</td>
             <td class="num">${it.actual_qty != null ? Number(it.actual_qty) : '—'}</td>
             <td class="num" style="color:${d == null ? 'inherit' : d < 0 ? 'var(--warn)' : d > 0 ? 'var(--ok)' : 'inherit'}">${d != null ? Number(d) : '—'}</td>
@@ -401,11 +415,11 @@ export async function render(view, opts = {}) {
     // V4.9.7 列重排：明细行→总数量 · 创建→制单时间 · 签字移制单时间后 · 状态移签字后 · 数据靠左
     const pg = paginate(rows, ctPage, 10);
     view.querySelector('#ctList').innerHTML = rows.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="ctPrAll" title="全选打印"></th><th>单号</th><th>范围</th><th>总数量</th><th>差异合计</th>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="ctPrAll" title="全选打印" ${pg.slice.length && pg.slice.every(o => ctPrSel.has(Number(o.id))) ? 'checked' : ''}></th><th class="seq">序号</th><th>单号</th><th>范围</th><th>总数量</th><th>差异合计</th>
         <th>盘点人</th><th>制单时间</th><th>签字</th><th>状态</th><th style="width:180px">操作</th></tr></thead>
-      <tbody>${pg.slice.map(o => `<tr data-cntrow="${o.id}" style="cursor:pointer" title="双击查看明细">
+      <tbody>${pg.slice.map((o, i) => `<tr data-cntrow="${o.id}" style="cursor:pointer" title="双击查看明细">
         <td onclick="event.stopPropagation()"><input type="checkbox" data-ctpr="${o.id}" ${ctPrSel.has(Number(o.id)) ? 'checked' : ''} title="勾选批量打印 A5"></td>
-        <td style="font-family:var(--mono);font-weight:600">${esc(o.count_no)}</td>
+        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td style="font-family:var(--mono);font-weight:600">${esc(o.count_no)}</td>
         <td>${esc(o.scope)}</td><td>${Number(o.total_qty ?? 0)}</td>
         <td style="color:${Number(o.diff_sum) < 0 ? 'var(--warn)' : 'inherit'}">${fmt(o.diff_sum)}</td>
         <td>${esc(o.employee_name || '')}</td><td>${dt(o.created_at)}</td>
@@ -435,10 +449,10 @@ export async function render(view, opts = {}) {
        盘点人：${esc(o.employee_name || '—')}　差异合计：<b>${fmt((o.items || []).reduce((s, i) => s + Number(i.diff_qty || 0), 0))}</b>　
        备注：${esc(o.remark || '—')}`,
       (o.items || []).length ? `
-      <table><thead><tr><th>序号</th><th>商品</th><th>单位</th><th class="num">账面</th><th class="num">实盘</th>
+      <table><thead><tr><th class="seq">序号</th><th>商品</th><th>单位</th><th class="num">账面</th><th class="num">实盘</th>
         <th class="num">差异</th><th class="num">差异成本</th></tr></thead>
       <tbody>${o.items.map((it, i) => { const d = Number(it.diff_qty || 0);
-        return `<tr><td class="num">${i + 1}</td><td>${esc(it.product_name)}</td><td>${esc(it.base_unit || '—')}</td>
+        return `<tr><td class="num seq">${i + 1}</td><td>${esc(it.product_name)}</td><td>${esc(it.base_unit || '—')}</td>
           <td class="num">${Number(it.book_qty)}</td><td class="num">${Number(it.actual_qty)}</td>
           <td class="num" style="color:${d < 0 ? 'var(--warn)' : d > 0 ? 'var(--ok)' : 'inherit'}">${fmt(d)}</td>
           <td class="num">${it.diff_cost != null ? money(it.diff_cost) : '—'}</td></tr>`; }).join('')}</tbody></table>`
@@ -452,6 +466,74 @@ export async function render(view, opts = {}) {
   view.querySelector('#lsReset').onclick = ls.reset;
 
   let lsPhotoPath = '';
+  view.querySelector('#lsPhotoPick').onclick = () => view.querySelector('#lsPhotoFile').click();
+  // V5.0.3：弹窗选择本机摄像头 / 手机拍摄
+  const openCamera = async () => {
+    let hasCam = false;
+    try {
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      hasCam = devs.some(d => d.kind === 'videoinput');
+    } catch { hasCam = false; }
+    if (!hasCam) return toast('本机未检测到摄像头，请选择「手机拍摄」', false);
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); }
+    catch { return toast('无法调用本机摄像头，请选择「手机拍摄」', false); }
+    const modal = view.querySelector('#camModal');
+    const video = view.querySelector('#camVideo');
+    video.srcObject = stream;
+    modal.style.display = 'flex';
+    const close = () => { stream.getTracks().forEach(t => t.stop()); modal.style.display = 'none'; };
+    view.querySelector('#camCancel').onclick = close;
+    view.querySelector('#camShot').onclick = async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 1280;
+      canvas.height = video.videoHeight || 720;
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      close();
+      view.querySelector('#lsPhotoTip').textContent = '上传中…';
+      try {
+        const d = await must(post('/upload', { image: canvas.toDataURL('image/jpeg', 0.85) }), '照片已拍摄上传');
+        lsPhotoPath = d.path;
+        const prev = view.querySelector('#lsPhotoPrev');
+        prev.src = imgUrl(lsPhotoPath); prev.style.display = '';
+        view.querySelector('#lsPhotoTip').textContent = `已上传：${lsPhotoPath}`;
+      } catch { view.querySelector('#lsPhotoTip').textContent = '上传失败，请重试'; }
+    };
+  };
+  const startMobileShoot = async () => {
+    let token = '';
+    try {
+      const d = await must(post('/inventory/losses/photo-request', {}), '已发送手机拍摄指令（同账号 PWA「消息」页置顶）');
+      token = d.token;
+    } catch { return; }
+    toast('等待手机拍摄回传…可先继续录入明细');
+    const tip = view.querySelector('#lsPhotoTip');
+    tip.textContent = '等待手机拍摄回传…';
+    let tries = 0;
+    const timer = setInterval(async () => {
+      if (++tries > 100 || !view.isConnected) { clearInterval(timer); return; }
+      try {
+        const r = await must(get('/inventory/losses/photo-requests/' + encodeURIComponent(token)));
+        if (r.status === '已上传' && r.filePath) {
+          clearInterval(timer);
+          lsPhotoPath = r.filePath;
+          const prev = view.querySelector('#lsPhotoPrev');
+          prev.src = imgUrl(r.filePath); prev.style.display = '';
+          tip.textContent = '✅ 手机照片已回传：' + r.filePath;
+          toast('📷 报损照片已回传');
+        }
+      } catch { /* 轮询失败继续 */ }
+    }, 3000);
+  };
+  const openShootChoice = () => {
+    const modal = view.querySelector('#shootChoiceModal');
+    modal.style.display = 'flex';
+    const close = () => { modal.style.display = 'none'; };
+    view.querySelector('#shootCancel').onclick = close;
+    view.querySelector('#shootLocal').onclick = () => { close(); openCamera(); };
+    view.querySelector('#shootMobile').onclick = () => { close(); startMobileShoot(); };
+  };
+  view.querySelector('#lsPhotoShoot').onclick = openShootChoice;
   view.querySelector('#lsPhotoFile').onchange = async e => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
@@ -586,11 +668,11 @@ export async function render(view, opts = {}) {
     // V4.9.7 列重排：明细行→总数量 · 创建→制单时间 · 签字移制单时间后 · 状态移签字后 · 数据靠左
     const pg = paginate(rows, lsPage, 10);
     view.querySelector('#lsList').innerHTML = rows.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="lsPrAll" title="全选打印"></th><th>单号</th><th>原因</th><th>总数量</th><th>报损金额</th>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="lsPrAll" title="全选打印" ${pg.slice.length && pg.slice.every(o => lsPrSel.has(Number(o.id))) ? 'checked' : ''}></th><th class="seq">序号</th><th>单号</th><th>原因</th><th>总数量</th><th>报损金额</th>
         <th>经办人</th><th>制单时间</th><th>签字</th><th>状态</th><th style="width:180px">操作</th></tr></thead>
-      <tbody>${pg.slice.map(o => `<tr data-lsrow="${o.id}" style="cursor:pointer" title="双击查看明细（右侧凭证照片）">
+      <tbody>${pg.slice.map((o, i) => `<tr data-lsrow="${o.id}" style="cursor:pointer" title="双击查看明细（右侧凭证照片）">
         <td onclick="event.stopPropagation()"><input type="checkbox" data-lspr="${o.id}" ${lsPrSel.has(Number(o.id)) ? 'checked' : ''} title="勾选批量打印 A5"></td>
-        <td style="font-family:var(--mono);font-weight:600">${esc(o.loss_no)}</td>
+        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td style="font-family:var(--mono);font-weight:600">${esc(o.loss_no)}</td>
         <td>${esc(o.reason_type)}</td><td>${Number(o.total_qty ?? 0)}</td>
         <td style="color:var(--warn)">${money(o.total_cost)}</td>
         <td>${esc(o.employee_name || '')}</td><td>${dt(o.created_at)}</td>
@@ -619,9 +701,9 @@ export async function render(view, opts = {}) {
     if (!o) return;
     const photos = String(o.photo_path || '').split(',').map(x => x.trim()).filter(Boolean);
     const itemsHtml = (o.items || []).length ? `
-      <table><thead><tr><th>序号</th><th>批次号</th><th>商品</th><th>单位</th><th>数量</th><th>成本</th><th>金额</th></tr></thead>
-      <tbody>${o.items.map((it, i) => `<tr><td>${i + 1}</td>
-        <td class="mono">${esc(it.batch_no || '—')}</td><td>${esc(it.product_name)}</td><td>${esc(it.base_unit || '—')}</td>
+      <table><thead><tr><th class="seq">序号</th><th>批次号</th><th>商品</th><th>单位</th><th>数量</th><th>成本</th><th>金额</th></tr></thead>
+      <tbody>${o.items.map((it, i) => `<tr><td class="seq">${i + 1}</td>
+        <td class="mono">${esc(it.batch_no_disp || it.batch_no || '—')}</td><td>${esc(it.product_name)}</td><td>${esc(it.base_unit || '—')}</td>
         <td>${Number(it.qty)}</td>
         <td>${money(it.unit_cost)}</td><td>${money(Number(it.qty) * Number(it.unit_cost))}</td></tr>`).join('')}</tbody></table>`
       : '<div class="empty">无明细</div>';
@@ -677,11 +759,11 @@ export async function render(view, opts = {}) {
     // V4.9.7 列重排：明细行→总数量 · 创建→制单时间 · 签字移制单时间后 · 状态移签字后 · 数据靠左
     const pg = paginate(rows, trPage, 10);
     view.querySelector('#trList').innerHTML = rows.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="trPrAll" title="全选打印"></th><th>单号</th><th>调入</th><th>原因</th><th>总数量</th><th>调拨金额</th>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="trPrAll" title="全选打印" ${pg.slice.length && pg.slice.every(o => trPrSel.has(Number(o.id))) ? 'checked' : ''}></th><th class="seq">序号</th><th>单号</th><th>调入</th><th>原因</th><th>总数量</th><th>调拨金额</th>
         <th>经办人</th><th>制单时间</th><th>签字</th><th>状态</th><th style="width:180px">操作</th></tr></thead>
-      <tbody>${pg.slice.map(o => `<tr data-trrow="${o.id}" style="cursor:pointer" title="双击查看明细">
+      <tbody>${pg.slice.map((o, i) => `<tr data-trrow="${o.id}" style="cursor:pointer" title="双击查看明细">
         <td onclick="event.stopPropagation()"><input type="checkbox" data-trpr="${o.id}" ${trPrSel.has(Number(o.id)) ? 'checked' : ''} title="勾选批量打印 A5"></td>
-        <td style="font-family:var(--mono);font-weight:600">${esc(o.transfer_no)}</td>
+        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td style="font-family:var(--mono);font-weight:600">${esc(o.transfer_no)}</td>
         <td>${esc(o.to_store_name || '本店（店内）')}</td><td>${esc(o.reason || '—')}</td>
         <td>${Number(o.total_qty ?? 0)}</td><td>${money(o.total_cost)}</td>
         <td>${esc(o.employee_name || '')}</td><td>${dt(o.created_at)}</td>
@@ -757,8 +839,8 @@ export async function render(view, opts = {}) {
        状态：<span class="tag ${TAG[o.status] || 'y'}">${esc(o.status)}</span>　金额：<b>${money(o.total_cost)}</b>　
        原因：${esc(o.reason || '—')}`,
       (o.items || []).length ? `
-      <table><thead><tr><th>序号</th><th>批次号</th><th>商品</th><th>单位</th><th>到期</th><th>数量</th><th>成本</th></tr></thead>
-      <tbody>${o.items.map((it, i) => `<tr><td>${i + 1}</td>
+      <table><thead><tr><th class="seq">序号</th><th>批次号</th><th>商品</th><th>单位</th><th>到期</th><th>数量</th><th>成本</th></tr></thead>
+      <tbody>${o.items.map((it, i) => `<tr><td class="seq">${i + 1}</td>
         <td class="mono">${esc(it.batch_no || '—')}</td><td>${esc(it.product_name)}</td><td>${esc(it.base_unit || '—')}</td>
         <td>${it.expiry_date ? String(it.expiry_date).slice(0, 10) : '—'}</td>
         <td>${Number(it.qty)}</td><td>${money(it.unit_cost)}</td></tr>`).join('')}</tbody></table>`

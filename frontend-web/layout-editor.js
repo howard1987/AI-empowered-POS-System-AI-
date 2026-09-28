@@ -281,10 +281,18 @@ export function mountLayoutEditor(container, tpl, fieldPool, hooks = {}) {
     ];
     groups.push(new H.PrintElementTypeGroup('基础元素', base));
     const pool = (fieldPool && fieldPool[bizType]) || [];
-    const fields = pool.map(f => ({
-      tid: 'pos.f.' + f.key, title: f.label, data: sampleVal(f.key), type: 'text',
-      options: { field: f.key, testData: sampleVal(f.key), height: mm2pt(5), fontSize: 6.75, textAlign: 'left', hideTitle: true },
-    }));
+    // V5.0.1：电子签字是图片字段——用 hiprint image 元素绑定 data.signImg（URL），拖入即打印签字图
+    // V5.0.2：左侧字段面板「中文 + 字段英文」对照展示（如 供应商 supplier）
+    const fields = pool.map(f => {
+      const isImg = f.key === 'signImg' || f.key === 'signImgBiz';
+      return isImg ? {
+        tid: 'pos.f.' + f.key, title: `${f.label} ${f.key}`, data: '', type: 'image',
+        options: { field: f.key, testData: '', height: mm2pt(12), hideTitle: true },
+      } : {
+        tid: 'pos.f.' + f.key, title: `${f.label} ${f.key}`, data: sampleVal(f.key), type: 'text',
+        options: { field: f.key, testData: sampleVal(f.key), height: mm2pt(5), fontSize: 6.75, textAlign: 'left', hideTitle: true },
+      };
+    });
     if (isReceipt && !fields.some(f => f.options.field === 'items')) {
       fields.push({ tid: 'pos.f.items', title: '商品明细', data: '（商品明细）', type: 'text',
         options: { field: 'items', testData: '（商品明细）', height: mm2pt(10), fontSize: 7.5, hideTitle: true } });
@@ -328,6 +336,14 @@ export function mountLayoutEditor(container, tpl, fieldPool, hooks = {}) {
       defaultPanelName: '页面',
     });
     hpTpl.design('#leDesign', { grid: state.grid });
+    // V5.0.2：右侧属性面板「确定」兜底——hiprint 对部分元素类型的 submitOption 内部绑定会失效，
+    // 而其 .auto-submit 的 change 路径始终可用：点击「确定」时代为触发一次 change（幂等提交选项）。
+    container.querySelector('#leSetting').addEventListener('click', e => {
+      if (!e.target.classList || !e.target.classList.contains('hiprint-option-item-submitBtn')) return;
+      const inputs = container.querySelectorAll('#leSetting .auto-submit');
+      inputs.forEach(inp => inp.dispatchEvent(new Event('change', { bubbles: true })));
+      if (inputs.length) toast('属性已应用', true);
+    });
     applyScale();
   }
 
@@ -361,7 +377,13 @@ export function mountLayoutEditor(container, tpl, fieldPool, hooks = {}) {
   const customBox = container.querySelector('#leCustom');
   if (isReceipt) customBox.style.display = 'none';
   container.querySelector('#leCApply').onclick = () => {
-    const w = Number(container.querySelector('#leCw').value), h = Number(container.querySelector('#leCh').value);
+    const cw = container.querySelector('#leCw'), ch = container.querySelector('#leCh');
+    let w = Number((cw.value || '').trim()), h = Number((ch.value || '').trim());
+    // 兼容在「宽」框内直接填 "40x30" / "40*30" / "40×30" 整体形式
+    // （浏览器 number 输入框遇非数字会清空，导致 leCh 为空、误报「超出范围」）
+    const m = (cw.value || '').match(/(\d+(?:\.\d+)?)\s*[xX×*]\s*(\d+(?:\.\d+)?)/);
+    if (m) { w = Number(m[1]); h = Number(m[2]); }
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) { toast('请填写纸张宽与高（mm），如 40x30', false); return; }
     if (w >= 15 && w <= 297 && h >= 15 && h <= 500) setPaper(w, h);
     else toast('纸张宽高超出范围（15~297 × 15~500mm）', false);
   };

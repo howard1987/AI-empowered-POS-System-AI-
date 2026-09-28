@@ -28,9 +28,11 @@ export async function render(view) {
           <span style="margin-left:auto;display:flex;gap:8px">
             <button class="btn" id="iReset">删单重录</button>
             <button class="btn pri" id="iSubmit">💾 保存单据</button>
+            <button class="btn pri" id="iSubmitAudit" title="保存后立即审核（关联采购订单全部到齐时订单自动完成）">✓ 保存并审核</button>
           </span>
         </div>
         <div class="doc-head">
+          <div class="fld"><label>采购订单</label><select id="iPo" style="flex:1;min-width:0"><option value="">不关联（自由入库）</option></select></div>
           <div class="fld"><label class="req">供应商</label><input id="iSup" list="iSupDl" placeholder="输入名称快速匹配" style="flex:1;min-width:0">
             <datalist id="iSupDl"></datalist></div>
           <div class="fld"><label>制单人</label><input id="iMaker" value="${esc(API.user?.name || '')}" readonly></div>
@@ -57,15 +59,15 @@ export async function render(view) {
 
     <div id="tab-list">
       <div class="card">
-        <div class="doc-head" style="grid-template-columns:1.5fr 1fr 1.2fr auto;align-items:end">
-          <div class="fld"><label>单据日期</label><span style="display:flex;gap:4px;align-items:center"><input id="qFrom" type="date" value="${monthStart}" style="flex:1;min-width:0"><span style="color:var(--ink-3)">~</span><input id="qTo" type="date" value="${today}" style="flex:1;min-width:0"></span></div>
-          <div class="fld"><label>供应商</label><input id="qSup" placeholder="输入名称快速匹配（留空=全部）" style="min-width:150px"></div>
-          <div class="fld"><label>审核状态</label><span class="seg" id="qStat" style="display:flex;gap:2px;flex-wrap:wrap">
+        <div class="doc-head" style="display:flex;flex-wrap:nowrap;align-items:end;gap:14px">
+          <div class="fld" style="flex:none"><label>单据日期</label><span style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap"><input id="qFrom" type="date" value="${monthStart}" style="flex:1;min-width:0"><span style="color:var(--ink-3)">~</span><input id="qTo" type="date" value="${today}" style="flex:1;min-width:0"></span></div>
+          <div class="fld" style="flex:none"><label>供应商</label><input id="qSup" placeholder="输入名称快速匹配（留空=全部）" style="width:170px"></div>
+          <div class="fld" style="flex:none"><label>审核状态</label><span class="seg" id="qStat" style="display:flex;gap:2px;flex-wrap:nowrap">
             <button class="btn sm segbtn" data-v="未审核">未审核</button>
             <button class="btn sm segbtn" data-v="已审核">已审核</button>
             <button class="btn sm segbtn" data-v="已作废">已作废</button>
             <button class="btn sm segbtn on" data-v="">全部</button></span></div>
-          <div class="fld"><label>&nbsp;</label><span style="display:flex;gap:6px;flex-wrap:wrap">
+          <div class="fld" style="flex:1;min-width:0"><label>&nbsp;</label><span style="display:flex;gap:6px;flex-wrap:nowrap;justify-content:flex-end">
             <button class="btn pri" id="qGo">🔍 查询</button>
             <button class="btn" id="qRefresh">刷新</button>
             <button class="btn" id="qBatch">批量审核</button>
@@ -86,7 +88,7 @@ export async function render(view) {
         <div id="inMeta" style="font-size:12.5px;line-height:1.9;color:var(--ink-2);margin:6px 0 10px"></div>
         <div id="inItems"></div>
         <div class="doc-foot">
-          
+          <span id="inActs" style="display:flex;gap:8px"></span>
           <span style="flex:1"></span>
           <button class="btn" id="inPrint">🖨 打印</button>
         </div>
@@ -176,6 +178,7 @@ export async function render(view) {
     poId = 0; poNo = '';
     view.querySelector('#iQtyHead').textContent = '数量';
     view.querySelector('#iMemo').value = '';
+    view.querySelector('#iPo').value = '';   // V5.0.3：重置关联采购订单选择
     drawLines();
   }
   function restoreDraft() {
@@ -228,7 +231,7 @@ export async function render(view) {
     }
   }
   view.querySelector('#iReset').onclick = () => { draftCache = null; newDoc(); };
-  view.querySelector('#iSubmit').onclick = async () => {
+  async function submitInbound(andAudit) {
     const sid = resolveSupId();
     if (!sid) return toast('请输入并选择供应商', false);
     const items = [];
@@ -248,18 +251,26 @@ export async function render(view) {
         productionDate: l.productionDate || today });
     }
     if (!items.length) return toast('无有效明细行（需定位商品+数量>0）', false);
-    if (items.some(it => !it.productionDate)) return toast('生产日期必填（V4.3.6）', false);
+    if (items.some(it => !it.productionDate)) return toast('生产日期必填', false);
     const d = await must(post('/purchase/inbounds', {
       supplierId: sid,
       ...(poId ? { poId } : {}), items }),
       poId ? `入库单已保存（已回写采购订单 ${poNo} 到货量）` : '入库单已保存（未审核）');
     if (d) {
+      if (andAudit && d.id) {
+        await must(post(`/purchase/inbounds/${d.id}/audit`), poId ? `已审核：采购订单 ${poNo} 到货状态已同步（全部到齐即已完成）` : '审核通过，批次已生成');
+        autoPrintA5AfterAudit('inbound', [d.id]);
+      }
       draftCache = null;
+      poId = 0; poNo = '';
+      view.querySelector('#iPo').value = '';
       showPage('list');
       handleSignInfo(view, d.signInfo, { bizType: 'inbound', bizId: d.id, onDone: loadList });
       await maybeCollectOperatorSigns();   // V4.9.5 操作员签字（≥3 次存签字库）
     }
-  };
+  }
+  view.querySelector('#iSubmit').onclick = () => submitInbound(false);
+  view.querySelector('#iSubmitAudit').onclick = () => submitInbound(true);
 
   /* ── V4.9.5 操作员电子签字：签字库中本人有效签字 <3 → 弹板补采至 3 ── */
   async function operatorSignCount() {
@@ -348,15 +359,18 @@ export async function render(view) {
     const o = d.order || {}, its = d.items || [];
     detailId = Number(id);
     view.querySelector('#inModalTitle').textContent = `入库单 ${o.inbound_no || ''}`;
+    // V5.0.3：首行固定展示 供应商/状态/制单人/日期/大批次/关联采购订单/操作员签字（无数据显示「无」）
     const signImgHtml = o.sign_image_path
-      ? `　操作员签字：<img src="${esc(imgUrl(o.sign_image_path))}" style="height:34px;vertical-align:middle;border:1px dashed var(--line);border-radius:6px;background:#fff">` : '';
+      ? `　操作员签字：<img src="${esc(imgUrl(o.sign_image_path))}" style="height:34px;vertical-align:middle;border:1px dashed var(--line);border-radius:6px;background:#fff">`
+      : '　操作员签字：无';
     view.querySelector('#inMeta').innerHTML = `
-      供应商：<b>${esc(o.supplier_name || '')}</b>　
-      状态：<span class="tag ${o.status === '已审核' ? 'g' : o.status === '已作废' ? 'r' : 'y'}">${esc(o.status || '')}</span>　
-      制单人：${esc(o.maker_name || '—')}　
-      日期：${(o.created_at || '').slice(0, 10)}　
-      大批次：<span class="mono">${esc(o.inbound_no || '—')}</span>（同一张入库单一个大批次）　
-      ${o.po_id ? `关联采购订单：#${o.po_id}` : ''}${signImgHtml}`;
+      供应商：<b>${esc(o.supplier_name || '无')}</b>　
+      状态：<span class="tag ${o.status === '已审核' ? 'g' : o.status === '已作废' ? 'r' : 'y'}">${esc(o.status || '无')}</span>　
+      制单人：${esc(o.maker_name || '无')}　
+      日期：${(o.created_at || '').slice(0, 10) || '无'}　
+      大批次：<span class="mono">${esc(o.inbound_no || '无')}</span>　
+      关联采购订单：${o.po_no ? `<span class="mono">${esc(o.po_no)}</span>` : '无'}
+      ${signImgHtml}`;
     view.querySelector('#inItems').innerHTML = its.length ? `
       <table><thead><tr><th>序号</th><th>条码</th><th>商品</th><th>单位</th><th class="num">数量</th>
         <th class="num">进价</th><th class="num">售价</th><th>生产日期</th><th>批次</th><th class="num">进货金额</th></tr></thead>
@@ -370,6 +384,26 @@ export async function render(view) {
         <td class="mono">${esc(String(it.batch_no || (o.status === '未审核' ? '未审核' : '—')).replace(/-\d{2}$/, ''))}</td>
         <td class="num">${(Number(it.qty) * Number(it.unit_cost)).toFixed(2)}</td></tr>`).join('')}</tbody></table>`
       : '<div class="empty">无明细</div>';
+    // V5.0.3：弹窗内直接审核 / 作废（未审核→审核+作废；其余可审核状态→作废）
+    const acts = [];
+    if (o.status === '未审核') acts.push(`<button class="btn pri" id="inAudit">✓ 审核</button>`);
+    if (o.status && o.status !== '已作废') acts.push(`<button class="btn warn" id="inVoid">✖ 作废</button>`);
+    view.querySelector('#inActs').innerHTML = acts.join('');
+    const auditBtn = view.querySelector('#inAudit');
+    if (auditBtn) auditBtn.onclick = async () => {
+      await must(post(`/purchase/inbounds/${detailId}/audit`), '审核通过，批次已生成');
+      autoPrintA5AfterAudit('inbound', [detailId]);
+      loadList();
+      openDetail(detailId);
+    };
+    const voidBtn = view.querySelector('#inVoid');
+    if (voidBtn) voidBtn.onclick = async () => {
+      if (!confirm('确认作废该入库单？\n已审核单若批次未动用将同步回退库存。')) return;
+      const reason = prompt('作废原因（选填）：') ?? '';
+      await must(post(`/purchase/inbounds/${detailId}/void`, { reason }), '已作废（已审核单批次未动用时库存同步回退）');
+      loadList();
+      openDetail(detailId);
+    };
     inModal.style.display = 'flex';
   }
   // V4.14.2：去除「关闭」文字按钮（右上 ✕ / 遮罩点击关闭）
@@ -492,9 +526,10 @@ export async function render(view) {
   qSupDl.innerHTML = supList.map(s => `<option value="${esc(s.name)}">`).join('');
   view.querySelector('#qSup').setAttribute('list', 'qSupDl7');
   view.querySelector('#qSup').insertAdjacentElement('afterend', qSupDl);
-  if (poId) {
+  /* ── V5.0.3 关联采购订单入库：选「待收」订单（已下单/到货中）→ 自动填供应商与未到货明细 ── */
+  const applyPoPrefill = async (id) => {
     try {
-      const o = await must(get('/purchase/orders/' + poId));
+      const o = await must(get('/purchase/orders/' + id));
       const remaining = (o.items || []).filter(it => Number(it.order_qty) - Number(it.arrived_qty || 0) > 0).map(it => {
         const p = allProducts.find(x => String(x.id) === String(it.product_id)) || null;
         return makeLine({ productId: it.product_id, _p: p, _q: p ? p.barcode || '' : '',
@@ -506,15 +541,39 @@ export async function render(view) {
         view.querySelector('#iSup').value = s ? s.name : '';
       }
       view.querySelector('#iMemo').value = o.remark || '';
-      poNo = o.po_no || '';
+      poId = Number(id); poNo = o.po_no || '';
       view.querySelector('#iQtyHead').textContent = '订购数量';
-      if (remaining.length) { lines.length = 0; lines.push(...remaining); toast(`已按采购订单 ${poNo} 预填 ${remaining.length} 行未到货明细`); }
+      if (remaining.length) { lines.length = 0; lines.push(...remaining); toast(`已按采购订单 ${poNo} 预填 ${remaining.length} 行未到货明细（可修改）`); }
       else toast(`采购订单 ${poNo} 已全部到货，无需再入库`, false);
+      await bindSupplierProducts();
+      drawLines();
     } catch (e) { /* must() 已 toast */ }
-  }
+  };
+  view.querySelector('#iPo').onchange = async e => {
+    const id = Number(e.target.value) || 0;
+    if (!id) { poId = 0; poNo = ''; view.querySelector('#iQtyHead').textContent = '数量'; return; }
+    await applyPoPrefill(id);
+  };
+  (async () => {   // 待收采购订单下拉（已下单 + 到货中）
+    try {
+      const rs = await Promise.all([
+        get('/purchase/orders?status=' + encodeURIComponent('已下单')).catch(() => null),
+        get('/purchase/orders?status=' + encodeURIComponent('到货中')).catch(() => null),
+      ]);
+      const pos = [...((rs[0] && (rs[0].items || rs[0])) || []), ...((rs[1] && (rs[1].items || rs[1])) || [])];
+      view.querySelector('#iPo').innerHTML = '<option value="">不关联（自由入库）</option>' +
+        pos.map(o => `<option value="${o.id}">${esc(o.po_no || ('#' + o.id))} · ${esc(o.supplier_name || '')}</option>`).join('');
+    } catch { /* 下拉加载失败不阻断 */ }
+  })();
   // V4.9.7 进入页面固定落在列表页（草稿仍在，点「＋新增入库单」可恢复编辑）
   newDoc();
+  if (poId) {   // V5.0.3 修复：URL ?po= 预填此前被末尾 newDoc() 清空，现放到 newDoc 之后执行
+    const pid = poId;
+    applyPoPrefill(pid);
+  }
   await bindSupplierProducts();
   drawLines();
   await loadList().catch(() => {});
+  // V5.0.3：缓存页重新可见时重拉列表（审核/作废等状态可能已在别处变化）
+  view.__onShow = () => { if (document.contains(view)) loadList().catch(() => {}); };
 }

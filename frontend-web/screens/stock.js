@@ -2,7 +2,7 @@ import { get, post, put, must, money, esc, dt, toast, unwrap } from '../api.js';
 import { openDetailModal } from '../common-ui.js';
 import { showProductDetail } from './product-detail.js';
 
-/** 库存批次（V4.9.3）：
+/** 库存批次：
  *  · 库存总览：名称/条码/规格/库存/在途/库存金额/下限/保质期/最近到期日/供应商/状态，12 行分页
  *  · 临期预警：处置状态（未处理/处理中/已退换）+ 处置时限 + 超时处罚；已退换商品出库后自动取消
  *  · 批次查询：供应商/单据号/商品ID/名称/条码多条件，点行看详情；命中入库单号可看入库商品情况
@@ -115,10 +115,10 @@ export async function render(view) {
     // 无回显则重绘后变回未勾选，表现为「只能全选、无法取消全选」）
     const sAllChecked = items.length > 0 && items.every(p => poSel.has(Number(p.id)));
     $('#sList').innerHTML = items.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="sChkAll" title="全选/取消全选本页" ${sAllChecked ? 'checked' : ''}></th><th>名称</th><th>条码</th><th>规格</th><th class="num">库存</th><th class="num">在途</th>
+      <table><thead><tr><th class="seq">序号</th><th style="width:34px"><input type="checkbox" id="sChkAll" title="全选/取消全选本页" ${sAllChecked ? 'checked' : ''}></th><th>名称</th><th>条码</th><th>规格</th><th class="num">库存</th><th class="num">在途</th>
         <th class="num">库存金额</th><th class="num">下限</th><th class="num">保质期</th><th>最近到期日</th><th>供应商</th><th>状态</th></tr></thead>
-      <tbody>${items.map(p => `<tr data-prow="${p.id}" style="cursor:pointer" title="双击查看商品明细">
-        <td onclick="event.stopPropagation()"><input type="checkbox" data-spo="${p.id}" data-qty="${Number(p.qty_total)}" data-min="${Number(p.min_stock)}" data-max="${Number(p.max_stock)}" ${poSel.has(Number(p.id)) ? 'checked' : ''}></td>
+      <tbody>${items.map((p, i) => `<tr data-prow="${p.id}" style="cursor:pointer" title="双击查看商品明细">
+        <td class="num seq">${i + 1}</td><td onclick="event.stopPropagation()"><input type="checkbox" data-spo="${p.id}" data-qty="${Number(p.qty_total)}" data-min="${Number(p.min_stock)}" data-max="${Number(p.max_stock)}" ${poSel.has(Number(p.id)) ? 'checked' : ''}></td>
         <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(p.name)}</b></td>
         <td style="font-family:var(--mono)">${esc(p.barcode || '—')}</td>
         <td class="muted">${esc(p.spec || '—')}</td>
@@ -166,11 +166,11 @@ export async function render(view) {
     const { mask, close } = openDetailModal(`🛒 生成订货单（${draft.length} 项商品）`, `
       <div class="muted" style="font-size:12.5px;padding:2px 0 8px">建议数量 = 库存下限 × 2 − 现有库存；进价已自动填充<b>最近一批进价</b>，均可修改；不想订的行取消勾选即可。确认后按供应商自动拆单（草稿），到「采购订单」处理。</div>
       <table><thead><tr>
-        <th style="width:34px"><input type="checkbox" id="spoAll" checked title="全选/取消全选"></th>
+        <th class="seq">序号</th><th style="width:34px"><input type="checkbox" id="spoAll" checked title="全选/取消全选"></th>
         <th>商品</th><th>规格</th><th>供应商</th><th class="num">现有库存</th><th class="num">下限</th>
         <th class="num" style="width:110px">订货数量</th><th class="num" style="width:120px">进价（元）</th><th class="num">小计</th></tr></thead>
       <tbody id="spoBody">${draft.map((d, ix) => `<tr data-ix="${ix}">
-        <td><input type="checkbox" class="spo-chk" data-ix="${ix}" checked></td>
+        <td class="num seq">${ix + 1}</td><td><input type="checkbox" class="spo-chk" data-ix="${ix}" checked></td>
         <td><b>${esc(d.name)}</b></td><td class="muted">${esc(d.spec)}</td><td class="muted">${esc(d.supplier)}</td>
         <td class="num">${d.stock}</td><td class="num">${d.min}</td>
         <td class="num"><input type="number" class="spo-qty" data-ix="${ix}" min="1" step="1" value="${d.qty}" style="width:88px;text-align:right;padding:3px 6px"></td>
@@ -248,7 +248,7 @@ export async function render(view) {
   $('#sJump').addEventListener('change', jumpPage);
 
   /* ═══════════ 临期预警（处置闭环） ═══════════ */
-  // 处置时限设置读取/保存（V4.9.7 单位改「天」，内部仍存小时）
+  // 处置时限设置读取/保存
   (async () => {
     try {
       const st = await must(get('/settings'));
@@ -270,9 +270,9 @@ export async function render(view) {
     const rows2 = await must(get('/inventory/expiry-alerts')).catch(() => []);
     const arr = Array.isArray(rows2) ? rows2 : (rows2.items || []);
     $('#sExp').innerHTML = arr.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="expAll" title="全选可退批次"></th><th>名称</th><th>条码</th><th class="num">数量</th><th>到期日期</th><th class="num">剩余天数</th>
+      <table><thead><tr><th class="seq">序号</th><th style="width:34px"><input type="checkbox" id="expAll" title="全选可退批次"></th><th>名称</th><th>条码</th><th class="num">数量</th><th>到期日期</th><th class="num">剩余天数</th>
         <th>供应商</th><th>处置状态</th><th>处置时限</th><th style="width:190px">操作</th></tr></thead>
-      <tbody>${arr.map(b => {
+      <tbody>${arr.map((b, i) => {
         const stTag = b.disposal_status === '已退换' ? '<span class="tag g">已退/换货</span>'
           : b.disposal_status === '处理中' ? '<span class="tag b">处理中</span>'
           : '<span class="tag r">未处理</span>';
@@ -280,7 +280,7 @@ export async function render(view) {
         const overdue = b.penalized && b.disposal_status !== '已退换';
         const inDoc = b.return_doc_no ? `<div class="muted" style="font-size:11px">关联单：${esc(b.return_doc_no)}${b.handler_name ? ' · ' + esc(b.handler_name) : ''}</div>` : '';
         const canPick = b.disposal_status !== '已退换';
-        return `<tr>
+        return `<tr><td class="num seq">${i + 1}</td>
         <td>${canPick ? `<input type="checkbox" class="expPick" data-bid="${b.batch_id}">` : ''}</td>
         <td style="max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(b.product_name)}</b></td>
         <td style="font-family:var(--mono)">${esc(b.barcode || '—')}</td>
@@ -298,7 +298,13 @@ export async function render(view) {
       <div class="muted" style="padding:8px 12px 10px;font-size:11.5px">处置流程：店长/店员在移动端「工作台 ▸ 临期预警」或此页处置；<b>退/换货流程完成（退货已审核 / 换货已入库）= 处置到位</b>；超过处置时限未到位记处罚标记。已退/换货的商品在剩余天数归零、批次出库后自动取消预警；退货单审核通过时自动联动标记到位。勾选批次后点「一键转退货」= 整批全退生成供应商退货单（待审核，凭证补传后审核、审核通过自动扣库存并标记到位）。</div>`
       : '<div class="empty">无临期批次</div>';
     const all = $('#expAll');
-    if (all) all.onchange = () => view.querySelectorAll('.expPick').forEach(c => { c.checked = all.checked; });
+    if (all) {
+      all.onchange = () => view.querySelectorAll('.expPick').forEach(c => { c.checked = all.checked; });
+      // V5.0.3：批次勾选变化时同步表头全选框（部分取消 → 表头自动取消勾选，可再次全选/取消全选）
+      view.querySelectorAll('.expPick').forEach(c => c.onchange = () => {
+        all.checked = view.querySelectorAll('.expPick').length > 0 && [...view.querySelectorAll('.expPick')].every(x => x.checked);
+      });
+    }
     $('#expReturn').onclick = async () => {
       const bids = [...view.querySelectorAll('.expPick:checked')].map(c => Number(c.dataset.bid));
       if (!bids.length) { toast('请先勾选要转退货的批次'); return; }
@@ -346,10 +352,10 @@ export async function render(view) {
       </div>` : '';
     if (doc0) $('#bDocOpen').onclick = () => openInbound(doc0.id);
     $('#sBatch').innerHTML = items.length ? `
-      <table><thead><tr><th>批次号</th><th>商品</th><th>供应商</th><th>入库单号</th><th>入库日</th><th>到期日</th>
+      <table><thead><tr><th class="seq">序号</th><th>批次号</th><th>商品</th><th>供应商</th><th>入库单号</th><th>入库日</th><th>到期日</th>
         <th class="num">剩余</th><th class="num">进价</th><th>状态</th></tr></thead>
-      <tbody>${items.map(b => `<tr data-batch="${b.id}" style="cursor:pointer" title="点击查看批次详情">
-        <td style="font-family:var(--mono)">${esc(b.batch_no)}</td>
+      <tbody>${items.map((b, i) => `<tr data-batch="${b.id}" style="cursor:pointer" title="点击查看批次详情">
+        <td class="num seq">${i + 1}</td><td style="font-family:var(--mono)">${esc(b.batch_no)}</td>
         <td>${esc(b.product_name)}${b.product_barcode ? ` <span class="muted mono" style="font-size:11px">${esc(b.product_barcode)}</span>` : ''}</td>
         <td class="muted">${esc(b.supplier_name || '—')}</td>
         <td class="muted mono">${esc(b.inbound_no || '—')}</td>
@@ -393,8 +399,8 @@ export async function render(view) {
          制单人：${esc(o.maker_name || '—')}　日期：${String(o.inbound_date || o.created_at || '').slice(0, 10)}　
          金额：<b>${money(o.total_amount)}</b>`,
         (d.items || []).length ? `
-        <table><thead><tr><th>序号</th><th>商品</th><th>单位</th><th>批次号</th><th class="num">数量</th><th class="num">进价</th><th class="num">金额</th></tr></thead>
-        <tbody>${d.items.map((it, i) => `<tr><td class="num">${i + 1}</td><td>${esc(it.product_name)}</td><td>${esc(it.base_unit || '—')}</td>
+        <table><thead><tr><th class="seq">序号</th><th>商品</th><th>单位</th><th>批次号</th><th class="num">数量</th><th class="num">进价</th><th class="num">金额</th></tr></thead>
+        <tbody>${d.items.map((it, i) => `<tr><td class="num seq">${i + 1}</td><td>${esc(it.product_name)}</td><td>${esc(it.base_unit || '—')}</td>
           <td class="mono">${esc(it.batch_no || '—')}</td><td class="num">${Number(it.qty)}</td>
           <td class="num">${money(it.unit_cost ?? it.price)}</td><td class="num">${money((Number(it.qty) || 0) * Number(it.unit_cost ?? it.price ?? 0))}</td></tr>`).join('')}</tbody></table>`
         : '<div class="empty">无明细</div>');
@@ -403,4 +409,7 @@ export async function render(view) {
 
   $('#sExp').innerHTML = '<div class="empty">加载中…</div>';
   await Promise.all([list(), loadExp()]);
+  // V5.0.3：页面缓存复用——再次进入本屏时自动重拉库存总览与临期预警，
+  // 保证商品档案/销售/报损导致的批次与库存变化（含「最近到期日」随剩余量推移）即时可见
+  view.__onShow = () => { if (document.contains(view)) { list().catch(() => {}); loadExp().catch(() => {}); } };
 }

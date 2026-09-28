@@ -23,7 +23,8 @@ export class AiSignatureController {
     const image = String(b.image || '').replace(/^data:image\/(png|jpeg|jpg);base64,/, '');
     if (!image) throw new BizException(40003, '请上传签字图片');
     const llmOn = Boolean(await getSetting('ai.llm.enabled', false));
-    if (!llmOn) return { name: '', note: '本地大模型未启用，请手工填写姓名' };
+    // V5.0.1：提示具体怎么开启（老板反馈 #13「AI识别提示识别服务不可达」不知如何处理）
+    if (!llmOn) return { name: '', note: '本地大模型未启用：请先安装并启动 Ollama（ollama.com，命令行 ollama serve），再在 系统设置→AI赋能 打开「本地大模型」开关；当前请手工填写姓名' };
     const base = String(await getSetting('ai.llm.base', DEFAULT_BASE)).replace(/\/$/, '');
     const model = String(await getSetting('ai.ocr.vl_model', DEFAULT_OCR_MODEL));
     try {
@@ -36,12 +37,12 @@ export class AiSignatureController {
           images: [image], stream: false,
         }),
       });
-      if (!res.ok) return { name: '', note: `识别服务 HTTP ${res.status}，请手工填写` };
+      if (!res.ok) return { name: '', note: `识别服务 HTTP ${res.status}（${base}），请手工填写或检查 Ollama` };
       const j: any = await res.json().catch((): any => null);
       const name = (String(j?.response || '').match(/[\u4e00-\u9fa5]/g) || []).join('').slice(0, 4);
       return { name, note: name ? '' : '未能辨认，请手工填写' };
     } catch {
-      return { name: '', note: '识别服务不可达，请手工填写' };
+      return { name: '', note: `识别服务不可达（${base}）：请确认 Ollama 正在运行（ollama serve）且已拉取 ${String(await getSetting('ai.ocr.vl_model', DEFAULT_OCR_MODEL))} 模型；当前可手工填写` };
     }
   }
 }

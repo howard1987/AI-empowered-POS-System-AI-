@@ -173,14 +173,14 @@ export async function render(view) {
     const items = d.items || [];
     host.innerHTML = `<table><thead><tr>
       <th>门店</th><th>单量</th><th>销售额</th><th>成本</th><th>毛利</th><th>毛利率</th><th>客单价</th></tr></thead><tbody>
-      <tr style="font-weight:600;background:var(--paper2,#faf7ef)">
-        <td class="hr-l">合计</td><td>${d.total?.orderCount ?? 0}</td><td>${gm(d.total?.salesTotal)}</td>
-        <td>${gm(d.total?.costTotal)}</td><td>${gm(d.total?.profitTotal)}</td>
-        <td>${d.total?.margin ?? 0}%</td><td>${d.total?.orderCount > 0 ? gm(d.total.salesTotal / d.total.orderCount) : '—'}</td></tr>
       ${items.map(x => `<tr>
         <td class="hr-l">${esc(x.store_name)}</td><td>${x.orderCount}</td>
         <td>${gm(x.salesTotal)}</td><td>${gm(x.costTotal)}</td><td>${gm(x.profitTotal)}</td>
         <td>${x.margin}%</td><td>${gm(x.avgTicket)}</td></tr>`).join('')}
+      <tr style="font-weight:600;background:var(--paper2,#faf7ef)">
+        <td class="hr-l">合计</td><td>${d.total?.orderCount ?? 0}</td><td>${gm(d.total?.salesTotal)}</td>
+        <td>${gm(d.total?.costTotal)}</td><td>${gm(d.total?.profitTotal)}</td>
+        <td>${d.total?.margin ?? 0}%</td><td>${d.total?.orderCount > 0 ? gm(d.total.salesTotal / d.total.orderCount) : '—'}</td></tr>
       </tbody></table>`;
     $('#hrCount').textContent = `${from} ~ ${to} · ${items.length} 店`;
   }
@@ -194,7 +194,7 @@ export async function render(view) {
     host.innerHTML = `<table><thead><tr>
       <th>排名</th><th>门店</th><th>销售额</th><th style="width:150px">占比条形</th><th>单量</th><th>环比涨跌</th></tr></thead><tbody>
       ${items.map((x, i) => `<tr>
-        <td>${i + 1}</td><td class="hr-l">${esc(x.store_name)}</td>
+        <td class="seq">${i + 1}</td><td class="hr-l">${esc(x.store_name)}</td>
         <td>${gm(x.cur_sales)}</td><td>${bar(x.cur_sales, max)}</td>
         <td>${x.cur_orders}</td>
         <td class="${pctCls(x.growth)}">${Number(x.growth) > 0 ? '▲' : Number(x.growth) < 0 ? '▼' : '—'} ${Math.abs(Number(x.growth))}%</td></tr>`).join('')}
@@ -225,15 +225,15 @@ export async function render(view) {
     const max = Math.max(...items.map(x => Number(x.sales_total)), 1);
     host.innerHTML = `<table><thead><tr>
       <th>区域</th><th>门店数</th><th>单量</th><th>销售额</th><th style="width:150px">占比条形</th><th>毛利</th><th>毛利率</th><th>环比涨跌</th></tr></thead><tbody>
-      <tr style="font-weight:600;background:var(--paper2,#faf7ef)">
-        <td class="hr-l">合计</td><td>${d.total?.store_count ?? 0}</td><td>${d.total?.order_count ?? 0}</td>
-        <td>${gm(d.total?.sales_total)}</td><td></td><td>${gm(d.total?.profit_total)}</td>
-        <td>${d.total?.margin ?? 0}%</td><td></td></tr>
       ${items.map(x => `<tr>
         <td class="hr-l"><b>${esc(x.region)}</b></td><td>${x.store_count}</td><td>${x.order_count}</td>
         <td>${gm(x.sales_total)}</td><td>${bar(x.sales_total, max)}</td><td>${gm(x.profit_total)}</td>
         <td>${x.margin}%</td>
         <td class="${pctCls(x.growth)}">${Number(x.growth) > 0 ? '▲' : Number(x.growth) < 0 ? '▼' : '—'} ${Math.abs(Number(x.growth))}%</td></tr>`).join('')}
+      <tr style="font-weight:600;background:var(--paper2,#faf7ef)">
+        <td class="hr-l">合计</td><td>${d.total?.store_count ?? 0}</td><td>${d.total?.order_count ?? 0}</td>
+        <td>${gm(d.total?.sales_total)}</td><td></td><td>${gm(d.total?.profit_total)}</td>
+        <td>${d.total?.margin ?? 0}%</td><td></td></tr>
       </tbody></table>`;
     $('#hrCount').textContent = `${from} ~ ${to} · ${items.length} 个区域（环比 ${d.prevFrom}~${d.prevTo}）`;
   }
@@ -248,10 +248,102 @@ export async function render(view) {
       ${items.map(x => `<tr>
         <td class="hr-l">${esc(x.store_name)}</td><td>${x.sku_count}</td><td>${gm(x.stock_value)}</td>
         <td class="${Number(x.expiring_count) > 0 ? 'up' : ''}">${x.expiring_count}</td>
-        <td class="${Number(x.low_count) > 0 ? 'up' : ''}">${x.low_count}</td>
-        <td class="${Number(x.negative_qty) < 0 ? 'up' : ''}">${Number(x.negative_qty) || '—'}</td></tr>`).join('')}
+        <td class="${Number(x.low_count) > 0 ? 'up' : ''}">${Number(x.low_count) > 0
+          ? `<button class="btn sm" data-drill="${x.store_id}" data-mode="low" data-sname="${esc(x.store_name)}" style="padding:1px 10px">${x.low_count}</button>` : x.low_count}</td>
+        <td class="${Number(x.negative_qty) < 0 ? 'up' : ''}">${Number(x.negative_qty) < 0
+          ? `<button class="btn sm" data-drill="${x.store_id}" data-mode="negative" data-sname="${esc(x.store_name)}" style="padding:1px 10px">${Number(x.negative_qty)}</button>` : (Number(x.negative_qty) || '—')}</td></tr>`).join('')}
       </tbody></table>`;
     $('#hrCount').textContent = `${items.length} 店`;
+    // V5.0.1：低库存/负库存数字点击 → 商品明细弹窗（支持一键进货申请/一键调拨申请）
+    $('#hrHost').querySelectorAll('[data-drill]').forEach(b => {
+      b.onclick = () => openAbnormal(Number(b.dataset.drill), b.dataset.mode, b.dataset.sname);
+    });
+  }
+
+  /** V5.0.1：异常库存商品明细 + 一键进货申请（订货申请自动分供应商）+ 一键调拨申请（自动选源店） */
+  async function openAbnormal(storeId, mode, storeName) {
+    const d = await must(get(`/inventory/abnormal?storeId=${storeId}&mode=${mode}`));
+    const items = d.items || [];
+    const mask = document.createElement('div');
+    mask.className = 'modal-mask';
+    const suggest = it => Math.max(1, Math.round(Number(it.min_stock) * 2 - Number(it.qty_total)));
+    mask.innerHTML = `<div class="modal" style="width:900px;height:min(84vh,780px);display:flex;flex-direction:column">
+      <h3 style="flex:none">${mode === 'negative' ? '⚠️ 负库存' : '📉 低库存'}商品明细 · ${esc(storeName || ('门店 ' + storeId))}
+        <span class="muted" style="font-size:12px;font-weight:400">共 ${items.length} 个</span></h3>
+      <div style="flex:1;overflow:auto">
+        ${items.length ? `<table><thead><tr><th style="width:30px"></th><th>商品</th><th>条码</th>
+          <th class="num">现有</th><th class="num">下限</th><th class="num">在途</th><th class="num">建议补货量</th><th>供应商</th></tr></thead>
+        <tbody>${items.map(it => `<tr>
+          <td><input type="checkbox" class="abChk" data-pid="${it.product_id}" data-name="${esc(it.name)}" data-qty="${it.qty_total}"></td>
+          <td><b>${esc(it.name)}</b></td><td class="muted" style="font-family:var(--mono)">${esc(it.barcode || '—')}</td>
+          <td class="num" style="color:${Number(it.qty_total) < 0 ? '#c0392b' : 'inherit'};font-weight:700">${it.qty_total}</td>
+          <td class="num">${it.min_stock}</td><td class="num">${it.qty_on_order || '—'}</td>
+          <td class="num"><input type="number" class="abQty" data-pid="${it.product_id}" min="1" step="1" value="${suggest(it)}" style="width:76px"></td>
+          <td class="muted">${esc(it.supplier_name || '未设默认供应商')}</td></tr>`).join('')}</tbody></table>`
+        : '<div class="empty">没有符合条件的商品</div>'}
+      </div>
+      <div class="bar" style="flex:none;margin-top:10px;justify-content:flex-end;flex-wrap:wrap">
+        <span class="muted" style="margin-right:auto;font-size:11.5px">勾选商品后操作；建议补货量=下限×2−现有（可改）。调拨自动选择库存最足的源店并生成调拨单（信息随单下行到对应门店）。</span>
+        <button class="btn pri" id="abPo">🛒 一键进货申请</button>
+        <button class="btn" id="abTr">🔁 一键调拨申请</button>
+        <button class="btn ghost" id="abClose">关闭</button>
+      </div></div>`;
+    document.body.appendChild(mask);
+    mask.onclick = e => { if (e.target === mask) mask.remove(); };
+    const $ = s => mask.querySelector(s);
+    const picked = () => [...mask.querySelectorAll('.abChk:checked')].map(cb => {
+      const pid = Number(cb.dataset.pid);
+      const qty = Number(mask.querySelector(`.abQty[data-pid="${pid}"]`)?.value) || suggest(items.find(i => Number(i.product_id) === pid));
+      return { pid, name: cb.dataset.name, qty };
+    });
+    $('#abClose').onclick = () => mask.remove();
+    $('#abPo').onclick = async () => {
+      const sel = picked();
+      if (!sel.length) return toast('请先勾选商品', false);
+      try {
+        await must(post('/purchase/orders', {
+          items: sel.map(x => ({ productId: x.pid, orderQty: x.qty })),
+          source: '订货申请', remark: `门店报表钻取一键进货（${storeName || ''}）`,
+        }), '进货申请已生成（按默认供应商自动分单，待审核）');
+        mask.remove();
+      } catch { /* toast 已提示 */ }
+    };
+    $('#abTr').onclick = async () => {
+      const sel = picked();
+      if (!sel.length) return toast('请先勾选商品', false);
+      try {
+        // 每个商品自动选源店：其他门店/总部中可用库存最多者；不足部分提示走进货
+        const plan = new Map();   // fromStoreId -> [{productId, qty, name}]
+        const lacks = [];
+        for (const x of sel) {
+          const cross = await must(get(`/inventory/cross-store?productId=${x.pid}`)).catch(() => []);
+          const srcs = (cross || []).filter(r => Number(r.store_id) !== Number(storeId) && Number(r.qty) > 0)
+            .sort((a, b) => Number(b.qty) - Number(a.qty));
+          let need = x.qty;
+          for (const s of srcs) {
+            if (need <= 0) break;
+            const take = Math.min(need, Number(s.qty));
+            const arr = plan.get(Number(s.store_id)) || [];
+            arr.push({ productId: x.pid, qty: take, name: x.name });
+            plan.set(Number(s.store_id), arr);
+            need -= take;
+          }
+          if (need > 0) lacks.push(`${x.name} 还缺 ${need}（各店库存不足，请走进货）`);
+        }
+        if (!plan.size) { toast('勾选商品在其他门店/总部均无可用库存，请使用「一键进货申请」', false); return; }
+        let made = 0;
+        for (const [fromStoreId, arr] of plan) {
+          await must(post('/inventory/transfers', {
+            fromStoreId, toStoreId: storeId,
+            items: arr.map(x => ({ productId: x.productId, qty: x.qty })),
+            reason: `低库存自动调拨（${storeName || ''}）`,
+          }));
+          made++;
+        }
+        toast(`已生成 ${made} 张调拨单（自动选源店并通知对方门店）${lacks.length ? '；' + lacks.join('；') : ''}`, !lacks.length);
+        mask.remove();
+      } catch { /* toast 已提示 */ }
+    };
   }
 
   function drawTransit() {
@@ -348,9 +440,9 @@ export async function render(view) {
     const items = d.items || [];
     if (!items.length) { host.innerHTML = noResult('区间内没有跨店消费会员'); $('#hrCount').textContent = ''; return; }
     host.innerHTML = `<table><thead><tr>
-      <th>会员</th><th>卡号</th><th>活跃店数</th><th>累计消费</th><th>跨店扣款笔数</th><th>跨店扣款额</th></tr></thead><tbody>
-      ${items.map(x => `<tr>
-        <td class="hr-l">${esc(x.name || '—')}</td><td>${esc(x.card_no)}</td>
+      <th class="seq">序号</th><th>会员</th><th>卡号</th><th>活跃店数</th><th>累计消费</th><th>跨店扣款笔数</th><th>跨店扣款额</th></tr></thead><tbody>
+      ${items.map((x, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td class="hr-l">${esc(x.name || '—')}</td><td>${esc(x.card_no)}</td>
         <td class="${Number(x.active_stores) > 1 ? 'up' : ''}">${x.active_stores}</td>
         <td>${gm(x.total_spend)}</td><td>${x.cross_flows}</td><td>${gm(x.cross_debit)}</td></tr>`).join('')}
       </tbody></table>`;
@@ -363,10 +455,10 @@ export async function render(view) {
     if (d.error) { host.innerHTML = noResult('加载失败', esc(d.error)); return; }
     const items = d.items || [];
     host.innerHTML = `<table><thead><tr>
-      <th>门店</th><th>节点</th><th>节点状态</th><th>待传</th><th>失败</th><th>死信</th><th>末次推送</th><th>末次上报</th></tr></thead><tbody>
-      ${items.map(x => `<tr>
-        <td class="hr-l">${esc(x.store_name)}</td><td>${esc(x.node_code || '—')}</td>
-        <td class="${x.node_status === '启用' ? 'down' : 'up'}">${esc(x.node_status || '未注册')}</td>
+      <th class="seq">序号</th><th>门店</th><th>节点</th><th>节点状态</th><th>待传</th><th>失败</th><th>死信</th><th>末次推送</th><th>末次上报</th></tr></thead><tbody>
+      ${items.map((x, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td class="hr-l">${esc(x.store_name)}</td><td>${esc(x.node_code || '—')}</td>
+        <td class="${x.node_status === '启用' ? 'down' : 'up'}" title="${x.node_status ? '' : '该门店尚未在总部注册连锁同步节点：未分配节点编码，仅独立运行，不参与总部数据同步。可在「门店管理」编辑该店完成节点接入。'}">${esc(x.node_status || '未注册')}</td>
         <td class="${Number(x.pending_count) > 50 ? 'up' : ''}">${x.pending_count}</td>
         <td class="${Number(x.failed_count) > 0 ? 'up' : ''}">${x.failed_count}</td>
         <td class="${Number(x.dead_count) > 0 ? 'up' : ''}">${x.dead_count}</td>

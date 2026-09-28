@@ -568,7 +568,8 @@ export async function render(view) {
     ],
     '商品管理': [
       { title: '商品与保质期', prefixes: ['product.', 'stock.expiry'] },
-      { title: '库存与退货', prefixes: ['stock.'] },
+      { title: '库存与退货', prefixes: ['stock.return', 'stock.transfer', 'stock.negative', 'stock.inbound'] },
+      { title: '库存与报损', prefixes: ['stock.loss.'] },
       { title: '采购与结算', prefixes: ['po.', 'recon.'] },
       { title: '条码大数据', prefixes: ['barcode.'] },
     ],
@@ -935,8 +936,9 @@ export async function render(view) {
     } catch { toast('门店列表获取失败（需总部身份）', false); return; }
     if (!stores.length) { toast('没有营业中的门店可下发', false); return; }
     const curVal = row.value === null || row.value === undefined ? '' : (typeof row.value === 'object' ? JSON.stringify(row.value) : String(row.value));
-    const m = openDetailModal(`⤓ 下发设置：${esc(row.display_name)}`, `
+    const m = openDetailModal(`⤓ 下发设置`, `
       <div style="display:flex;flex-direction:column;gap:12px;padding:6px 10px 14px">
+        <div><div class="muted" style="margin-bottom:4px">设置项</div><b>${esc(row.display_name)}</b></div>
         <div><div class="muted" style="margin-bottom:4px">键</div><code class="set-key">${esc(key)}</code></div>
         <div><div class="muted" style="margin-bottom:4px">下发的值（可改）</div>
           <input id="psVal" class="inp" style="width:100%" value="${esc(curVal)}"></div>
@@ -981,7 +983,7 @@ export async function render(view) {
     };
   }
 
-  // ── 变更留痕：每页 10 条翻页 + 日期/操作人过滤（V4.14.0 ST2）──
+  // ── 变更留痕：每页 10 条翻页 + 日期/操作人过滤──
   /** 把设置键翻译成 display_name（人话），回退显示原键 */
   const keyName = k => allRowsCache.find(s => s.setting_key === k)?.display_name || k;
   /** 变更值中文展示：布尔→开/关、空→空、对象→JSON 摘要、字符串去外层引号 */
@@ -1047,7 +1049,7 @@ export async function render(view) {
     loadChanges(1);
   };
 
-  // ── 设置项搜索（V4.14.0 ST1：名称/键/当前值模糊，即输即查，跨分组） ──
+  // ── 设置项搜索 ──
   view.querySelector('#setKw').addEventListener('input', applyFilters);
   view.querySelector('#setKwClear').onclick = () => {
     view.querySelector('#setKw').value = '';
@@ -1132,7 +1134,7 @@ export async function render(view) {
     tip.title = '提示：默认地址是管理后台连的后端；会员手机要能访问，请改成局域网/外网可达的地址（如 https://门店IP:3443/member/）';
   }
 
-  /* ── V4.14.5 开业初始化一键执行（V4.14.0 遗留#3：接 V4.12 admin.reset）
+  /* ── V4.14.5 开业初始化一键执行
      V4.14.8：仅「系统初始化」页签显示，排在「设置项」下
      V4.16.4：状态变量上移到 render 顶部声明区（原在此处声明，79/530 行先于声明调用触发 TDZ 报错） ── */
   function syncInitCard() {

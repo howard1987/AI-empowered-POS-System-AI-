@@ -122,6 +122,7 @@ export async function render(view) {
 
   /* ── 触达记录 ── */
   const TYPE_ICON = { birthday: '🎂', expiry: '⏳', dividend: '💰', dormant: '💤', low_balance: '🪫', guest_convert: '🎯', receivable: '📣' };
+  const mkSel = new Set();   // V5.0.2：触达批量勾选（跨翻页保留，批量处理/忽略后清除）
   const loadTouches = async () => {
     const kw = $('#mkKw').value.trim();
     const r = await must(get(`/marketing/touches?type=${$('#mkType').value}&status=${$('#mkStatus').value}&keyword=${encodeURIComponent(kw)}&page=${state.page}`));
@@ -135,19 +136,32 @@ export async function render(view) {
     $('#mkNext').disabled = state.page >= mkPages;
     if (!r.items.length) { $('#mkBody').innerHTML = '<div class="empty">暂无触达记录（可点规则卡片「⚡ 执行」立即生成）</div>'; return; }
     $('#mkBody').innerHTML = `
+      <div class="bar" style="margin-bottom:6px">
+        <button class="btn sm" id="mkBatDone" style="display:none">✓ 批量已处理 (<b>0</b>)</button>
+        <button class="btn sm ghost" id="mkBatIgn" style="display:none">忽略 (<b>0</b>)</button>
+        <span class="muted" style="font-size:12px" id="mkSelN"></span>
+      </div>
       <table class="tbl">
-        <thead><tr><th>时间</th><th>类型</th><th>对象</th><th>内容</th><th>状态</th><th style="width:150px">操作</th></tr></thead>
-        <tbody>${r.items.map(t => {
+        <thead><tr><th style="width:30px"><input type="checkbox" id="mkChkAll" title="全选/取消全选本页" ${r.items.length && r.items.every(t => mkSel.has(Number(t.id))) ? 'checked' : ''}></th><th class="seq">序号</th><th>时间</th><th>类型</th><th>对象</th><th>内容</th><th>状态</th><th style="width:150px">操作</th></tr></thead>
+        <tbody>${r.items.map((t, i) => {
           const obj = t.member_name ? `👤 ${esc(t.member_name)}${t.phone ? ' · ' + esc(t.phone) : ''}`
             : t.product_name ? `📦 ${esc(t.product_name)}` : '—';
           const stCls = t.status === '待处理' ? 'o' : t.status === '已处理' ? 'g' : '';
+          // V5.0.1：大客户催收触达 → 直接「去收款」，打通提醒→回款闭环（与「大客户与团购」收款同接口）
+          let rcv = null;
+          if (t.touch_type === 'receivable' && t.payload) {
+            try { rcv = typeof t.payload === 'string' ? JSON.parse(t.payload) : t.payload; } catch { /* payload 异常忽略 */ }
+          }
+          const obj2 = rcv?.customerName ? `🤝 ${esc(rcv.customerName)}${rcv.phone ? ' · ' + esc(rcv.phone) : ''}` : obj;
           return `<tr>
-            <td style="white-space:nowrap;color:var(--ink-3);font-size:12px">${dt(t.created_at)}</td>
+            <td><input type="checkbox" class="mk-chk" data-id="${t.id}" ${mkSel.has(t.id) ? 'checked' : ''}></td>
+            <td class="num seq">${i + 1}</td><td style="white-space:nowrap;color:var(--ink-3);font-size:12px">${dt(t.created_at)}</td>
             <td><span class="badge ${RULE_META[t.touch_type]?.cls || ''}">${TYPE_ICON[t.touch_type] || '🎯'} ${RULE_META[t.touch_type]?.label || t.touch_type}</span></td>
-            <td style="white-space:nowrap">${obj}</td>
+            <td style="white-space:nowrap">${obj2}</td>
             <td style="max-width:420px"><b>${esc(t.title)}</b><div class="muted" style="font-size:11.5px">${esc(t.content)}</div></td>
             <td><span class="pill ${stCls}">${t.status}</span></td>
             <td>${t.status === '待处理' ? `
+              ${rcv?.customerId ? `<button class="btn sm pri" data-gocollect="${t.id}">💰 去收款</button>` : ''}
               <button class="btn sm" data-done="${t.id}">✓ 已处理</button>
               <button class="btn sm" data-ign="${t.id}">忽略</button>` : '<span class="muted">—</span>'}</td>
           </tr>`;
@@ -155,7 +169,71 @@ export async function render(view) {
       </table>`;
     $('#mkBody').querySelectorAll('[data-done]').forEach(b => b.onclick = () => setStatus(b.dataset.done, '已处理'));
     $('#mkBody').querySelectorAll('[data-ign]').forEach(b => b.onclick = () => setStatus(b.dataset.ign, '已忽略'));
+    // V5.0.2：批量勾选（处理/忽略）
+    const syncSel = () => {
+      const n = mkSel.size;
+      const d1 = $('#mkBatDone'), d2 = $('#mkBatIgn');
+      if (d1) { d1.style.display = n ? '' : 'none'; d1.querySelector('b').textContent = String(n); }
+      if (d2) { d2.style.display = n ? '' : 'none'; d2.querySelector('b').textContent = String(n); }
+      const sn = $('#mkSelN'); if (sn) sn.textContent = n ? `已选 ${n} 条` : '';
+    };
+    syncSel();
+    $('#mkBody').querySelectorAll('.mk-chk').forEach(cb => cb.onchange = () => {
+      const id = Number(cb.dataset.id);
+      if (cb.checked) mkSel.add(id); else mkSel.delete(id);
+      syncSel();
+    });
+    const chkAll = $('#mkChkAll');
+    if (chkAll) chkAll.onchange = () => { r.items.forEach(t => { if (chkAll.checked) mkSel.add(t.id); else mkSel.delete(t.id); }); loadTouches(); };
+    const bat = async status => {
+      const ids = [...mkSel]; if (!ids.length) return;
+      let ok = 0; const errs = [];
+      for (const id of ids) {
+        try { await must(post(`/marketing/touches/${id}/status`, { status })); mkSel.delete(id); ok++; }
+        catch (e) { errs.push(e.msg || e.message || '未知错误'); }
+      }
+      toast(errs.length ? `成功 ${ok} 条，失败 ${errs.length} 条：${errs[0]}` : `已${status} ${ok} 条`, !errs.length);
+      loadTouches();
+    };
+    $('#mkBatDone').onclick = () => bat('已处理');
+    $('#mkBatIgn').onclick = () => bat('已忽略');
+    $('#mkBody').querySelectorAll('[data-gocollect]').forEach(b => b.onclick = () => {
+      const t = (r.items || []).find(x => Number(x.id) === Number(b.dataset.gocollect));
+      let p = {};
+      try { p = typeof t?.payload === 'string' ? JSON.parse(t.payload) : (t.payload || {}); } catch { /* noop */ }
+      if (!p.customerId) return;
+      openQuickCollect(p);
+    });
   };
+
+  /** V5.0.1：催收触达行内快捷收款（确认即终结该客户欠款；金额默认=当前未收） */
+  function openQuickCollect(p) {
+    const mask = document.createElement('div');
+    mask.className = 'modal-mask';
+    mask.innerHTML = `<div class="modal" style="width:440px"><h3>💰 催收回款 · ${esc(p.customerName || ('客户 #' + p.customerId))}</h3>
+      <div class="doc-head" style="grid-template-columns:1fr;border:1px dashed var(--line);border-radius:10px;padding:12px 14px">
+        <div class="muted" style="font-size:12px">账龄 ${esc(String(p.agingDays ?? '—'))} 天 · 触达口径未收 <b style="color:#c0392b">${money(p.receivable ?? 0)}</b></div>
+        <div class="fld"><label class="req">收款金额（元）</label><input id="qcAmt" type="number" min="0.01" step="0.01" value="${Number(p.receivable ?? 0).toFixed(2)}"></div>
+        <div class="fld"><label>收款方式</label>
+          <select id="qcMethod"><option>现金</option><option>转账</option><option>微信</option><option>支付宝</option><option>其他</option></select></div>
+        <div class="fld"><label>备注</label><input id="qcRemark" placeholder="默认：催收回款"></div>
+      </div>
+      <div class="doc-tip">💡 收款按先进先出冲抵未清赊账单；全额收清即终结欠款（「大客户与团购」列表的收款按钮随之消失）。</div>
+      <div class="doc-foot"><button class="btn" id="qcNo">取消</button><span style="flex:1"></span>
+        <button class="btn pri" id="qcGo">✔ 确认收款</button></div></div>`;
+    document.body.appendChild(mask);
+    mask.querySelector('#qcNo').onclick = () => mask.remove();
+    mask.querySelector('#qcGo').onclick = async () => {
+      const amount = Number(mask.querySelector('#qcAmt').value);
+      if (!(amount > 0)) return toast('收款金额必须大于 0', false);
+      await must(post(`/big-customers/${p.customerId}/collect`, {
+        amount, method: mask.querySelector('#qcMethod').value,
+        remark: mask.querySelector('#qcRemark').value.trim() || '催收回款',
+      }), `已登记收款 ${money(amount)}`);
+      mask.remove();
+      loadTouches();
+    };
+  }
 
   const setStatus = async (id, status) => {
     await must(post(`/marketing/touches/${id}/status`, { status }), `已标记${status}`);
@@ -164,17 +242,20 @@ export async function render(view) {
 
   /* ── M4c AI 定向营销：生成方案 → 执行 → 效果回测 ── */
   const AI_TYPE = { wake: ['沉睡唤醒', 'g'], vip: ['高贡献回馈', 'o'], fav: ['偏好品类', 'b'], none: ['无人群', ''] };
+  /** V5.0.1：类型中文名兜底——回测数据可能来自营销规则类型（low_balance/receivable 等），
+   *  AI_TYPE 未覆盖时回落 RULE_META 的中文标签，杜绝英文枚举直出。 */
+  const aiLabel = t => AI_TYPE[t] || (RULE_META[t] ? [RULE_META[t].label, RULE_META[t].cls || ''] : null) || [t, ''];
   const loadAiPlans = async () => {
     const d = await must(post('/ai/marketing/generate', {}));
     $('#mkAiPlans').innerHTML = d.plans?.length ? d.plans.map(p => {
-      const [label, cls] = AI_TYPE[p.type] || [p.type, ''];
+      const [label, cls] = aiLabel(p.type);
       return `<div class="bar" style="border:1px solid var(--line);border-radius:10px;margin:8px 18px;padding:10px 12px;flex-wrap:wrap">
         <span class="badge ${cls}" style="padding:2px 10px">${label}</span>
         <b style="margin-left:8px">${esc(p.title)}</b>
         <span class="muted" style="font-size:11.5px;margin-left:10px">${esc(p.targetTag)} · ${p.targetCount} 人</span>
         <div style="flex-basis:100%;color:var(--ink-3);font-size:12px;margin:4px 0 0 2px">
           内容：${esc(p.content)}<br>
-          <span class="api">成本≈¥${money(p.estimateCost)} · 预估增量 ¥${money(p.expectedIncrement)} · ${esc(p.basis)}</span>
+          <span class="api">成本≈${money(p.estimateCost)} · 预估增量 ${money(p.expectedIncrement)} · ${esc(p.basis)}</span>
         </div>
         <button class="btn sm pri" data-exec="${p.type}" style="margin-left:auto" ${p.type === 'none' ? 'disabled' : ''}>▶ 执行方案</button>
       </div>`;
@@ -191,14 +272,14 @@ export async function render(view) {
     const d = await must(get('/ai/marketing/effects'));
     $('#mkAiEffects').innerHTML = d.items?.length ? `
       <div style="padding:2px 18px 14px">
-      <table><thead><tr><th>方案类型</th><th class="num">目标会员</th><th class="num">触达前7天</th><th class="num">触达后消费</th><th class="num">增量</th><th class="num">触达/处理</th></tr></thead>
-      <tbody>${d.items.map(x => {
-        const [label] = AI_TYPE[x.type] || [x.type, ''];
+      <table><thead><tr><th class="seq">序号</th><th>方案类型</th><th class="num">目标会员</th><th class="num">触达前7天</th><th class="num">触达后消费</th><th class="num">增量</th><th class="num">触达/处理</th></tr></thead>
+      <tbody>${d.items.map((x, i) => {
+        const [label, cls] = aiLabel(x.type);
         const up = Number(x.delta) > 0;
-        return `<tr><td><span class="badge">${label}</span></td>
-          <td class="num">${x.members}</td><td class="num">¥${money(x.before7d)}（${x.beforeBuyers}人）</td>
-          <td class="num">¥${money(x.afterAmt)}（${x.afterBuyers}人）</td>
-          <td class="num" style="color:${up ? '#2e9e5b' : '#c0392b'}">${Number(x.delta) >= 0 ? '+' : ''}¥${money(x.delta)}</td>
+        return `<tr><td class="num seq">${i + 1}</td><td><span class="badge ${cls}">${label}</span></td>
+          <td class="num">${x.members}</td><td class="num">${money(x.before7d)}（${x.beforeBuyers}人）</td>
+          <td class="num">${money(x.afterAmt)}（${x.afterBuyers}人）</td>
+          <td class="num" style="color:${up ? '#2e9e5b' : '#c0392b'}">${Number(x.delta) >= 0 ? '+' : ''}${money(x.delta)}</td>
           <td class="num">${x.touches} / ${x.handled}</td></tr>`;
       }).join('')}</tbody></table>
       <div class="muted" style="font-size:11px;margin-top:6px">注：触达后统计为执行时刻至今的全量消费；增量 = 触达后 − 触达前 7 天同期消费。</div>

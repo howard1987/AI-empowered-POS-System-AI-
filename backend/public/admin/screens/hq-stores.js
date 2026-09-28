@@ -302,8 +302,8 @@ export async function render(view) {
       </div>
       <div class="fld"><label>姓名 <span class="muted" id="hgNameHint" style="font-weight:400"></span></label><input id="hgName" maxlength="32" style="width:100%"></div>
       <div class="fld"><label>手机号</label><input id="hgPhone" maxlength="20" style="width:100%"></div>
-      <div class="fld"><label>登录密码</label><input id="hgPw" type="password" autocomplete="new-password" style="width:100%">
-        <div class="muted" id="hgPwHint" style="font-size:11.5px;margin-top:4px"></div></div>
+      <div class="fld" style="flex-direction:column;align-items:flex-start;gap:4px"><label style="min-width:0;text-align:left">登录密码</label><input id="hgPw" type="password" autocomplete="new-password" style="width:100%">
+        <div class="muted" id="hgPwHint" style="font-size:11.5px"></div></div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
         <button class="btn" id="hgCancel">取消</button>
         <button class="btn pri" id="hgSave">💾 保存</button>

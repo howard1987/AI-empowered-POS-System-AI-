@@ -125,13 +125,15 @@ export async function render(view) {
     }
     const now = Date.now();
     host.innerHTML = `<table><thead><tr>
+      <th class="seq">序号</th>
       <th>门店</th><th>节点码</th><th>拉取水位</th><th>落后</th>
       <th>末次心跳</th><th>末次成功</th><th>状态</th><th style="width:150px">操作</th></tr></thead><tbody>
-      ${stores.map(n => {
+      ${stores.map((n, i) => {
         const seen = n.last_seen_at ? new Date(n.last_seen_at).getTime() : 0;
         const online = seen && (now - seen) < 5 * 60_000;
         const behind = Number(n.behind || 0);
         return `<tr>
+          <td class="seq">${i + 1}</td>
           <td class="sy-l">${esc(n.store_name || n.store_no || ('门店#' + n.store_id))}</td>
           <td>${esc(n.node_code)}</td>
           <td>${Number(n.in_version || 0)} / ${Number(status?.latest || 0)}</td>
@@ -164,8 +166,10 @@ export async function render(view) {
     const runs = status?.runs || [];
     if (!runs.length) { host.innerHTML = noResult('还没有同步批次记录'); $('#syCount').textContent = ''; return; }
     host.innerHTML = `<table><thead><tr>
+      <th class="seq">序号</th>
       <th>节点</th><th>方向</th><th>时间</th><th>发出</th><th>收到</th><th>失败</th><th>耗时(ms)</th><th>说明</th></tr></thead><tbody>
-      ${runs.map(r => `<tr>
+      ${runs.map((r, i) => `<tr>
+        <td class="seq">${i + 1}</td>
         <td>${esc(r.node_code || '')}</td>
         <td class="${r.direction === 'push' ? 'sy-l' : ''}">${r.direction === 'push' ? '↑ 上行' : '↓ 下行'}</td>
         <td>${dt(r.started_at)}</td>
@@ -183,8 +187,10 @@ export async function render(view) {
     const dead = status?.dead || [];
     if (!dead.length) { host.innerHTML = noResult('没有死信', '全部变更都已成功同步'); $('#syCount').textContent = ''; return; }
     host.innerHTML = `<table><thead><tr>
+      <th class="seq">序号</th>
       <th>节点</th><th>实体</th><th>实体ID</th><th>重试次数</th><th>最后错误</th><th>产生时间</th></tr></thead><tbody>
-      ${dead.map(d => `<tr>
+      ${dead.map((d, i) => `<tr>
+        <td class="seq">${i + 1}</td>
         <td>${esc(d.node_code || '')}</td><td>${esc(d.entity)}</td>
         <td>${d.entity_id ?? '—'}</td>
         <td class="sy-bad">${Number(d.retry || 0)}</td>
@@ -200,17 +206,19 @@ export async function render(view) {
     const rows = recon?.rows || [];
     if (!rows.length) { host.innerHTML = noResult('暂无可比对数据', '门店节点心跳上报后自动生成'); $('#syCount').textContent = ''; return; }
     host.innerHTML = `<table><thead><tr>
+      <th class="seq">序号</th>
       <th>节点</th><th>对数日</th><th>门店上报单量</th><th>总部实际单量</th><th>单量差</th>
       <th>门店上报金额</th><th>总部实际金额</th><th>金额差</th></tr></thead><tbody>
-      ${rows.map(r => {
+      ${rows.map((r, i) => {
         const dO = Number(r.diffOrders || 0), dA = Number(r.diffAmount || 0);
         const bad = dO !== 0 || Math.abs(dA) > 0.01;
         return `<tr>
+          <td class="seq">${i + 1}</td>
           <td>${esc(r.nodeCode)}</td><td>${esc(r.date)}</td>
           <td>${Number(r.nodeOrders || 0)}</td><td>${Number(r.hqOrders || 0)}</td>
           <td class="${bad ? 'sy-bad' : 'sy-ok'}">${dO}</td>
-          <td>¥${Number(r.nodeAmount || 0).toFixed(2)}</td><td>¥${Number(r.hqAmount || 0).toFixed(2)}</td>
-          <td class="${bad ? 'sy-bad' : 'sy-ok'}">¥${dA.toFixed(2)}</td>
+          <td>${money(r.nodeAmount || 0)}</td><td>${money(r.hqAmount || 0)}</td>
+          <td class="${bad ? 'sy-bad' : 'sy-ok'}">${money(dA)}</td>
         </tr>`;
       }).join('')}</tbody></table>`;
     $('#syCount').textContent = `对数日 ${recon?.date || ''}`;

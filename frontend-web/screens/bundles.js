@@ -1,6 +1,6 @@
 import { get, post, must, esc, toast, dt, money } from '../api.js';
 
-/** 组合拆分（V4.8.17）：组合档案（BOM）+ 组装 ZZ-/拆分 CF- 开单（录入即生效）+ 单据浏览 */
+/** 组合拆分：组合档案（BOM）+ 组装 ZZ-/拆分 CF- 开单（录入即生效）+ 单据浏览 */
 export async function render(view) {
   const today = new Date().toISOString().slice(0, 10);
   let prods = [];
@@ -63,9 +63,9 @@ export async function render(view) {
     const d = await must(get('/bundles'));
     bundles = d.items || [];
     $('#bdList').innerHTML = bundles.length ? `
-      <table><thead><tr><th>组合商品</th><th>BOM 明细</th><th>状态</th><th>建档</th><th></th></tr></thead>
-      <tbody>${bundles.map(b => `<tr>
-        <td><b>${esc(b.name)}</b> <span class="muted">#${b.bundle_product_id}</span></td>
+      <table><thead><tr><th class="seq">序号</th><th>组合商品</th><th>BOM 明细</th><th>状态</th><th>建档</th><th></th></tr></thead>
+      <tbody>${bundles.map((b, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td><b>${esc(b.name)}</b> <span class="muted">#${b.bundle_product_id}</span></td>
         <td>${(b.items || []).map(i => `${esc(i.product_name)}×${Number(i.qty)}（库存 ${Number(i.stock_qty)}）`).join(' ＋ ')}</td>
         <td><span class="tag ${Number(b.status) === 1 ? 'g' : 'r'}">${Number(b.status) === 1 ? '启用' : '停用'}</span></td>
         <td class="muted">${dt(b.created_at).slice(0, 10)}</td>
@@ -140,9 +140,9 @@ export async function render(view) {
     if (!b) { $('#opPreview').innerHTML = '<span class="muted">选择组合商品后预览 BOM 明细与库存</span>'; return; }
     const n = Number($('#opQty').value) || 0;
     $('#opPreview').innerHTML = `
-      <table><thead><tr><th>子商品</th><th class="num">BOM 数量</th><th class="num">本单${opType === 'assemble' ? '消耗' : '产出'}</th><th class="num">现有库存</th></tr></thead>
-      <tbody>${(b.items || []).map(i => `<tr>
-        <td>${esc(i.product_name)}</td><td class="num">${Number(i.qty)}</td>
+      <table><thead><tr><th class="seq">序号</th><th>子商品</th><th class="num">BOM 数量</th><th class="num">本单${opType === 'assemble' ? '消耗' : '产出'}</th><th class="num">现有库存</th></tr></thead>
+      <tbody>${(b.items || []).map((i, idx) => `<tr>
+        <td class="num seq">${idx + 1}</td><td>${esc(i.product_name)}</td><td class="num">${Number(i.qty)}</td>
         <td class="num"><b>${Number(i.qty) * n}</b></td>
         <td class="num ${Number(i.stock_qty) < Number(i.qty) * n ? 'err' : ''}">${Number(i.stock_qty)}</td>
       </tr>`).join('')}</tbody></table>`;
@@ -176,9 +176,9 @@ export async function render(view) {
     ops = await must(get('/bundles/ops?' + qs));
     ops = ops.items || ops || [];
     $('#opList').innerHTML = ops.length ? `
-      <table><thead><tr><th>单号</th><th>类型</th><th>组合商品</th><th class="num">份数</th><th class="num">单位成本</th><th class="num">总成本</th><th>备注</th><th>制单</th><th>时间</th></tr></thead>
-      <tbody>${ops.map(o => `<tr>
-        <td class="num">${esc(o.op_no)}</td>
+      <table><thead><tr><th class="seq">序号</th><th>单号</th><th>类型</th><th>组合商品</th><th class="num">份数</th><th class="num">单位成本</th><th class="num">总成本</th><th>备注</th><th>制单</th><th>时间</th></tr></thead>
+      <tbody>${ops.map((o, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td class="num">${esc(o.op_no)}</td>
         <td><span class="tag ${o.op_type === 'assemble' ? '' : 'b'}">${o.op_type === 'assemble' ? '🧩 组装' : '✂️ 拆分'}</span></td>
         <td>${esc(o.bundle_name || '—')}</td>
         <td class="num">${Number(o.qty)}</td>

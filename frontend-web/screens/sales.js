@@ -28,8 +28,7 @@ export async function render(view) {
         <input id="fKw" placeholder="商品名称/条码" style="width:140px">
         <input type="date" id="fFrom"> <span class="muted">至</span> <input type="date" id="fTo">
         <button class="btn pri" id="fGo">查询</button>
-        <button class="btn" id="fCsv">⬇ CSV</button>
-        <button class="btn" id="fXls">⬇ Excel</button>
+        <button class="btn" id="fExport">导出</button>
         <span class="muted">双击任意单据行弹出订单详情</span>
       </div>
       <div id="fList" class="tbl-min" style="height:auto;max-height:calc(10 * 42px + 46px);overflow:auto"></div>
@@ -84,9 +83,9 @@ export async function render(view) {
     const d = await must(get(`/sales?channel=${encodeURIComponent('扫码购')}&size=10&page=${spPage}`).catch(() => ({ items: [] })));
     const rows = d.items || [];
     box.innerHTML = rows.length ? `
-      <table><thead><tr><th>单号</th><th>会员</th><th class="num">应收</th><th class="num">毛利</th><th>核销</th><th>时间</th></tr></thead>
-      <tbody>${rows.map(o => `<tr data-sp="${o.id}" style="cursor:pointer" title="双击查看详情">
-        <td style="font-family:var(--mono)">${esc(o.order_no)}</td>
+      <table><thead><tr><th class="seq">序号</th><th>单号</th><th>会员</th><th class="num">应收</th><th class="num">毛利</th><th>核销</th><th>时间</th></tr></thead>
+      <tbody>${rows.map((o, i) => `<tr data-sp="${o.id}" style="cursor:pointer" title="双击查看详情">
+        <td class="num seq">${(spPage - 1) * 10 + i + 1}</td><td style="font-family:var(--mono)">${esc(o.order_no)}</td>
         <td>${esc(o.member_name || '—')}</td>
         <td class="num"><b>${money(o.payable_amount)}</b></td>
         <td class="num">${money(o.profit_amount)}</td>
@@ -131,16 +130,33 @@ export async function render(view) {
     const box = view.querySelector('#fList');
     const d = await must(get(`/sales?${qs()}&size=10&page=${fPage}`));
     const rows = d.items || [];
+    // V5.0.1：固定小计/合计行——小计=本页求和，合计=查询范围汇总（后端 sums）
+    const sum = k => rows.reduce((a, o) => a + Number(o[k] || 0), 0);
+    const S = d.sums || {};
     box.innerHTML = rows.length ? `
-      <table><thead><tr><th>单号</th><th>渠道</th><th>会员</th><th>收银员</th>
+      <table><thead><tr><th class="seq">序号</th><th>单号</th><th>渠道</th><th>会员</th><th>收银员</th>
         <th class="num">货值</th><th class="num">促销</th><th class="num">券</th><th class="num">抹零</th><th class="num">应收</th><th class="num">毛利</th><th>时间</th><th></th></tr></thead>
-      <tbody>${rows.map(o => `<tr data-id="${o.id}" style="cursor:pointer" title="双击查看详情">
-        <td style="font-family:var(--mono)">${esc(o.order_no)}</td><td>${esc(o.channel)}</td><td>${esc(o.member_name || '—')}</td><td>${esc(o.cashier_name || '—')}</td>
+      <tbody>${rows.map((o, i) => `<tr data-id="${o.id}" style="cursor:pointer" title="双击查看详情">
+        <td class="num seq">${(fPage - 1) * 10 + i + 1}</td><td style="font-family:var(--mono)">${esc(o.order_no)}</td><td>${esc(o.channel)}</td><td>${esc(o.member_name || '—')}</td><td>${esc(o.cashier_name || '—')}</td>
         <td class="num">${money(o.goods_amount)}</td><td class="num">${money(o.promo_amount)}</td>
         <td class="num">${money(o.coupon_amount)}</td><td class="num">${Number(o.round_amount) ? money(o.round_amount) : '—'}</td>
         <td class="num"><b>${money(o.payable_amount)}</b></td><td class="num">${money(o.profit_amount)}</td>
         <td class="muted">${dt(o.created_at)}</td>
-        <td><button class="btn sm" data-id="${o.id}">详情</button></td></tr>`).join('')}</tbody></table>
+        <td><button class="btn sm" data-id="${o.id}">详情</button></td></tr>`).join('')}</tbody>
+      <tfoot>
+        <tr style="font-weight:600;color:var(--ink-2)">
+          <td colspan="4" style="text-align:left">本页小计（${rows.length} 单）</td>
+          <td class="num">${money(sum('goods_amount'))}</td><td class="num">${money(sum('promo_amount'))}</td>
+          <td class="num">${money(sum('coupon_amount'))}</td><td class="num">${sum('round_amount') ? money(sum('round_amount')) : '—'}</td>
+          <td class="num">${money(sum('payable_amount'))}</td><td class="num">${money(sum('profit_amount'))}</td>
+          <td></td><td></td></tr>
+        <tr style="font-weight:700;background:var(--paper2,#faf7ef)">
+          <td colspan="4" style="text-align:left">范围合计（${d.total ?? rows.length} 单）</td>
+          <td class="num">${money(S.goods ?? 0)}</td><td class="num">${money(S.promo ?? 0)}</td>
+          <td class="num">${money(S.coupon ?? 0)}</td><td class="num">${Number(S.round) ? money(S.round) : '—'}</td>
+          <td class="num">${money(S.payable ?? 0)}</td><td class="num">${money(S.profit ?? 0)}</td>
+          <td></td><td></td></tr>
+      </tfoot></table>
       ${serverBar(fPage, d.total ?? rows.length)}`
       : '<div class="empty">无订单</div>';
     bindDblClick(box, 'tr[data-id]', tr => detail(tr.dataset.id));
@@ -168,11 +184,9 @@ export async function render(view) {
       payable_amount: Number(o.payable_amount), profit_amount: Number(o.profit_amount),
       created_at: String(o.created_at).slice(0, 19) }));
   }
-  view.querySelector('#fCsv').onclick = async () => {
-    exportRows({ filename: '销售单据', columns: COLS, rows: await fetchAll(), format: 'csv' });
-  };
-  view.querySelector('#fXls').onclick = async () => {
-    exportRows({ filename: '销售单据', columns: COLS, rows: await fetchAll(), format: 'xls' });
+  view.querySelector('#fExport').onclick = async () => {
+    const rows = await fetchAll();
+    openExportPicker({ filename: '销售单据', columns: COLS, rows });
   };
 
   /* ── 订单详情（弹窗版，泛化 openDetailModal；含退款操作） ── */
@@ -184,9 +198,9 @@ export async function render(view) {
         班次 ${o.shift_id ? '#' + o.shift_id : '—'} · 创建 ${dt(o.created_at)}</div>
       <div class="grid" style="grid-template-columns:1fr 1fr">
         <div>
-          <table><thead><tr><th>商品</th><th class="num">数量</th><th class="num">单价</th><th class="num">小计</th><th class="num">成本</th><th>批次溯源</th><th>退货</th></tr></thead>
-          <tbody>${d.items.map(i => `<tr>
-            <td>${esc(i.product_name)}</td><td class="num">${Number(i.qty)}</td><td class="num">${money(i.unit_price)}</td>
+          <table><thead><tr><th class="seq">序号</th><th>商品</th><th class="num">数量</th><th class="num">单价</th><th class="num">小计</th><th class="num">成本</th><th>批次溯源</th><th>退货</th></tr></thead>
+          <tbody>${d.items.map((i, idx) => `<tr>
+            <td class="num seq">${idx + 1}</td><td>${esc(i.product_name)}</td><td class="num">${Number(i.qty)}</td><td class="num">${money(i.unit_price)}</td>
             <td class="num">${money(i.line_amount)}</td><td class="num">${money(i.line_cost)}</td>
             <td class="muted">${(i.batch_trace || []).map(b => `${b.batch}×${Number(b.qty)}@${Number(b.cost)}`).join('<br>')}</td>
             <td><input type="number" class="rfQty" data-siid="${i.id}" min="0" max="${Number(i.qty)}" step="0.001"
@@ -202,20 +216,22 @@ export async function render(view) {
           <div id="rfResult"></div>
         </div>
         <div>
-          <table><thead><tr><th>支付方式</th><th class="num">金额</th></tr></thead>
-          <tbody>${d.payments.map(p => `<tr><td>${esc(p.channel)}</td><td class="num">${money(p.amount)}</td></tr>`).join('')}</tbody></table>
-          <table style="margin-top:8px">
-            <tr><td>货值</td><td class="num">${money(o.goods_amount)}</td></tr>
-            <tr><td>促销优惠</td><td class="num">-${money(o.promo_amount)}</td></tr>
-            ${Number(o.coupon_amount) ? `<tr><td>券抵扣</td><td class="num">-${money(o.coupon_amount)}</td></tr>` : ''}
-            ${Number(o.member_discount) ? `<tr><td>等级折扣</td><td class="num">-${money(o.member_discount)}</td></tr>` : ''}
-            ${Number(o.round_amount) ? `<tr><td>抹零</td><td class="num">-${money(o.round_amount)}</td></tr>` : ''}
-            <tr><td><b>应收</b></td><td class="num"><b>${money(o.payable_amount)}</b></td></tr>
-            <tr><td>混合成本 / 毛利</td><td class="num">${money(o.cost_amount)} / ${money(o.profit_amount)}</td></tr>
+          <table>
+            <thead><tr><th>支付方式</th><th class="num">金额</th></tr></thead>
+            <tbody>
+              ${d.payments.map(p => `<tr><td>${esc(p.channel)}</td><td class="num">${money(p.amount)}</td></tr>`).join('')}
+              <tr><td>货值</td><td class="num">${money(o.goods_amount)}</td></tr>
+              <tr><td>促销优惠</td><td class="num">-${money(o.promo_amount)}</td></tr>
+              ${Number(o.coupon_amount) ? `<tr><td>券抵扣</td><td class="num">-${money(o.coupon_amount)}</td></tr>` : ''}
+              ${Number(o.member_discount) ? `<tr><td>等级折扣</td><td class="num">-${money(o.member_discount)}</td></tr>` : ''}
+              ${Number(o.round_amount) ? `<tr><td>抹零</td><td class="num">-${money(o.round_amount)}</td></tr>` : ''}
+              <tr><td><b>应收</b></td><td class="num"><b>${money(o.payable_amount)}</b></td></tr>
+              <tr><td>混合成本 / 毛利</td><td class="num">${money(o.cost_amount)} / ${money(o.profit_amount)}</td></tr>
+            </tbody>
           </table>
         </div>
       </div>`;
-    const { mask, close } = openDetailModal(`订单详情 ${esc(o.order_no)} `, html, {
+    const { mask, close } = openDetailModal(`订单详情`, html, {
       width: 1020,
       onClose: () => { list(); listScanpay(); },
     });

@@ -119,6 +119,13 @@ body.side-collapsed #side { display: none !important; }
   border-radius: var(--r-lg); box-shadow: var(--shadow);
   padding: 0; margin-bottom: 16px;
 }
+/* V5.0.2：卡片内容与边框的呼吸间距——直接子元素默认左右留白（表格宿主等自带内边距的容器不受影响） */
+.card > .bar, .card > .muted, .card > .grid, .card > .doc-tip, .card > .kpis {
+  margin-left: 18px; margin-right: 18px;
+}
+.card > .bar:last-child, .card > .muted:last-child, .card > .doc-tip:last-child, .card > .grid:last-child {
+  margin-bottom: 14px;
+}
 .card > h3 {
   font-size: 14.5px; font-weight: 700;
   padding: 13px 18px; border-bottom: 1px dashed var(--line);
@@ -129,7 +136,11 @@ body.side-collapsed #side { display: none !important; }
   font-family: var(--mono); margin-left: auto;
 }
 .card > *:not(h3):first-child, .card > .bar { margin: 14px 18px; }
-.card > div, .card > table { margin: 0; }
+/* V5.0.3：内容 div 默认呼吸边距——此前 .card > div { margin:0 } 导致 #hList/#pList/#lvMode、
+   班次 #cur 等无类名内容容器（含其中表格/文字/输入框）紧贴卡片边框。
+   例外：直接子 table 与滚动表格宿主 .pg-host 保持通栏（长表格满宽 + 底部吸附分页条）。 */
+.card > div { margin: 14px 18px; }
+.card > table, .card > .pg-host { margin: 0; }
 .card > .bar { padding: 0; }
 .card > h3 + .bar { margin: 14px 18px 4px; }
 .grid { display: grid; gap: 16px; }
@@ -215,6 +226,28 @@ input[type="checkbox"] { accent-color: var(--pri); }
 .empty { color: var(--ink-3); text-align: center; padding: 26px; font-size: 13px; }
 .muted { color: var(--ink-3); font-size: 12px; }
 
+/* ── V5.0.3 首页节日倒计时条（全局搜索框下） ── */
+.fest-bar { display: flex; align-items: stretch; gap: 6px; margin: 6px 18px 14px; }
+.fest-bar .fest-arrow {
+  flex: none; width: 26px; border: 1px solid var(--line); background: var(--card);
+  border-radius: 8px; cursor: pointer; color: var(--ink-3); font-size: 13px;
+}
+.fest-bar .fest-arrow:disabled { opacity: .35; cursor: default; }
+.fest-scroll { flex: 1; display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+.fest-scroll::-webkit-scrollbar { display: none; }
+.fest-item {
+  flex: none; min-width: 76px; text-align: center; padding: 6px 8px 7px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--paper-2, #faf7ef);
+}
+.fest-item .d { font-size: 11px; color: var(--ink-3); font-family: var(--mono); }
+.fest-item .c { font-size: 11px; color: var(--ink-3); margin-top: 2px; white-space: nowrap; }
+.fest-item .c b { font-size: 13px; color: var(--pri); font-family: var(--mono); }
+.fest-item .n { font-size: 12px; color: var(--ink); margin-top: 2px; font-weight: 600; white-space: nowrap; }
+.fest-item.near { border-color: #e0a0a0; background: #fdf3f0; }
+.fest-item.near .c b { color: #c0392b; }
+.fest-item.today { border-color: #c0392b; background: #fbeae8; }
+.fest-item.today .c b { background: #c0392b; color: #fff; border-radius: 6px; padding: 0 7px; }
+
 /* ── 后台首页：全局搜索下拉（原型 #1） ── */
 .gs-item {
   padding: 9px 12px; cursor: pointer; font-size: 13px;
@@ -243,13 +276,13 @@ input[type="checkbox"] { accent-color: var(--pri); }
 .doc-grid table td, .doc-grid table th { padding: 7px 8px; }
 .doc-grid input, .doc-grid select { padding: 5px 8px; border-radius: 7px; font-size: 12.5px; }
 .doc-grid .rowamt { font-family: var(--mono); font-weight: 700; color: var(--warn); }
-/* 文字提示框：统一带内边距 + 行高 + 轻底色，保证任何容器内文字与边框都有呼吸感（V4.26.5 通病修正） */
+/* 文字提示框：统一带内边距 + 行高 + 轻底色，保证任何容器内文字与边框都有呼吸感 */
 .doc-tip {
   padding: 11px 16px; margin: 4px 0; font-size: 12px; line-height: 1.75; color: var(--ink-3);
   background: var(--paper-2); border: 1px solid var(--line); border-radius: 9px;
 }
 .doc-tip:empty { display: none; }
-/* 看板趋势迷你走势图（V4.26.5） */
+/* 看板趋势迷你走势图 */
 .trend-spark { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); }
 .trend-spark svg { display: block; }
 .trend-spark .muted { margin-top: 4px; }
@@ -298,7 +331,7 @@ input[type="checkbox"] { accent-color: var(--pri); }
 }
 .drawer {
   background: var(--card); border-left: 1px solid var(--line);
-  box-shadow: var(--shadow); width: min(680px, 96vw);
+  box-shadow: var(--shadow); width: min(780px, 96vw);
   height: 100%; overflow: auto; padding: 18px 20px 30px;
 }
 .drawer h3 { margin-bottom: 10px; }
@@ -313,7 +346,7 @@ input[type="checkbox"] { accent-color: var(--pri); }
 .btn.tabbtn.on, .btn.segbtn.on { background: var(--pri); border-color: var(--pri); color: #f7f3e6; }
 .btn.tabbtn.on:hover, .btn.segbtn.on:hover { background: var(--pri-2); color: #fff; }
 
-/* ── 商品模糊搜索组件（V4.8.20 共享） ── */
+/* ── 商品模糊搜索组件 ── */
 .ps-wrap { position: relative; flex: 1; }
 .ps-wrap > input { width: 100%; }
 .ps-pop { position: absolute; z-index: 60; left: 0; right: 0; top: calc(100% + 2px); background: #fffdf8;
@@ -385,7 +418,7 @@ input.pick-display:focus { outline: 2px solid var(--pri-2); outline-offset: -1px
   border-bottom: none; margin-bottom: -7px;
 }
 #stTabs .tab.active { background: var(--card); color: var(--pri); border-bottom: 2px solid var(--pri); font-weight: 700; }
-/* 传秤表格行高收紧（V4.26.5）：行内输入框紧凑 + 单元格 padding 收窄 */
+/* 传秤表格行高收紧：行内输入框紧凑 + 单元格 padding 收窄 */
 .st-table-wrap table td, .st-table-wrap table th { padding: 4px 6px; }
 .st-table-wrap .st-in { padding: 3px 6px; font-size: 12px; height: 28px; box-sizing: border-box; }
 #stTable input.st-in {
@@ -429,7 +462,7 @@ html, #view { scroll-behavior: smooth; }
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
 
-/* ── 分页条宿主容器（V4.26.4）：默认分页条随表格流走，不做吸底 ——
+/* ── 分页条宿主容器：默认分页条随表格流走，不做吸底 ——
    原因：分页条的滚动祖先是整个页面容器 #view，一旦 sticky:bottom:0，页面滚到中间态时
    它会被吸附到屏幕底边、脱离表格浮到别的行上面盖住数据。
    需要「固定底部分页」的表格，给承载表格的容器加 .pg-host：容器限高 + 内部滚动，

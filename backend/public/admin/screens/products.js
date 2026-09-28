@@ -328,7 +328,7 @@ export async function render(view) {
     fa(cats, []);
     return out;
   };
-  // 分类商品数固定统计（V4.9.4）：来自 /products/category-counts，不随当前筛选变化
+  // 分类商品数固定统计：来自 /products/category-counts，不随当前筛选变化
   let catCounts = {};    // { categoryId: n }
   let fixedTotal = 0;    // 全部商品固定总数
   async function loadCatCounts() {
@@ -848,7 +848,7 @@ export async function render(view) {
     };
   };
 
-  /* ── 价签批量打印（V4.15.7 P2）：勾选商品 → 选标签机/份数 → 网口直发 / 串口 WebSerial ── */
+  /* ── 价签批量打印：勾选商品 → 选标签机/份数 → 网口直发 / 串口 WebSerial ── */
   view.querySelector('#pTags').onclick = async () => {
     const ids = [...delSel];
     if (!ids.length) return;
@@ -1106,6 +1106,16 @@ export async function render(view) {
   const unitModal = view.querySelector('#unitModal');
   const $ = sel => view.querySelector(sel);
 
+  // V5.0.3：库存下限/上限强制非负整数（step=1 仍可键入小数，此处统一取整）
+  for (const id of ['mMinStock', 'mMaxStock', 'eMinStock', 'eMaxStock']) {
+    const el = $('#' + id);
+    if (el) el.onchange = () => { el.value = el.value === '' ? '' : String(Math.max(0, Math.floor(Number(el.value) || 0))); };
+  }
+  // V5.0.3：业务文本输入禁用浏览器账号/密码自动填充启发式（保存时误弹「保存密码」）
+  view.querySelectorAll?.('#pModal input[type="text"], #pModal input:not([type])').forEach(inp => {
+    if (!inp.hasAttribute('autocomplete') && !inp.hasAttribute('list')) inp.setAttribute('autocomplete', 'off');
+  });
+
   // 基本单位字典（前端维护；「＋」弹窗可扩充，本次会话内全表单共用）
   const COMMON_UNITS = ['个', '瓶', '袋', '盒', '箱', '提', '罐', '听', '支', '桶', '包', '卷', '双', '套', '片', '块', '斤', '公斤', '克', '升', '毫升'];
   let unitList = [...COMMON_UNITS];
@@ -1155,7 +1165,7 @@ export async function render(view) {
     onPick: v => { if (!unitList.includes(v)) { unitList.push(v); renderUnitSel(); } },
     emptyHint: '无匹配——可直接输入新单位，保存后自动加入单位库',
   });
-  // 分类/供货商同款面板（V4.9.14）：getList 惰性取值，面板弹出时才读最新数据
+  // 分类/供货商同款面板：getList 惰性取值，面板弹出时才读最新数据
   const catChainName = c => c.chain.map(x => x.name).join(' / ');
   const attachCatPicker = el => el && attachPickPanel(el, {
     getList: kw => {
@@ -1834,7 +1844,7 @@ export async function render(view) {
       .filter(u => u.unit_name !== (p.base_unit || '') && Number(u.rate) > 0)
       .map(u => ({ unitName: u.unit_name, rate: Number(u.rate), barcode: u.barcode || null }));
     renderEAlias(); renderEPkg();
-    view.querySelector('#emTitle').textContent = `✏️ 编辑商品（${p.goods_no || pid}）`;
+    view.querySelector('#emTitle').textContent = '✏️ 编辑商品';
     view.querySelector('#eBarcode').value = p.barcode || '';
     view.querySelector('#eName').value = p.name || '';
     $('#eUnit').value = p.base_unit || '个';
@@ -1848,9 +1858,8 @@ export async function render(view) {
     view.querySelector('#eWholesale').value = p.wholesale_price ?? '';
     view.querySelector('#eDiscount').value = (p.member_discount != null && Number(p.member_discount) > 0) ? '1' : '';
     view.querySelector('#eKeep').value = p.keep_days ?? '';
-    // 保质期单位自动推导：365 整除→年，30 整除→月，其余→天
-    const kd = Number(p.keep_days) || 0;
-    view.querySelector('#eKeepUnit').value = kd > 0 && kd % 365 === 0 ? '365' : kd > 0 && kd % 30 === 0 ? '30' : '1';
+    // V5.0.3：保质期单位默认「天」（不再按整除自动切月/年，避免与录入习惯不一致）
+    view.querySelector('#eKeepUnit').value = '1';
     // 分类/供货商：输入式回填（显示完整链名 / 供应商名）
     const catHit = flatCats().find(c => Number(c.id) === Number(p.category_id));
     view.querySelector('#eCatIn').value = catHit ? catHit.chain.map(x => x.name).join(' / ') : '';

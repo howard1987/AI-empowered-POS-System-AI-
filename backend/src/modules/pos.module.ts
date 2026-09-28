@@ -129,15 +129,18 @@ class PosController {
 
   // ═══════════ V4.18.0 P14 收银台 ═══════════
 
-  /** 库存实时查询（收银台负库存容错用）：刻意走实时接口而非价目表缓存（缓存正确性三原则：不缓存易变库存） */
+  /** 库存实时查询（收银台负库存容错用）：刻意走实时接口而非价目表缓存（缓存正确性三原则：不缓存易变库存）
+   *  V5.0.1：口径对齐结账权威——改按 batches(status='在库') 实时余量合计（与销售 FIFO 扣减同源）。
+   *  此前读 inventory_current 汇总表，两表不同步时前台显示「仅剩 2」、结账却报「现有 0」。 */
   @RequirePerms('pos.sell')
   @Get('stock')
   async stock(@Query('ids') ids: string, @CurrentUser() user: AuthUser) {
     const idList = String(ids || '').split(',').map(x => Number(x)).filter(x => Number.isInteger(x) && x > 0).slice(0, 500);
     if (!idList.length) return { items: [] };
     const rows = await q(
-      `SELECT product_id AS "productId", COALESCE(qty_total, 0)::float8 AS "stockQty"
-         FROM inventory_current WHERE store_id=$1 AND product_id = ANY($2::bigint[])`,
+      `SELECT product_id AS "productId", COALESCE(SUM(remain_qty), 0)::float8 AS "stockQty"
+         FROM batches WHERE store_id=$1 AND status='在库' AND product_id = ANY($2::bigint[])
+        GROUP BY product_id`,
       [user.storeId, idList]);
     return { items: rows };
   }

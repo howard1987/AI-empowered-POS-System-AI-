@@ -27,13 +27,13 @@ import { enqueueSync } from '../common/outbox';   // V4.28.2 P0-5 门店台账�
 /** 门店内置角色模板（不含超级管理员 —— 超管只属于总部） */
 const TEMPLATE_ROLE_NAMES = ['店长', '收银员', '库管', '财务'];
 
-/** 门店编码：S + 3 位序号（按现有最大序号顺延；冲突时重试） */
+/** 门店编码：MD + 3 位序号（按现有最大序号顺延，兼容历史 S 编码；冲突时重试） */
 async function nextStoreNo(c: any): Promise<string> {
   const r = await c.query(
     `SELECT COALESCE(MAX(NULLIF(regexp_replace(store_no, '\\D', '', 'g'), '')::int), 0) AS n
-       FROM stores WHERE store_no ~ '^S[0-9]+$'`);
+       FROM stores WHERE store_no ~ '^(?:S|MD)[0-9]+$'`);
   const n = Number(r.rows?.[0]?.n || 0);
-  return 'S' + String(n + 1).padStart(3, '0');
+  return 'MD' + String(n + 1).padStart(3, '0');
 }
 
 /** 生成同步节点码与节点密钥（批次4 同步鉴权用；此处先落库，身份稳定不随后改） */
@@ -236,6 +236,9 @@ class ChainStoreController {
     assertStoreAllowed(sid, '该门店');
     const cur = await q1<any>(`SELECT * FROM stores WHERE id=$1`, [sid]);
     if (!cur) throw new BizException(40404, '门店不存在', 404);
+    // V5.0.3：历史门店节点补发——node_code 为空（建店早于节点机制）时保存自动生成，
+    // 免去报表「未注册/节点无数据」困惑；节点编码由系统分配，无需人工配置。
+    const needNode = !cur.node_code;
 
     const patch: Record<string, any> = {
       name: b?.name, address: b?.address, phone: b?.phone, contact_person: b?.contactPerson,
@@ -257,7 +260,10 @@ class ChainStoreController {
     cols.push('updated_at = now()');
     params.push(sid);
     await q(`UPDATE stores SET ${cols.join(', ')} WHERE id=$${i}`, params);
-    await audit(sid, user.sub, '总部', 'store.update', 'store', sid, { before: cur, patch: b });
+    if (needNode) {
+      await q(`UPDATE stores SET node_code=$2, node_secret=$3 WHERE id=$1`, [sid, genNodeCode(cur.store_no), genNodeSecret()]);
+    }
+    await audit(sid, user.sub, '总部', 'store.update', 'store', sid, { before: cur, patch: b, nodeIssued: needNode });
     return { id: sid, changed: cols.length - 1 };
   }
 

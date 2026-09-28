@@ -554,7 +554,7 @@ class AuthController {
   @Get('employees')
   async employees(@CurrentUser() user: AuthUser) {
     const emps = await q(
-      `SELECT e.id, e.emp_no, e.name, e.phone, e.status, e.last_login_at,
+      `SELECT e.id, e.emp_no, e.name, e.phone, e.status, e.last_login_at, e.created_at,
               e.auth_code_hash IS NOT NULL AS auth_code_set,
               COALESCE(json_agg(json_build_object('id', r.id, 'name', r.name))
                        FILTER (WHERE r.id IS NOT NULL), '[]') AS roles
@@ -565,9 +565,28 @@ class AuthController {
     // P2-M2：无人事/排班/对账类权限的查看者，收敛手机号与登录时间（下拉仍可用）
     const full = ['sys.user.manage', 'staff.manage', 'shift.manage', 'recon.confirm']
       .some(p => user.perms.includes(p)) || user.perms.includes('*');
-    return emps.map(e => ({ id: Number(e.id), empNo: e.emp_no, name: e.name,
+    // V5.0.2：规范工号展示——按主角色前缀（收银员SYY/店长DZ/管理员GLY/库管KG/财务CW/其他EM）
+    //          + 4 位序号（同前缀按员工 id 顺序稳定编号）；原工号作为「账户名」列展示
+    const PFX = (names: string[]) => {
+      const j = names.join(',');
+      if (/收银/.test(j)) return 'SYY';
+      if (/店长/.test(j)) return 'DZ';
+      if (/管理员/.test(j)) return 'GLY';
+      if (/库/.test(j)) return 'KG';
+      if (/财务/.test(j)) return 'CW';
+      return 'EM';
+    };
+    const counters = new Map<string, number>();
+    const withNo = emps.map((e: any) => {
+      const pfx = PFX((e.roles || []).map((r: any) => r.name));
+      const seq = (counters.get(pfx) || 0) + 1;
+      counters.set(pfx, seq);
+      return { ...e, empNoOfficial: pfx + String(seq).padStart(4, '0') };
+    });
+    return withNo.map(e => ({ id: Number(e.id), empNo: e.emp_no, empNoOfficial: e.empNoOfficial, name: e.name,
                             phone: full ? e.phone : undefined,
-                            status: e.status, lastLoginAt: full ? e.last_login_at : undefined, roles: e.roles || [],
+                            status: e.status, lastLoginAt: full ? e.last_login_at : undefined,
+                            createdAt: e.created_at || null, roles: e.roles || [],
                             authCodeSet: !!e.auth_code_set }));
   }
 

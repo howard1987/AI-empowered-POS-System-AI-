@@ -21,11 +21,11 @@ export async function render(view) {
     curPage = pg.page;
     wrap.innerHTML = list.length ? `
         <table>
-          <thead><tr><th style="width:34px"></th><th>类型</th><th>商品</th><th class="num">现售价</th><th class="num">建议价</th><th class="num">成本底线</th><th class="num">在库</th><th class="num">剩余天数</th><th>原因</th><th class="num">预计让利</th></tr></thead>
-          <tbody id="ppBody">${pg.slice.map(s => `
+          <thead><tr><th style="width:34px"></th><th class="seq">序号</th><th>类型</th><th>商品</th><th class="num">现售价</th><th class="num">建议价</th><th class="num">成本底线</th><th class="num">在库</th><th class="num">剩余天数</th><th>原因</th><th class="num">预计让利</th></tr></thead>
+          <tbody id="ppBody">${pg.slice.map((s, i) => `
             <tr>
               <td><input type="checkbox" value="${esc(s.id)}" ${selSet.has(s.id) ? 'checked' : ''}></td>
-              <td><span class="badge ${s.type === 'expiry' ? 'o' : 'b'}">${s.type === 'expiry' ? '⏳ 临期' : '📦 滞销'}</span></td>
+              <td class="num seq">${(curPage - 1) * 10 + i + 1}</td><td><span class="badge ${s.type === 'expiry' ? 'o' : 'b'}">${s.type === 'expiry' ? '⏳ 临期' : '📦 滞销'}</span></td>
               <td><b>${esc(s.name)}</b><div class="muted" style="font-size:11px">${esc(s.barcode || '—')}</div></td>
               <td class="num">¥${money(s.sellPrice)}</td>
               <td class="num" style="color:#c0392b;font-weight:700">¥${money(s.suggestedPrice)}${s.atFloor ? '<div class="muted" style="font-size:10px">触底线</div>' : ''}</td>
@@ -61,7 +61,7 @@ export async function render(view) {
           <div class="kpi" style="margin:0"><div class="v">${data.count}</div><div class="t">待调价商品</div></div>
           <div class="kpi" style="margin:0"><div class="v">${list.filter(x => x.type === 'expiry').length}</div><div class="t">临期</div></div>
           <div class="kpi" style="margin:0"><div class="v">${list.filter(x => x.type === 'stale').length}</div><div class="t">滞销</div></div>
-          <div class="kpi" style="margin:0"><div class="v">¥${money(data.impactTotal)}</div><div class="t">预计让利（按在库量）</div></div>
+          <div class="kpi" style="margin:0"><div class="v">${money(data.impactTotal)}</div><div class="t">预计让利（按在库量）</div></div>
         </div>
         <div class="bar" style="flex-wrap:wrap">
           <button class="btn pri" id="ppApply">✅ 生成调价草稿（勾选项）</button>

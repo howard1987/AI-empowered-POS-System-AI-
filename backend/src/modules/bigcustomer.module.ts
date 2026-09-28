@@ -1,4 +1,4 @@
-import { Module, Controller, Get, Post, Put, Body, Param, Query, ParseIntPipe } from '@nestjs/common';
+import { Module, Controller, Get, Post, Put, Delete, Body, Param, Query, ParseIntPipe } from '@nestjs/common';
 import { q, q1, tx, cx, r2, r3, r4, audit, seqLock } from '../common/db';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
@@ -23,6 +23,7 @@ class BigCustomerController {
     const kw = (keyword || '').trim();
     return q(
       `SELECT bc.*,
+              (SELECT MAX(so.created_at) FROM sales_orders so WHERE so.big_customer_id = bc.id) AS last_order_at,
               (SELECT count(*) FROM sales_orders so
                 WHERE so.big_customer_id = bc.id AND so.channel='大客户团购' AND so.status IN ('已完成','部分退款'))::int AS order_count,
               ROUND(COALESCE((
@@ -40,6 +41,32 @@ class BigCustomerController {
         ORDER BY bc.status DESC, bc.id DESC
         LIMIT 200`, [kw, status ? Number(status) : null],
     );
+  }
+
+  /** V5.0.2 删除大客户（客户详情弹窗内，条件显示）：
+   *  ① 未产生业务（无团购单，含结算金额为 0）可直接删；
+   *  ② 已停用且最近业务超过 90 天（3 个月）的可删。
+   *  历史业务单据/资金流水审计保留在 sales_orders/sale_payments（不随删），
+   *  仅客户档案、专属价、价目申请、预充值/回款流水随之清除（价目与资金流水为级联）。 */
+  @Delete(':id')
+  async remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
+    const bc = await q1(`SELECT * FROM big_customers WHERE id=$1`, [id]);
+    if (!bc) throw new BizException(40404, '客户不存在', 404);
+    const st = await q1<{ n: string; last_at: string }>(
+      `SELECT count(*)::int AS n, MAX(created_at) AS last_at FROM sales_orders WHERE big_customer_id=$1`, [id]);
+    const n = Number(st?.n || 0);
+    const lastAt = st?.last_at ? new Date(st.last_at) : null;
+    const idle90 = !lastAt || (Date.now() - lastAt.getTime()) > 90 * 86400000;
+    if (n > 0 && !(Number(bc.status) === 0 && idle90)) {
+      throw new BizException(40003, '删除条件：未产生任何业务；或已停用且最近业务超过 90 天');
+    }
+    await audit(user.storeId, user.sub, '大客户', 'bigcustomer.delete', 'big_customer', id,
+      { name: bc.name, orderCount: n });
+    return tx(async c => {
+      await cx(c, `DELETE FROM bc_price_requests WHERE customer_id=$1`, [id]);
+      await cx(c, `DELETE FROM big_customers WHERE id=$1`, [id]);
+      return { ok: true };
+    });
   }
 
   /** 建档（name 必填；defaultDiscount 0.5~1；creditLimit 赊账额度） */
@@ -305,8 +332,8 @@ class BigCustomerController {
     const amount = Number(dto.amount);
     if (!(amount > 0)) throw new BizException(40003, '回款金额必须大于 0');
     const r = await q1(
-      `INSERT INTO big_customer_payments (customer_id, amount, method, remark, operator_id)
-       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+      `INSERT INTO big_customer_payments (customer_id, amount, method, remark, operator_id, kind)
+       VALUES ($1,$2,$3,$4,$5,'collect') RETURNING id`,
       [id, amount, dto.method || '现金', dto.remark ?? null, user.sub]);
     await audit(user.storeId, user.sub, 'bigcustomer', 'collect', 'big_customer', id, { amount });
     return { id: r.id, amount };
@@ -327,13 +354,28 @@ class BigCustomerController {
     return tx(async c => {
       await cx(c, `SELECT id FROM big_customers WHERE id=$1 FOR UPDATE`, [id]);
       await cx(c,
-        `INSERT INTO big_customer_payments (customer_id, amount, method, remark, operator_id)
-         VALUES ($1,$2,$3,$4,$5)`, [id, amount, dto.method || '现金', dto.remark || '预充值', user.sub]);
+        `INSERT INTO big_customer_payments (customer_id, amount, method, remark, operator_id, kind)
+         VALUES ($1,$2,$3,$4,$5,'recharge')`, [id, amount, dto.method || '现金', dto.remark || '预充值', user.sub]);
       const r = await cx(c,
         `UPDATE big_customers SET balance = COALESCE(balance,0) + $2 WHERE id=$1 RETURNING balance`, [id, amount]);
       await audit(user.storeId, user.sub, 'bigcustomer', 'recharge', 'big_customer', id, { amount, method: dto.method || '现金' });
       return { balance: Number(r[0].balance), amount };
     });
+  }
+
+  /** V5.0.2 预充值明细（「充值明细」页签）：kind='recharge' 的资金流水，keyword 匹配方式/备注 */
+  @Get(':id/recharges')
+  async recharges(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('keyword') keyword?: string,
+  ) {
+    const kw = (keyword || '').trim();
+    return q(
+      `SELECT bp.id, bp.amount, bp.method, bp.remark, bp.created_at, e.name AS operator_name
+         FROM big_customer_payments bp LEFT JOIN employees e ON e.id = bp.operator_id
+        WHERE bp.customer_id = $1 AND bp.kind = 'recharge'
+          AND ($2 = '' OR bp.method ILIKE '%'||$2||'%' OR bp.remark ILIKE '%'||$2||'%')
+        ORDER BY bp.id DESC LIMIT 200`, [id, kw]);
   }
 
   /** 业务电子签字（V4.14.0 C1：大客户业务/联系人，同供应商预采方式；base64 PNG 存档，业务单据留痕引用） */
@@ -474,9 +516,10 @@ class BigCustomerController {
       const order = await cx(c,
         `INSERT INTO sales_orders (store_id, order_no, channel, member_id, big_customer_id, cashier_id, status,
                                    goods_amount, promo_amount, coupon_amount, payable_amount, cost_amount,
-                                   profit_amount, member_discount, round_amount, remark)
-         VALUES ($1,$2,'大客户团购',NULL,$3,$4,'已完成',$5,$6,0,$7,$8,$9,0,0,$10) RETURNING id`,
-        [user.storeId, orderNo, id, user.sub, goodsAmount, discountTotal, payable, costTotal, profit, dto.remark ?? null]);
+                                   profit_amount, member_discount, round_amount, remark, customer_name)
+         VALUES ($1,$2,'大客户团购',NULL,$3,$4,'已完成',$5,$6,0,$7,$8,$9,0,0,$10,$11) RETURNING id`,
+        [user.storeId, orderNo, id, user.sub, goodsAmount, discountTotal, payable, costTotal, profit,
+         dto.remark ?? null, cust.name]);
       const orderId = order[0].id;
 
       // 明细 + 批次消耗 + 库存流水

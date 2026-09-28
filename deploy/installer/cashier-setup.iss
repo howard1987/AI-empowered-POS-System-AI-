@@ -6,7 +6,7 @@
 ; ============================================================================
 
 #define MyAppName "超市收银系统"
-#define MyAppVer "5.0.0"
+#define MyAppVer "5.0.1"
 #define UnpackDir "d:\Software\POS_system\超市收银系统-初版代码\frontend-desktop\dist-modern\win-unpacked"
 
 [Languages]

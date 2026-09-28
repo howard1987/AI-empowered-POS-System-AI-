@@ -43,23 +43,28 @@ export function decorateModal(mask) {
     bar.querySelector('[data-w="max"]').textContent = m.classList.contains('modal-max') ? '❐' : '□';
   };
   // V4.14.9：恢复的 ✕ 关闭（确认框除外——必须经「取消/确定」结算 Promise）
+  // V5.0.2：动态详情弹窗（openDetailModal 等注册了 mask.__modalClose）走真关闭（remove+onClose）；
+  // 静态弹窗（页面内常驻、靠 display 切换，如客户建档弹窗）保持隐藏行为——remove 会把 DOM 摘掉，
+  // 之后 openXxx 找不到节点直接抛错、入口按钮"点不动"。
   const btnClose = bar.querySelector('[data-w="close"]');
   if (btnClose) btnClose.onclick = () => {
+    const chip0 = document.querySelector(`[data-restore-for="${mask.id || mask.dataset.mid}"]`);
+    if (chip0) chip0.remove();
+    if (typeof mask.__modalClose === 'function') { mask.__modalClose(); return; }
     mask.style.display = 'none';
     m.classList.remove('modal-max');
     bar.querySelector('[data-w="max"]').textContent = '□';
-    const chip = document.querySelector(`[data-restore-for="${mask.id || mask.dataset.mid}"]`);
-    if (chip) chip.remove();
   };
   // V4.14.8：全局统一关闭交互 = 点遮罩关闭（确认框除外——它必须经「取消/确定」结算 Promise）
   if (!mask.querySelector('.confirm-modal')) {
     mask.addEventListener('click', e => {
       if (e.target !== mask) return;
+      const chip1 = document.querySelector(`[data-restore-for="${mask.id || mask.dataset.mid}"]`);
+      if (chip1) chip1.remove();
+      if (typeof mask.__modalClose === 'function') { mask.__modalClose(); return; }
       mask.style.display = 'none';
       m.classList.remove('modal-max');
       bar.querySelector('[data-w="max"]').textContent = '□';
-      const chip = document.querySelector(`[data-restore-for="${mask.id || mask.dataset.mid}"]`);
-      if (chip) chip.remove();
     });
   }
 }

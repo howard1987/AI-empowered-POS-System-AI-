@@ -190,9 +190,20 @@ export async function applyPromotions(c: any, storeId: number, lines: any[], mem
              AND expiry_date >= CURRENT_DATE AND product_id = ANY($2::bigint[])
           GROUP BY product_id`, [storeId, pids]);
       const daysLeft = new Map<number, number>(er.map((r: any) => [Number(r.product_id), Number(r.days_left)]));
+      // V5.0.1：与已生效调价单互斥——商品存在已生效(approved)销价下调、已到生效日且适用本店时，
+      // 不再叠加临期自动折扣，防止「AI 调价降价后结算再打折」的双重让利。
+      const pr = await cx(c,
+        `SELECT DISTINCT pci.product_id FROM price_changes pc
+           JOIN price_change_items pci ON pci.change_id = pc.id
+          WHERE pc.status='approved' AND pc.price_type IN ('sale','dual')
+            AND pc.effective_date <= CURRENT_DATE
+            AND (pc.apply_scope = 'all' OR pc.target_store_id = $1)
+            AND pci.product_id = ANY($2::bigint[])`, [storeId, pids]);
+      const repriced = new Set<number>(pr.map((r: any) => Number(r.product_id)));
       for (const ln of eligible) {
         const days = daysLeft.get(Number(ln.p.id));
         if (days === undefined) continue;                  // 无在库临期批次
+        if (repriced.has(Number(ln.p.id))) continue;       // 已生效调价覆盖：不再叠加临期层
         // 区间归属：档位按 days 升序排，命中第一个 days_left ≤ days 的档（= 剩余天数落入的区间）。
         // 常规配置（越临期折越深）下即最深档；剩余天数超出全部档位 → 不自动折扣
         const hit = tiers.find((t: any) => days <= t.days);
@@ -501,10 +512,11 @@ class PromotionsService {
     }
     const status = dto.startNow ? '进行中' : '排期';
     const rows = await q(
-      `INSERT INTO promotions (store_id, name, kind, rules, scope, start_at, end_at, status, created_by)
-       VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8,$9) RETURNING *`,
+      `INSERT INTO promotions (store_id, name, kind, rules, scope, start_at, end_at, status, created_by, is_stackable)
+       VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8,$9,$10) RETURNING *`,
       [user.storeId, dto.name, dto.kind, JSON.stringify(dto.rules),
-       dto.scope ? JSON.stringify(dto.scope) : null, startAt, endAt, status, user.sub]);
+       dto.scope ? JSON.stringify(dto.scope) : null, startAt, endAt, status, user.sub,
+       dto.isStackable === true]);
     await audit(user.storeId, user.sub, '促销', 'promotion.create', 'promotion', rows[0].id,
       { name: dto.name, kind: dto.kind, status });
     return rows[0];

@@ -146,13 +146,13 @@ export async function renderConsign(host, opts = {}) {
         <span class="pill">联营费用 ${money(d.feeTotal)}</span>
       </div>
       ${rows.length ? `<div style="margin-top:10px"><b>销售小票（${rows.length} 单，可下钻）</b>
-        <table><thead><tr><th>单号</th><th>渠道</th><th>日期</th><th class="num">数量</th><th class="num">金额</th></tr></thead>
-        <tbody>${rows.map(r => `<tr><td style="font-family:var(--mono)">${esc(r.order_no)}</td><td class="muted">${esc(r.channel)}</td>
+        <table><thead><tr><th class="seq">序号</th><th>单号</th><th>渠道</th><th>日期</th><th class="num">数量</th><th class="num">金额</th></tr></thead>
+        <tbody>${rows.map((r, i) => `<tr><td class="seq">${i + 1}</td><td style="font-family:var(--mono)">${esc(r.order_no)}</td><td class="muted">${esc(r.channel)}</td>
           <td>${String(r.order_date).slice(0, 10)}</td><td class="num">${Number(r.qty)}</td><td class="num">${money(r.amount)}</td></tr>`).join('')}</tbody></table>
       </div>` : '<div class="empty" style="margin-top:8px">该区间无联营销售（或已被对账单吸收）</div>'}
       ${d.fees.length ? `<div style="margin-top:10px"><b>联营费用（收方向 · 未入购销对账）</b>
-        <table><thead><tr><th>费用单号</th><th>类型</th><th>日期</th><th class="num">金额</th></tr></thead>
-        <tbody>${d.fees.map(f => `<tr><td style="font-family:var(--mono)">${esc(f.feeNo)}</td><td>${esc(f.feeType)}</td>
+        <table><thead><tr><th class="seq">序号</th><th>费用单号</th><th>类型</th><th>日期</th><th class="num">金额</th></tr></thead>
+        <tbody>${d.fees.map((f, i) => `<tr><td class="seq">${i + 1}</td><td style="font-family:var(--mono)">${esc(f.feeNo)}</td><td>${esc(f.feeType)}</td>
           <td>${String(f.feeDate).slice(0, 10)}</td><td class="num">${money(f.amount)}</td></tr>`).join('')}</tbody></table></div>` : ''}
       <div class="doc-foot" style="margin-top:12px">
         <span class="muted">应结 = 净销售额 − 扣点 − 保底补差 − 联营费用</span>
@@ -171,10 +171,11 @@ export async function renderConsign(host, opts = {}) {
     const d = await must(get('/purchase/consign-recons'));
     const rows = (d.items || []).filter(r => !curSup || Number(r.supplier_id) === curSup);
     host.querySelector('#ccList').innerHTML = rows.length ? `
-      <table><thead><tr><th>对账单号</th><th>供应商</th><th>区间</th>
+      <table><thead><tr><th class="seq">序号</th><th>对账单号</th><th>供应商</th><th>区间</th>
         <th class="num">销售额</th><th class="num">净额</th><th class="num">扣点</th><th class="num">保底补差</th><th class="num">费用</th><th class="num">应结</th><th>状态</th><th></th></tr></thead>
-      <tbody>${rows.map(r => `
+      <tbody>${rows.map((r, i) => `
         <tr>
+          <td class="seq">${i + 1}</td>
           <td style="font-family:var(--mono);font-weight:600">${esc(r.recon_no)}</td>
           <td>${esc(r.supplier_name || '')}</td>
           <td class="muted">${String(r.period_start).slice(0, 10)} ~ ${String(r.period_end).slice(0, 10)}</td>
@@ -216,8 +217,8 @@ export async function renderConsign(host, opts = {}) {
         <div class="fld"><label>扣点率</label><b>${(Number(r.deduction_rate) * 100).toFixed(1)}%</b></div>
         <div class="fld"><label>保底销售额</label><b>${r.guarantee_sales ? money(r.guarantee_sales) : '未设'}</b></div>
       </div>
-      <table style="margin-top:10px"><thead><tr><th>单号</th><th>日期</th><th class="num">数量</th><th class="num">金额</th></tr></thead>
-      <tbody>${d.items.map(i => `<tr><td style="font-family:var(--mono)">${esc(i.order_no)}</td>
+      <table style="margin-top:10px"><thead><tr><th class="seq">序号</th><th>单号</th><th>日期</th><th class="num">数量</th><th class="num">金额</th></tr></thead>
+      <tbody>${d.items.map((i, idx) => `<tr><td class="seq">${idx + 1}</td><td style="font-family:var(--mono)">${esc(i.order_no)}</td>
         <td>${String(i.order_date).slice(0, 10)}</td><td class="num">${Number(i.qty)}</td><td class="num">${money(i.amount)}</td></tr>`).join('')}</tbody></table>
       <div class="doc-foot">
         <span class="muted">销售额 ${money(r.sales_total)} − 退货 ${money(r.return_total)} = 净 ${money(r.net_sales)}</span>

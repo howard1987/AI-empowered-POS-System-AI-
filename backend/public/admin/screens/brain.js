@@ -17,7 +17,7 @@ const APP_BTN = [
   { k: 'holidayStock', label: '🗓 节假日备货' },
   { k: 'weatherStock', label: '🌦 天气备货' },
   { k: 'memberPortraits', label: '👥 会员画像' },
-  { k: 'memberMarketing', label: '🎯 画像营销（V4.16.5）' },
+  { k: 'memberMarketing', label: '🎯 画像营销' },
 ];
 
 function payloadBrief(p) {
@@ -584,7 +584,7 @@ export async function render(view) {
             : '<span class="muted" style="font-size:11.5px">点行看明细</span>'}</td>
         </tr>`;
       }).join('')}</tbody></table>` : '<div class="empty">暂无建议（可点击「一键全量刷新」生成）</div>';
-    // 点行 → 建议明细弹窗（V4.14.9）
+    // 点行 → 建议明细弹窗
     view.querySelectorAll('[data-sg]').forEach(tr => tr.onclick = e => {
       if (e.target.closest('button')) return;   // 点按钮不触发明细
       const hit = arr.find(x => Number(x.id) === Number(tr.dataset.sg));

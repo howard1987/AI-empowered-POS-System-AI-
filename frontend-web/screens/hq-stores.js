@@ -140,15 +140,17 @@ export async function render(view) {
     }
     const isHqRow = r => r.org_type === 'hq';
     host.innerHTML = `<table><thead><tr>
+      <th class="seq">序号</th>
       <th style="width:78px">编码</th><th style="width:150px">门店名称</th><th style="width:74px">组织</th>
       <th style="width:84px">区域</th><th style="width:76px">状态</th><th style="width:86px">店长</th>
       <th style="width:70px">负责人</th><th style="width:104px">联系电话</th>
       <th style="width:66px">员工</th><th style="width:80px">门店特价</th>
       <th style="width:118px">同步节点</th><th style="width:112px">最近同步</th>
       <th style="width:210px">操作</th></tr></thead>
-    <tbody>${paginate(rows, 1, PAGE_SIZE).slice.map(r => {
+    <tbody>${paginate(rows, 1, PAGE_SIZE).slice.map((r, i) => {
       const hq = isHqRow(r);
       return `<tr data-id="${r.id}" style="cursor:pointer" title="双击查看门店详情">
+      <td class="seq">${(page - 1) * PAGE_SIZE + i + 1}</td>
       <td class="mono">${esc(r.store_no || '—')}</td>
       <td class="l" style="font-weight:600">${hq ? '🏢 ' : ''}${esc(r.name || '')}
         ${r.franchise === '加盟' ? '<span class="muted" style="font-size:11px">（加盟）</span>' : ''}</td>
@@ -205,8 +207,10 @@ export async function render(view) {
       const roles = (d.roles || []).map(r =>
         `<span class="tag" style="margin:2px 4px 2px 0">${esc(r.name)} <span class="muted">${r.permCount}点</span></span>`).join('') || '<span class="muted">未初始化</span>';
       const empHtml = emps.length ? `<table style="margin-top:6px"><thead><tr>
+          <th class="seq">序号</th>
           <th>工号</th><th>姓名</th><th>状态</th><th>角色</th><th>最近登录</th></tr></thead>
-        <tbody>${emps.map(e => `<tr>
+        <tbody>${emps.map((e, i) => `<tr>
+          <td class="seq">${i + 1}</td>
           <td class="mono">${esc(e.empNo)}</td><td>${esc(e.name)}</td>
           <td>${esc(e.status)}</td>
           <td>${(e.roles || []).map(r => esc(r.name)).join('、') || '—'}</td>
@@ -302,8 +306,8 @@ export async function render(view) {
       </div>
       <div class="fld"><label>姓名 <span class="muted" id="hgNameHint" style="font-weight:400"></span></label><input id="hgName" maxlength="32" style="width:100%"></div>
       <div class="fld"><label>手机号</label><input id="hgPhone" maxlength="20" style="width:100%"></div>
-      <div class="fld"><label>登录密码</label><input id="hgPw" type="password" autocomplete="new-password" style="width:100%">
-        <div class="muted" id="hgPwHint" style="font-size:11.5px;margin-top:4px"></div></div>
+      <div class="fld" style="flex-direction:column;align-items:flex-start;gap:4px"><label style="min-width:0;text-align:left">登录密码</label><input id="hgPw" type="password" autocomplete="new-password" style="width:100%">
+        <div class="muted" id="hgPwHint" style="font-size:11.5px"></div></div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
         <button class="btn" id="hgCancel">取消</button>
         <button class="btn pri" id="hgSave">💾 保存</button>

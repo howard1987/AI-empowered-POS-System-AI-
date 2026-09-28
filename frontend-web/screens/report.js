@@ -19,7 +19,7 @@ export async function render(view) {
           <input id="sdKw" placeholder="商品名称/条码" style="width:160px">
           <select id="sdCat" style="width:150px"><option value="">全部分类</option></select>
           <button class="btn pri" id="sdGo">查询</button>
-          <button class="btn" id="sdCsv">⬇ CSV 导出</button>
+          <button class="btn" id="sdCsv">导出</button>
         </div>
         <div id="sdBody" class="pg-host"></div>
       </div>
@@ -31,7 +31,7 @@ export async function render(view) {
         <div class="bar">
           <input type="date" id="mbFrom"> <span class="muted">至</span> <input type="date" id="mbTo">
           <button class="btn pri" id="mbGo">查询</button>
-          <button class="btn" id="mbCsv">⬇ CSV 导出</button>
+          <button class="btn" id="mbCsv">导出</button>
         </div>
         <div id="mbSum"></div>
         <div id="mbBody"></div>
@@ -45,7 +45,7 @@ export async function render(view) {
           <input type="date" id="emFrom"> <span class="muted">至</span> <input type="date" id="emTo">
           <select id="emCashier" style="width:150px"><option value="">全部收银员</option></select>
           <button class="btn pri" id="emGo">查询</button>
-          <button class="btn" id="emCsv">⬇ CSV 导出</button>
+          <button class="btn" id="emCsv">导出</button>
         </div>
         <div id="emBody"></div>
       </div>
@@ -59,7 +59,7 @@ export async function render(view) {
           <input id="ivKw" placeholder="商品名称/条码" style="width:160px">
           <select id="ivCat" style="width:150px"><option value="">全部分类</option></select>
           <button class="btn pri" id="ivGo">查询</button>
-          <button class="btn" id="ivCsv">⬇ CSV 导出</button>
+          <button class="btn" id="ivCsv">导出</button>
           <span class="muted">期初=区间起始日前累计净入；期末=期初+入库−出库（stock_flows 全量流水）</span>
         </div>
         <div id="ivBody"></div>
@@ -72,7 +72,7 @@ export async function render(view) {
         <div class="bar">
           <input type="date" id="gfFrom"> <span class="muted">至</span> <input type="date" id="gfTo">
           <button class="btn pri" id="gfGo">查询</button>
-          <button class="btn" id="gfCsv">⬇ CSV 导出</button>
+          <button class="btn" id="gfCsv">导出</button>
         </div>
         <div id="gfSum"></div>
         <div id="gfBody"></div>
@@ -84,7 +84,7 @@ export async function render(view) {
         <div class="bar">
           <input id="cpKw" placeholder="大类码/名称" style="width:160px">
           <button class="btn pri" id="cpGo">查询</button>
-          <button class="btn" id="cpCsv">⬇ CSV 导出</button>
+          <button class="btn" id="cpCsv">导出</button>
         </div>
         <div id="cpSum"></div>
         <div id="cpBody"></div>
@@ -98,7 +98,7 @@ export async function render(view) {
           <input id="clDoc" placeholder="单据号" style="width:120px">
           <input type="date" id="clFrom"> <span class="muted">至</span> <input type="date" id="clTo">
           <button class="btn pri" id="clGo">查询</button>
-          <button class="btn" id="clCsv">⬇ CSV 导出</button>
+          <button class="btn" id="clCsv">导出</button>
         </div>
         <div id="clBody"></div>
       </div>
@@ -131,11 +131,11 @@ export async function render(view) {
     }), {});
     view.querySelector('#cpSum').innerHTML = `<div class="muted">共 ${cpRows.length} 种券 · 在库合计 ${money(sum.inStock || 0)} 张 · 已核销 ${sum.used || 0} 张 · 让利合计 ${money(sum.benefit || 0)}</div>`;
     view.querySelector('#cpBody').innerHTML = cpRows.length ? `
-      <table><thead><tr><th>大类码</th><th>名称</th><th>类型</th><th class="num">入库总量</th><th class="num">在库</th>
+      <table><thead><tr><th class="seq">序号</th><th>大类码</th><th>名称</th><th>类型</th><th class="num">入库总量</th><th class="num">在库</th>
         <th class="num">未使用</th><th class="num">已核销</th><th class="num">已过期</th><th class="num">作废</th>
         <th class="num">核销率</th><th class="num">让利金额</th><th>状态</th></tr></thead>
-      <tbody>${cpRows.map(r => `<tr>
-        <td><code>${esc(r.code || '')}</code></td><td>${esc(r.name)}</td><td>${esc(r.type)}</td>
+      <tbody>${cpRows.map((r, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td><code>${esc(r.code || '')}</code></td><td>${esc(r.name)}</td><td>${esc(r.type)}</td>
         <td class="num">${r.stock_controlled ? Number(r.total_qty) : '不限'}</td>
         <td class="num">${r.stock_controlled ? Number(r.in_stock) : '—'}</td>
         <td class="num">${Number(r.unused_count || 0)}</td><td class="num">${Number(r.used_count || 0)}</td>
@@ -166,10 +166,10 @@ export async function render(view) {
     const d = await must(get('/reports/coupon-stock-log?' + p.toString())).catch(() => ({ rows: [], total: 0 }));
     clRows = d.rows || [];
     view.querySelector('#clBody').innerHTML = clRows.length ? `
-      <table><thead><tr><th>时间</th><th>动作</th><th>大类码</th><th>券名称</th><th>会员</th><th>经手人</th>
+      <table><thead><tr><th class="seq">序号</th><th>时间</th><th>动作</th><th>大类码</th><th>券名称</th><th>会员</th><th>经手人</th>
         <th class="num">变动</th><th class="num">可用库存</th><th>单据号</th><th>备注</th></tr></thead>
-      <tbody>${clRows.map(r => `<tr>
-        <td>${dt(r.created_at)}</td>
+      <tbody>${clRows.map((r, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td>${dt(r.created_at)}</td>
         <td><span class="tag ${clTypeColor[r.move_type] || ''}">${esc(r.move_type)}</span></td>
         <td><code>${esc(r.coupon_code || '')}</code></td><td>${esc(r.coupon_name || '')}</td>
         <td>${esc(r.member_name || '')}</td><td>${esc(r.operator_name || '系统')}</td>
@@ -201,19 +201,15 @@ export async function render(view) {
 
   drawTabs('sale');
 
-  /* ── CSV 导出（客户端生成，BOM 头保证 Excel 中文不乱码）── */
+  /* ── 导出（统一弹窗选 Excel / CSV 格式；BOM 头保证 Excel 中文不乱码）── */
   function csvDownload(name, headers, rows) {
-    const q = v => {
-      if (v === null || v === undefined) return '';
-      const s = String(v);
-      return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-    };
-    const csv = '\ufeff' + [headers.map(q).join(','), ...rows.map(r => r.map(q).join(','))].join('\r\n');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = name;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    const columns = headers.map((h, i) => ({ k: 'c' + i, t: h }));
+    const data = rows.map(arr => {
+      const o = {};
+      headers.forEach((_, i) => { o['c' + i] = arr[i]; });
+      return o;
+    });
+    openExportPicker({ filename: name.replace(/\.csv$/, ''), columns, rows: data });
   }
 
   /* ── 筛选数据源：分类 / 收银员 ── */
@@ -244,10 +240,10 @@ export async function render(view) {
     const t = sdTotal;
     const max = Math.max(...sdRows.map(r => Number(r.revenue)), 0);
     view.querySelector('#sdBody').innerHTML = sdRows.length ? `
-      <table><thead><tr><th>#</th><th>商品</th><th>分类</th><th class="num">销量</th><th class="num">单数</th>
+      <table><thead><tr><th class="seq">序号</th><th>商品</th><th>分类</th><th class="num">销量</th><th class="num">单数</th>
         <th class="num">销售额</th><th class="num">成本</th><th class="num">毛利</th><th class="num">毛利率</th><th class="num">占比</th></tr></thead>
       <tbody>${pg.slice.map((r, i) => `<tr>
-        <td class="num muted">${(pg.page - 1) * 10 + i + 1}</td>
+        <td class="num muted seq">${(pg.page - 1) * 10 + i + 1}</td>
         <td>${esc(r.name)}</td><td>${esc(r.category_name)}</td>
         <td class="num">${Number(r.qty)}</td><td class="num">${r.orderCount}</td>
         <td class="num"><b>${money(r.revenue)}</b></td>
@@ -290,10 +286,10 @@ export async function render(view) {
     const pg = paginate(mbRows, mbPage, 10);
     mbPage = pg.page;
     view.querySelector('#mbBody').innerHTML = mbRows.length ? `
-      <table><thead><tr><th>会员</th><th>等级</th><th class="num">消费次数</th><th class="num">消费额</th>
+      <table><thead><tr><th class="seq">序号</th><th>会员</th><th>等级</th><th class="num">消费次数</th><th class="num">消费额</th>
         <th class="num">毛利</th><th class="num">储值余额</th><th class="num">分红余额</th><th class="num">积分</th><th>最近消费</th></tr></thead>
-      <tbody>${pg.slice.map(r => `<tr>
-        <td>${esc(r.name || r.card_no)}<div class="muted" style="font-size:11px">${esc(r.phone || '')} · ${esc(r.card_no)}</div></td>
+      <tbody>${pg.slice.map((r, i) => `<tr>
+        <td class="num seq">${(mbPage - 1) * 10 + i + 1}</td><td>${esc(r.name || r.card_no)}<div class="muted" style="font-size:11px">${esc(r.phone || '')} · ${esc(r.card_no)}</div></td>
         <td>${esc(r.level_name)}</td>
         <td class="num">${r.orderCount}</td><td class="num"><b>${money(r.salesTotal)}</b></td>
         <td class="num">${money(r.profitTotal)}</td>
@@ -334,11 +330,11 @@ export async function render(view) {
     const pg = paginate(emRows, emPage, 10);
     emPage = pg.page;
     view.querySelector('#emBody').innerHTML = emRows.length ? `
-      <table><thead><tr><th>收银员</th><th class="num">单数</th><th class="num">应急单</th><th class="num">货值</th>
+      <table><thead><tr><th class="seq">序号</th><th>收银员</th><th class="num">单数</th><th class="num">应急单</th><th class="num">货值</th>
         <th class="num">促销</th><th class="num">销售额</th><th class="num">毛利</th><th class="num">客单价</th>
         <th class="num">退款单</th><th class="num">退款额</th></tr></thead>
-      <tbody>${pg.slice.map(r => `<tr>
-        <td>${esc(r.name)}<div class="muted" style="font-size:11px">${esc(r.emp_no)}</div></td>
+      <tbody>${pg.slice.map((r, i) => `<tr>
+        <td class="num seq">${(emPage - 1) * 10 + i + 1}</td><td>${esc(r.name)}<div class="muted" style="font-size:11px">${esc(r.emp_no)}</div></td>
         <td class="num">${r.orderCount}</td><td class="num">${r.emergencyCount}</td>
         <td class="num">${money(r.goodsTotal)}</td><td class="num">${money(r.promoTotal)}</td>
         <td class="num"><b>${money(r.salesTotal)}</b></td><td class="num">${money(r.profitTotal)}</td>
@@ -377,13 +373,13 @@ export async function render(view) {
     ivPage = pg.page;
     const t = ivTotal;
     view.querySelector('#ivBody').innerHTML = ivRows.length ? `
-      <table><thead><tr><th>#</th><th>商品</th><th>分类</th>
+      <table><thead><tr><th class="seq">序号</th><th>商品</th><th>分类</th>
         <th class="num">期初</th><th class="num">入库</th><th class="num">出库</th><th class="num">期末</th>
         <th class="num">销售单数</th><th class="num">销售额</th><th class="num">销售成本</th><th class="num">毛利</th><th class="num">毛利率</th></tr></thead>
       <tbody>${pg.slice.map((r, i) => {
         const endQty = Number(r.open_qty) + Number(r.in_qty) - Number(r.out_qty);
         return `<tr>
-        <td class="num muted">${(pg.page - 1) * 10 + i + 1}</td>
+        <td class="num muted seq">${(pg.page - 1) * 10 + i + 1}</td>
         <td>${esc(r.name)}<div class="muted" style="font-size:11px">${esc(r.base_unit || '')}</div></td>
         <td>${esc(r.category_name)}</td>
         <td class="num">${Number(r.open_qty)}</td>
@@ -444,10 +440,10 @@ export async function render(view) {
       <span class="pill gray">涉及 ${Number(s.kinds || 0)} 种商品</span></div>`;
     const pg = paginate(gfRows, 1, 15);
     view.querySelector('#gfBody').innerHTML = gfRows.length ? `
-      <table><thead><tr><th>时间</th><th>单号</th><th>商品</th><th class="num">数量</th>
+      <table><thead><tr><th class="seq">序号</th><th>时间</th><th>单号</th><th>商品</th><th class="num">数量</th>
         <th class="num">成本</th><th>来源</th><th>活动</th><th>收银员</th><th>备注</th></tr></thead>
-      <tbody>${pg.slice.map(r => `<tr>
-        <td>${dt(r.created_at)}</td>
+      <tbody>${pg.slice.map((r, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td>${dt(r.created_at)}</td>
         <td class="mono">${esc(r.order_no)}</td>
         <td>${esc(r.productName || '—')}</td>
         <td class="num">${Number(r.qty)}</td>
@@ -461,14 +457,14 @@ export async function render(view) {
       const pg2 = paginate(gfRows, p, 15);
       // 简单重绘：复用上面结构（数据量小直接整页渲染）
       view.querySelector('#gfBody').innerHTML = gfRows.length ? (() => {
-        const rows2 = pg2.slice.map(r => `<tr>
-          <td>${dt(r.created_at)}</td><td class="mono">${esc(r.order_no)}</td>
+        const rows2 = pg2.slice.map((r, i) => `<tr>
+          <td class="num seq">${(p - 1) * 15 + i + 1}</td><td>${dt(r.created_at)}</td><td class="mono">${esc(r.order_no)}</td>
           <td>${esc(r.productName || '—')}</td><td class="num">${Number(r.qty)}</td>
           <td class="num">${money(r.cost)}</td>
           <td><span class="tag ${String(r.source) === '促销自动' ? 'o' : 'b'}">${esc(r.source)}</span></td>
           <td>${esc(r.promoName || '—')}</td><td>${esc(r.cashier || '—')}</td>
           <td class="l muted" style="font-size:12px">${esc(r.remark || '')}</td></tr>`).join('');
-        return `<table><thead><tr><th>时间</th><th>单号</th><th>商品</th><th class="num">数量</th>
+        return `<table><thead><tr><th class="seq">序号</th><th>时间</th><th>单号</th><th>商品</th><th class="num">数量</th>
           <th class="num">成本</th><th>来源</th><th>活动</th><th>收银员</th><th>备注</th></tr></thead><tbody>${rows2}</tbody></table>${pg2.bar}`;
       })() : '';
     });

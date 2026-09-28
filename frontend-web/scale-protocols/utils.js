@@ -72,7 +72,7 @@ export function trimBytesGbk(bytes, maxLen) {
 }
 
 /**
- * 名称字段（V4.26.1 支持中文）
+ * 名称字段
  * - cfg.charset = gbk/gb2312 且传入 opts.nameBytes（后端 iconv-lite 编码好的字节）→ 直接下发中文
  * - 否则回落 ASCII 简称（老秤/无中文库场景）
  */

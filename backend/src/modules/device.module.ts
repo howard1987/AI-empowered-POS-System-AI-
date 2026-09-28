@@ -51,35 +51,43 @@ export const FIELD_POOL: Record<string, { key: string; label: string }[]> = {
     { key: 'pay', label: '支付' }, { key: 'change', label: '找零' }, { key: 'points', label: '积分' },
     { key: 'thanks', label: '感谢语' },
   ],
+  // V5.0.1：A5 七类单据字段池补全——电子签字（图片）/签字姓名（AI 识别）/业务员/大客户，
+  // 打印数据侧见 docprint.js docPrintData（signImg=签字图绝对地址、signName=识别姓名）
   inbound: [
     { key: 'store', label: '门店' }, { key: 'orderNo', label: '单号' }, { key: 'supplier', label: '供应商' },
-    { key: 'time', label: '日期' }, { key: 'operator', label: '经手人' }, { key: 'items', label: '明细' },
-    { key: 'total', label: '合计' }, { key: 'remark', label: '备注' },
+    { key: 'time', label: '日期' }, { key: 'operator', label: '经手人' }, { key: 'salesman', label: '业务员' },
+    { key: 'items', label: '明细' }, { key: 'total', label: '合计' }, { key: 'remark', label: '备注' },
+    { key: 'signImg', label: '电子签字(本店)' }, { key: 'signName', label: '签字姓名(本店)' }, { key: 'signImgBiz', label: '电子签字(业务员)' }, { key: 'signNameBiz', label: '签字姓名(业务员)' },
   ],
   return: [
     { key: 'store', label: '门店' }, { key: 'orderNo', label: '单号' }, { key: 'supplier', label: '供应商' },
-    { key: 'time', label: '日期' }, { key: 'operator', label: '经手人' }, { key: 'items', label: '明细' },
-    { key: 'total', label: '合计' }, { key: 'reason', label: '退货原因' }, { key: 'remark', label: '备注' },
+    { key: 'time', label: '日期' }, { key: 'operator', label: '经手人' }, { key: 'salesman', label: '业务员' },
+    { key: 'items', label: '明细' }, { key: 'total', label: '合计' }, { key: 'reason', label: '退货原因' },
+    { key: 'remark', label: '备注' }, { key: 'signImg', label: '电子签字(本店)' }, { key: 'signName', label: '签字姓名(本店)' }, { key: 'signImgBiz', label: '电子签字(业务员)' }, { key: 'signNameBiz', label: '签字姓名(业务员)' },
   ],
   transfer: [
     { key: 'store', label: '门店' }, { key: 'orderNo', label: '单号' }, { key: 'from', label: '调出' },
     { key: 'to', label: '调入' }, { key: 'time', label: '日期' }, { key: 'operator', label: '经手人' },
     { key: 'items', label: '明细' }, { key: 'total', label: '合计' }, { key: 'remark', label: '备注' },
+    { key: 'signImg', label: '电子签字(本店)' }, { key: 'signName', label: '签字姓名(本店)' }, { key: 'signImgBiz', label: '电子签字(业务员)' }, { key: 'signNameBiz', label: '签字姓名(业务员)' },
   ],
   count: [
     { key: 'store', label: '门店' }, { key: 'orderNo', label: '单号' }, { key: 'time', label: '日期' },
     { key: 'counter', label: '盘点人' }, { key: 'items', label: '明细' }, { key: 'diff', label: '差异' },
-    { key: 'remark', label: '备注' },
+    { key: 'remark', label: '备注' }, { key: 'signImg', label: '电子签字(本店)' }, { key: 'signName', label: '签字姓名(本店)' }, { key: 'signImgBiz', label: '电子签字(业务员)' }, { key: 'signNameBiz', label: '签字姓名(业务员)' },
   ],
   loss: [
     { key: 'store', label: '门店' }, { key: 'orderNo', label: '单号' }, { key: 'time', label: '日期' },
     { key: 'operator', label: '经手人' }, { key: 'items', label: '明细' }, { key: 'total', label: '合计' },
     { key: 'reason', label: '报损原因' }, { key: 'remark', label: '备注' },
+    { key: 'signImg', label: '电子签字(本店)' }, { key: 'signName', label: '签字姓名(本店)' }, { key: 'signImgBiz', label: '电子签字(业务员)' }, { key: 'signNameBiz', label: '签字姓名(业务员)' },
   ],
   recon: [
     { key: 'store', label: '门店' }, { key: 'supplier', label: '供应商' }, { key: 'period', label: '账期' },
-    { key: 'orderNo', label: '单号' }, { key: 'time', label: '日期' }, { key: 'items', label: '明细' },
-    { key: 'total', label: '应付合计' }, { key: 'confirm', label: '确认' }, { key: 'remark', label: '备注' },
+    { key: 'orderNo', label: '单号' }, { key: 'time', label: '日期' }, { key: 'salesman', label: '业务员' },
+    { key: 'bigcustomer', label: '大客户' },
+    { key: 'items', label: '明细' }, { key: 'total', label: '应付合计' }, { key: 'confirm', label: '确认' },
+    { key: 'remark', label: '备注' }, { key: 'signImg', label: '电子签字(本店)' }, { key: 'signName', label: '签字姓名(本店)' }, { key: 'signImgBiz', label: '电子签字(业务员)' }, { key: 'signNameBiz', label: '签字姓名(业务员)' },
   ],
   settlement: [
     { key: 'store', label: '门店' }, { key: 'supplier', label: '供应商' }, { key: 'period', label: '账期' },

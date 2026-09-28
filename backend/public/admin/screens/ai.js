@@ -1,4 +1,4 @@
-import { get, post, must, esc, dt, toast, imgUrl } from '../api.js';
+import { get, post, del, must, esc, dt, toast, imgUrl } from '../api.js';
 import { openDetailModal, pagerBar, bindPager } from '../common-ui.js';
 import { attachProductSearch } from '../product-search.js';
 
@@ -112,10 +112,16 @@ export async function render(view) {
         <td class="num">${t.target_count ?? t.targetCount ?? '—'}${(t.total_products ?? t.totalProducts) ? `<div class="muted" style="font-size:11px">商品 ${t.done_products ?? 0}/${t.total_products ?? 0} 已采</div>` : ''}</td>
         <td class="muted">${esc(t.creator_name || '')}</td><td>${dt(t.created_at || t.createdAt)}</td>
         <td>${t.status === '待执行' ? `<button class="btn sm" data-s="${t.id}">开始</button>` : ''}
-            ${t.status === '进行中' && t.task_type === '训练' ? `<button class="btn sm pri" data-f="${t.id}">完成</button>` : ''}</td>
+            ${t.status === '进行中' && t.task_type === '训练' ? `<button class="btn sm pri" data-f="${t.id}">完成</button>` : ''}
+            ${['待执行', '待审核'].includes(t.status) ? `<button class="btn sm warn" data-del="${t.id}">删除</button>` : ''}</td>
       </tr>`).join('')}</tbody></table>` : '<div class="empty">暂无工单（创建任务即生成 AICJ/AIXL/AIPG 工单号）</div>';
     view.querySelectorAll('[data-s]').forEach(b => b.onclick = async () => {
       await must(post(`/ai/tasks/${b.dataset.s}/start`), '任务已开始'); await tasks();
+    });
+    // V5.0.2：未开始/未审核工单可删除（后端同口径校验；样本解除挂接但保留）
+    view.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+      if (!confirm('确认删除该工单？已挂接样本将解除关联（样本本身保留）。')) return;
+      await must(del(`/ai/tasks/${b.dataset.del}`), '工单已删除'); await tasks();
     });
     view.querySelectorAll('[data-f]').forEach(b => b.onclick = async () => {
       await must(post(`/ai/tasks/${b.dataset.f}/finish`), '任务已完成（生成模型版本）'); await tasks(); await models();
@@ -358,6 +364,10 @@ export async function render(view) {
       const hide = mask.querySelector('#bpHide').checked;
       const d = await must(get(`/products?size=100${kw ? `&keyword=${kw}` : ''}${cat ? `&categoryId=${cat}` : ''}`));
       let items = d.items || d || [];
+      // V5.0.2：按近 90 天消费频次降序——卖得越快的商品越优先采集
+      let freqMap = {};
+      try { const f = await must(get('/ai/products-frequency')); freqMap = f?.freq || {}; } catch { /* 无数据保持原序 */ }
+      items = [...items].sort((a, b) => (Number(freqMap[b.id]) || 0) - (Number(freqMap[a.id]) || 0));
       if (hide) {
         try {
           const smp = await must(get(`/ai/samples?page=1&size=100`));
@@ -371,12 +381,13 @@ export async function render(view) {
         } catch { /* 过滤失败则显示全部 */ }
       }
       mask.querySelector('#bpList').innerHTML = items.length ? `
-        <table><thead><tr><th style="width:34px"></th><th>商品</th><th>条码</th><th class="num">售价</th><th>主供应商</th></tr></thead>
+        <table><thead><tr><th style="width:34px"></th><th>商品</th><th>条码</th><th class="num">90天销量</th><th class="num">售价</th><th>主供应商</th></tr></thead>
         <tbody>${items.map(p => `<tr>
           <td><input type="checkbox" data-pk="${p.id}" ${picked.has(Number(p.id)) ? 'checked' : ''}></td>
           <td>${esc(p.name)}</td>
           <td class="muted mono">${esc(p.barcode || '—')}</td>
-          <td class="num">¥${Number(p.sell_price ?? 0).toFixed(2)}</td>
+          <td class="num" style="font-weight:700;color:${(Number(freqMap[p.id]) || 0) > 0 ? 'var(--pri)' : 'var(--ink-3,#8a8577)'}">${Number(freqMap[p.id]) || 0}</td>
+          <td class="num">${Number(p.sell_price ?? 0).toFixed(2)}</td>
           <td class="muted">${esc(p.supplier_name || '—')}</td>
         </tr>`).join('')}</tbody></table>
         ${items.length >= 100 ? '<div class="muted" style="padding:4px 0">仅显示前 100 条，请用关键字/分类缩小范围</div>' : ''}`

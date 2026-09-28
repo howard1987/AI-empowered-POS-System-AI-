@@ -156,7 +156,7 @@ export async function render(view) {
         </div>
       </div>
 
-      <!-- 供应商往来账（V4.14.0 A2：移至 A5 结算单预览下方） -->
+      <!-- 供应商往来账 -->
       <div class="card" style="margin-bottom:14px;padding-bottom:16px">
         <h3>供应商往来账 </h3>
         <div class="tbl-min pg-host" style="padding:8px 18px" id="lList"></div>

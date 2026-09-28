@@ -115,7 +115,7 @@ export const imgUrl = p => {
 };
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-/** 时间显示（V4.8.15 时区修复）：timestamptz 转**本地**时区；纯日期串（DATE 列）原样返回防二次偏移 */
+/** 时间显示：timestamptz 转**本地**时区；纯日期串（DATE 列）原样返回防二次偏移 */
 export const dt = s => {
   if (!s) return '—';
   const str = String(s);

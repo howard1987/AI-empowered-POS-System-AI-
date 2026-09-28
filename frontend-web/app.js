@@ -166,7 +166,11 @@ function loginView() {
     <div id="lgForm">
       <label>服务地址</label><input id="lgBase" value="${esc(API.base)}">
       <label>工号</label><input id="lgNo" value="" autocomplete="username">
-      <label>密码</label><input id="lgPw" type="password" value="" autocomplete="current-password">
+      <label>密码</label>
+      <div style="position:relative">
+        <input id="lgPw" type="password" value="" autocomplete="current-password" style="width:100%;padding-right:38px">
+        <button type="button" data-eye="lgPw" title="显示密码" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);border:none;background:none;cursor:pointer;font-size:15px;line-height:1;color:var(--ink-3);padding:2px">👁</button>
+      </div>
       <button class="btn pri" id="lgGo">登 录</button>
     </div>
     <div id="lgReg" class="hidden">
@@ -174,7 +178,11 @@ function loginView() {
       <label>门店名称</label><input id="rgStore" type="text" maxlength="60" placeholder="如：乐美鲜祥成家园店">
       <label>管理员工号</label><input id="rgNo" type="text" maxlength="32" placeholder="自定义，如 BOSS / 0001">
       <label>姓名</label><input id="rgName" type="text" maxlength="30" placeholder="管理员姓名">
-      <label>登录密码</label><input id="rgPw" type="password" placeholder="至少 8 位，含字母与数字" autocomplete="new-password">
+      <label>登录密码</label>
+      <div style="position:relative">
+        <input id="rgPw" type="password" placeholder="至少 8 位，含字母与数字" autocomplete="new-password" style="width:100%;padding-right:38px">
+        <button type="button" data-eye="rgPw" title="显示密码" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);border:none;background:none;cursor:pointer;font-size:15px;line-height:1;color:var(--ink-3);padding:2px">👁</button>
+      </div>
       <button class="btn pri" id="rgGo">创建管理员并登录</button>
     </div>
     <a href="javascript:void(0)" id="lgSwitch" class="hidden" style="display:none;margin-top:12px;text-align:center;font-size:12px;color:var(--pri);cursor:pointer"></a>
@@ -212,6 +220,16 @@ function loginView() {
     route();
   };
   view.querySelector('#lgPw').addEventListener('keydown', e => { if (e.key === 'Enter') view.querySelector('#lgGo').click(); });
+
+  // V5.0.3：密码可见性切换（登录 / 创建管理员两处，👁 显示 → 🙈 隐藏）
+  view.querySelectorAll('[data-eye]').forEach(b => b.onclick = () => {
+    const inp = view.querySelector('#' + CSS.escape(b.dataset.eye));
+    if (!inp) return;
+    const show = inp.type === 'password';
+    inp.type = show ? 'text' : 'password';
+    b.textContent = show ? '🙈' : '👁';
+    b.title = show ? '隐藏密码' : '显示密码';
+  });
 
   // V4.25.0 ②：首次运行创建管理员（与收银端同一套 bootstrap；不写死 ADMIN/admin123）
   view.querySelector('#rgGo').onclick = async () => {
@@ -296,18 +314,13 @@ function webDeviceCode() {
   return dc;
 }
 
-/* ── V4.25.7 多标签页导航条：打开过的页面列成标签，可关闭/切换（首页固定；刷新后保留） ── */
+/* ── V5.0.3 多标签页导航条：打开过的页面列成标签，可关闭/切换（首页固定）──
+   V5.0.3 变更：标签页记录仅对当次有效——不再持久化到 localStorage，
+   刷新页面 / 服务重启 / 浏览器重启后标签页重置（只保留首页）。
+   升级时顺带清掉历史版本写入的持久化键。 */
 const TAB_HOME = { key: 'home', title: '首页', icon: '🏠' };
-const TAB_STORE = 'admin_open_tabs_v1';
-let openTabs = [];                     // [{key,title,icon}]
-function loadTabs() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(TAB_STORE) || '{}');
-    openTabs = Array.isArray(raw.tabs) ? raw.tabs.filter(t => t && t.key && LEAF[t.key]) : [];
-  } catch { openTabs = []; }
-  if (!openTabs.some(t => t.key === 'home')) openTabs.unshift({ ...TAB_HOME });
-}
-function saveTabs() { try { localStorage.setItem(TAB_STORE, JSON.stringify({ tabs: openTabs })); } catch { /* 忽略 */ } }
+try { localStorage.removeItem('admin_open_tabs_v1'); } catch { /* 隐私模式忽略 */ }
+let openTabs = [{ ...TAB_HOME }];      // [{key,title,icon}]，仅内存
 function renderTabs(activeKey) {
   const box = document.getElementById('tabbar');
   if (!box) return;
@@ -325,7 +338,6 @@ function closeTab(k, activeKey) {
   const i = openTabs.findIndex(t => t.key === k);
   if (i < 0) return;
   openTabs.splice(i, 1);
-  saveTabs();
   if (k === activeKey) {
     const next = openTabs[Math.min(i, openTabs.length - 1)] || openTabs[0] || TAB_HOME;
     location.hash = '#/' + next.key;
@@ -339,11 +351,9 @@ function openTab(hit, key) {
   const t = { key, title: hit.item.title || key, icon: hit.item.icon || '' };
   const ex = openTabs.find(x => x.key === key);
   if (ex) { ex.title = t.title; ex.icon = t.icon; } else openTabs.push(t);
-  saveTabs();
 }
 function clearTabs() {
-  openTabs = [];
-  try { localStorage.removeItem(TAB_STORE); } catch { /* 忽略 */ }
+  openTabs = [{ ...TAB_HOME }];        // 仅重置会话标签，不落盘
   const box = document.getElementById('tabbar');
   if (box) { box.style.display = 'none'; box.innerHTML = ''; }
 }
@@ -386,8 +396,7 @@ async function route() { if (!API.token) { loginView(); sideShow.style.display =
   let hit = LEAF[key] || LEAF['home'];
   // V5.0.0：门店账号手输总部路由 → 回首页（服务端同样会 403，双保险）
   if (hit.item.hqOnly && !isHqUser()) { hit = LEAF['home']; if (key !== 'home') location.hash = '#/home'; }
-  // V4.25.7：登记/激活标签条
-  if (!openTabs.length) loadTabs();
+  // V4.25.7：登记/激活标签条（V5.0.3 起标签仅会话内有效，不再从存储恢复）
   openTab(hit, hit.item.key);
   renderTabs(hit.item.key);
   nav.querySelectorAll('a').forEach(a => a.classList.toggle('on', a.dataset.key === hit.item.key));
@@ -409,6 +418,9 @@ async function route() { if (!API.token) { loginView(); sideShow.style.display =
     view.innerHTML = '';
     view.appendChild(cached);
     decorateDeep(cached);
+    // V5.0.3：缓存页重新可见时回调 __onShow——列表屏重拉数据，避免「商品档案改了、
+    // 库存总览/单据列表还是旧数据」（页面缓存导致的无刷新问题）
+    try { cached.__onShow && cached.__onShow(); } catch { /* 静默 */ }
     return;
   }
   const host = document.createElement('div');
@@ -436,6 +448,11 @@ function decorateDeep(root) {
   enhancePick(root);                             // V4.9.14 动态节点自动转自绘下拉
   enhanceColResize(root);                        // V4.26.2 表格列宽可调（拖动/双击自适应/右键恢复）
   autoAnchors(root);                             // V4.26.3 长页面锚点导航（声明式，见下）
+  // V5.0.3 通病根治：业务文本/数字输入统一禁用浏览器账号/密码自动填充启发式
+  //（空单元格常被误当用户名触发保存密码弹窗）。带 datalist（list 属性）的除外——off 会禁用联想。
+  root.querySelectorAll?.('input[type="text"],input[type="number"],input:not([type])').forEach(inp => {
+    if (!inp.hasAttribute('autocomplete') && !inp.hasAttribute('list')) inp.setAttribute('autocomplete', 'off');
+  });
 }
 /* V4.26.3 声明式锚点导航：页面只要给容器加 data-anchor-scope，内部小节加 data-anchor，
    即自动生成吸顶胶囊条 + 滚动高亮；anchorNav 内部有 data-anchored 防重，重复调用安全。 */

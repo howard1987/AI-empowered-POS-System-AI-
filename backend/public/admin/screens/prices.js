@@ -3,10 +3,10 @@ import { findProduct, fuzzyProducts, showSuggest, hideSug } from './docentry.js'
 import { paginate, bindPager } from '../common-ui.js';
 import { transmitScaleItems } from '../scale-protocols/transmit.js';
 
-/** 商品调价单（V4.8.20 重构）：进价/售价同行修改 + 待审核→审核生效→作废 审核流 */
+/** 商品调价单：进价/售价同行修改 + 待审核→审核生效→作废 审核流 */
 export async function render(view) {
   const today = new Date().toISOString().slice(0, 10);
-  /** 行结构：与采购单据（docentry）对齐，_q = 行内条码格输入缓存（V4.26.2） */
+  /** 行结构：与采购单据（docentry）对齐，_q = 行内条码格输入缓存 */
   const blankLine = () => ({ productId: null, name: '', barcode: '', unit: '', oldSale: '', newSale: null, oldCost: null, newCost: null, supplierId: null, _q: '' });
   let lines = [];
   let pcs = [];
@@ -77,14 +77,14 @@ export async function render(view) {
 
   const $ = s => view.querySelector(s);
 
-  // ── 连锁调价：范围选择 + 门店下拉（V4.26.5） ──
+  // ── 连锁调价：范围选择 + 门店下拉 ──
   let stores = [];
   async function loadStores() {
     try { stores = await must(get('/basic/stores')); } catch { stores = []; }
     const cur = Number(API.user?.storeId || 1);
     $('#pcStore').innerHTML = stores.map(s => `<option value="${s.id}"${Number(s.id) === cur ? ' selected' : ''}>${esc(s.name)}${Number(s.id) === cur ? '（本店）' : ''}</option>`).join('');
   }
-  // 范围/门店切换 → 现价与差额口径都变了：清缓存现价并重刷（V4.26.5）
+  // 范围/门店切换 → 现价与差额口径都变了：清缓存现价并重刷
   function onScopeChange() {
     const local = $('#pcScope').value === 'local';
     $('#pcStoreWrap').style.display = local ? '' : 'none';
@@ -234,7 +234,7 @@ export async function render(view) {
     const has = v => v !== null && v !== undefined && v !== '';
     const valid = lines.filter(l => l.productId && (has(l.newSale) || has(l.newCost)));
     if (!valid.length) return toast('请至少为一个商品填写新售价或新进价');
-    // 进价调整但缺供应商 → 弹窗让用户选供应商（V4.26.5）
+    // 进价调整但缺供应商 → 弹窗让用户选供应商
     const needSup = valid.filter(l => has(l.newCost) && !l.supplierId);
     if (needSup.length) {
       const okPick = await pickSuppliers(needSup);
@@ -265,7 +265,7 @@ export async function render(view) {
   });
   $('#pcClear').addEventListener('click', () => { lines = [blankLine()]; drawLines(); });
 
-  // 调价商品缺供应商 → 弹窗逐行选择（V4.26.5）：进价落地供应商基线必须有 supplierId
+  // 调价商品缺供应商 → 弹窗逐行选择：进价落地供应商基线必须有 supplierId
   async function pickSuppliers(rows) {
     let suppliers = [];
     try { suppliers = await must(get('/purchase/suppliers')); } catch { suppliers = []; }
@@ -525,7 +525,7 @@ export async function render(view) {
     };
   }
 
-  /** 生鲜商品一键实际传秤（V4.26.5）：复用共享 transmitScaleItems，替换原 CSV 导出 */
+  /** 生鲜商品一键实际传秤：复用共享 transmitScaleItems，替换原 CSV 导出 */
   async function doScaleTransmit(fresh) {
     let cfg = {};
     try { cfg = await must(get('/scale-transmission/config')); }

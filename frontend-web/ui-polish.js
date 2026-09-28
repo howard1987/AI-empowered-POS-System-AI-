@@ -3,7 +3,7 @@
  *
  *   installBackToTop()                 返回顶部：#view 滚动 > 360px 浮出，点击回顶
  *   anchorNav(view, opts)              长页面锚点导航：扫小节 → 吸顶胶囊条 + 滚动高亮
- *   applyGlass() / loadGlassSetting()  液态玻璃开关：读 ui.glass.enabled → html.no-glass（V4.26.3）
+ *   applyGlass() / loadGlassSetting()  液态玻璃开关：读 ui.glass.enabled → html.no-glass
  *   segHtml(opts)                      状态筛选（分段控件，带数量角标）
  *   stepsHtml(list, cur)               步骤导航
  *   hl(text, kw) / noResult(text)      搜索命中高亮 / 无结果空态
@@ -49,7 +49,7 @@ export function installBackToTop() {
 }
 
 /**
- * ③-4 液态玻璃开关（V4.26.3）
+ * ③-4 液态玻璃开关
  * 关掉时给 <html> 加 .no-glass，样式层统一回退为实底（低配收银机 / Win7 省掉 backdrop-filter 开销）
  */
 export function applyGlass(on) {
@@ -81,7 +81,7 @@ export function anchorNav(view, opts = {}) {
     ? view.querySelector(opts.scope)
     : (opts.scope || view);
   if (!scope) return;
-  /* 挂点规则（V4.26.3 修复）：scope 本身就是页面根时，胶囊条要放在页面内第一个位置；
+  /* 挂点规则：scope 本身就是页面根时，胶囊条要放在页面内第一个位置；
      此前一律 insertBefore(scope)，遇到「卡片直接挂在 view 根下」的页面（members）会把条插到 #view 外面。 */
   const mount = scope === view ? view : scope.parentNode;
   // refresh=true：容器内容重绘后重建（先摘掉挂在同层的旧胶囊条）

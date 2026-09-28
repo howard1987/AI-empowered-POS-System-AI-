@@ -1076,7 +1076,15 @@ class SalesController {
       [...params, sz, (pn - 1) * sz]);
     const total = Number((await q1<{ n: string }>(
       `SELECT count(*)::int AS n FROM sales_orders o WHERE ${where}`, params))?.n ?? 0);
-    return { page: pn, size: sz, total, items };
+    // V5.0.1：查询范围汇总（前端固定「合计」行数据源：货值/促销/券/抹零/应收/毛利）
+    const s = await q1<any>(
+      `SELECT COALESCE(SUM(o.goods_amount),0) AS goods, COALESCE(SUM(o.promo_amount),0) AS promo,
+              COALESCE(SUM(o.coupon_amount),0) AS coupon, COALESCE(SUM(o.round_amount),0) AS rnd,
+              COALESCE(SUM(o.payable_amount),0) AS payable, COALESCE(SUM(o.profit_amount),0) AS profit
+         FROM sales_orders o WHERE ${where}`, params);
+    return { page: pn, size: sz, total, items,
+      sums: { goods: Number(s?.goods ?? 0), promo: Number(s?.promo ?? 0), coupon: Number(s?.coupon ?? 0),
+              round: Number(s?.rnd ?? 0), payable: Number(s?.payable ?? 0), profit: Number(s?.profit ?? 0) } };
   }
 
   /** V4.22.0 销售明细：销售商品行级流水（行=单据×商品），分页 + 时间段/关键字/收银员/渠道过滤 + 合计 */
@@ -1129,16 +1137,18 @@ class SalesController {
          JOIN sales_orders o ON o.id = si.order_id
          JOIN products p ON p.id = si.product_id
         WHERE ${where}`, params);
-    let sumProfit = 0;
+    let sumProfit = 0, sumCost = 0;
     if (canCost) {
       const ps = await q1<any>(
-        `SELECT COALESCE(SUM(si.line_amount - si.line_cost),0) AS profit
+        `SELECT COALESCE(SUM(si.line_amount - si.line_cost),0) AS profit,
+                COALESCE(SUM(si.line_cost),0) AS cost
            FROM sale_items si JOIN sales_orders o ON o.id = si.order_id JOIN products p ON p.id = si.product_id
           WHERE ${where}`, params);
       sumProfit = Number(ps?.profit ?? 0);
+      sumCost = Number(ps?.cost ?? 0);
     }
     return { page: pn, size: sz, total: Number(sum?.n ?? 0),
-      sumQty: Number(sum?.qty ?? 0), sumAmount: Number(sum?.amount ?? 0), sumProfit, items };
+      sumQty: Number(sum?.qty ?? 0), sumAmount: Number(sum?.amount ?? 0), sumProfit, sumCost, items };
   }
 
   /* ═══════════ 配货拣货（6.11 拣货单：线上订单 → 扫码校验 → 缺货登记 → 完成） ═══════════ */

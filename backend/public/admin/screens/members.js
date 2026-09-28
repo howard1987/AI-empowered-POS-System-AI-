@@ -2,7 +2,7 @@ import { get, post, put, must, money, esc, dt, toast, API, unwrap } from '../api
 import { openDetailModal, exportRows } from '../common-ui.js';
 import { anchorNav, segHtml, bindSeg } from '../ui-polish.js';   // V4.26.3：锚点导航 / 统一状态筛选
 
-/** 会员管理（V4.14.0 M）：
+/** 会员管理：
  *  建档（手机号/姓名/生日 + 隐私协议点击可查看全文、可更新）→ 充值档位（已上移至列表之上）
  *  → 会员列表（每页 10 条 + 固定容器高度 + 双击行弹详情 + 重置密码）
  *  会员等级价格说明卡：读设置 member.level_price_mode / member.level_discount 人话解释当前联动。
@@ -186,13 +186,15 @@ export async function render(view) {
     mask.className = 'drawer-mask';
     mask.innerHTML = `
       <div class="drawer">
-        <h3>会员详情：${esc(m.name || '—')}（${esc(m.card_no)}） </h3>
+        <h3>会员详情</h3>
+        <div class="bar muted">👤 ${esc(m.name || '—')} · 卡号 <b>${esc(m.card_no)}</b>${m.phone ? ' · ' + esc(m.phone) : ''}</div>
         <div class="bar muted">等级 <span class="tag b">${esc(m.level_name || '普通会员')}</span> · 积分 ${Number(m.points)}
-          · 注册 ${dt(m.created_at)} · 渠道 ${esc(m.register_channel || '到店')}
+          · 注册时间 ${dt(m.created_at)} · 渠道 ${(String(m.register_channel || '到店').match(/H5|小程序/) ? '线上' : '线下')}<span class="muted" style="font-size:11px">（${esc(m.register_channel || '到店')}）</span>
           · 生日 ${m.birthday ? String(m.birthday).slice(0, 10) : '未填'}
           · 密保 ${secN ? `<span class="tag g">${secN} 问</span>` : '<span class="tag y">未设置</span>'}
           ${m.locked_until && new Date(m.locked_until) > new Date() ? ' · <span class="tag r">登录锁定中</span>' : ''}</div>
-        <div class="grid kpis" style="grid-template-columns:repeat(4,1fr)">
+        <div class="grid kpis" style="grid-template-columns:repeat(5,1fr)">
+          <div class="kpi"><div class="t">积分</div><div class="v">${Number(acc.points ?? m.points ?? 0).toLocaleString()}</div></div>
           <div class="kpi"><div class="t">余额</div><div class="v">${money(acc.balance)}</div></div>
           <div class="kpi"><div class="t">本金余额</div><div class="v">${money(acc.principal_balance)}</div></div>
           <div class="kpi"><div class="t">赠送余额</div><div class="v">${money(acc.gift_balance)}</div></div>

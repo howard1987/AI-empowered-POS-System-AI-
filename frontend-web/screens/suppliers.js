@@ -68,7 +68,7 @@ export async function render(view) {
           <div class="fld" style="grid-column:1/-1"><label>地址</label><input id="nAddr" placeholder="供应商地址（选填）"></div>
           <div class="fld" style="grid-column:1/-1"><label>备注</label><input id="nRemark"></div>
         </div>
-        <div class="doc-tip">💡 联营扣点 = 联营供应商销售商品毛利的百分比（整数，如 15 = 15%），仅「联营」可填；购销供应商该行锁定。费用（陈列/返利等）默认不计入分红池基数（V4.3.6）。</div>
+        <div class="doc-tip">💡 联营扣点 = 联营供应商销售商品毛利的百分比（整数，如 15 = 15%），仅「联营」可填；购销供应商该行锁定。费用（陈列/返利等）默认不计入分红池基数。</div>
         <div class="doc-foot">
           <button class="btn" id="nDelete" style="display:none;color:#c0392b;border-color:#e6b0aa">🗑 删除该供应商</button>
           <button class="btn" id="nCancel">取消</button>
@@ -97,14 +97,14 @@ export async function render(view) {
     view.querySelector('#sCount').textContent = `共 ${list.length} 家供应商`;
     const allChecked = pageRows.length > 0 && pageRows.every(s => sel.has(Number(s.id)));
     view.querySelector('#sList').innerHTML = pageRows.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="sChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}></th>
+      <table><thead><tr><th class="seq">序号</th><th style="width:34px"><input type="checkbox" id="sChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}></th>
         <th>编号</th><th>供应商名称</th><th>业务员</th><th>电话</th>
         <th>经营方式</th><th class="num">扣点</th><th>结算方式</th><th>地址</th><th>备注</th><th style="width:96px">签字预览</th><th style="width:70px">操作</th></tr></thead>
-      <tbody>${pageRows.map(s => {
+      <tbody>${pageRows.map((s, i) => {
         const rate = s.deduction_rate ?? s.deductionRate;
         const hasBiz = !!(s.has_business ?? s.hasBusiness);
         return `<tr data-edit="${s.id}" style="cursor:pointer" title="双击编辑">
-        <td onclick="event.stopPropagation()"><input type="checkbox" data-schk="${s.id}" ${sel.has(Number(s.id)) ? 'checked' : ''}
+        <td class="num seq">${(page - 1) * PAGE_SIZE + i + 1}</td><td onclick="event.stopPropagation()"><input type="checkbox" data-schk="${s.id}" ${sel.has(Number(s.id)) ? 'checked' : ''}
           ${hasBiz ? 'disabled title="已产生业务的供应商不可删除"' : 'title="未产生业务，可勾选删除"'}></td>
         <td class="num muted mono">${gysCode(s.id)}</td>
         <td><b>${esc(s.name)}</b></td>
@@ -344,11 +344,11 @@ export async function render(view) {
     // 商品行
     const drawRows = () => {
       mask.querySelector('#chgRows').innerHTML = chgRows.length ? `
-        <table><thead><tr><th>商品</th><th style="width:120px">新进价（元）</th><th style="width:120px">新售价（元）</th><th style="width:150px">供应关系</th><th style="width:60px">操作</th></tr></thead>
+        <table><thead><tr><th class="seq">序号</th><th>商品</th><th style="width:120px">新进价（元）</th><th style="width:120px">新售价（元）</th><th style="width:150px">供应关系</th><th style="width:60px">操作</th></tr></thead>
         <tbody>${chgRows.map((r, i) => {
           const cur = r.independent ? 'independent' : r.isPrimary ? 'primary' : '';
           const sameSup = Number(r.p.supplier_default_id) === Number(mask.querySelector('#chgSup').value);
-          return `<tr>
+          return `<tr><td class="num seq">${i + 1}</td>
           <td><b>${esc(r.p.name)}</b>${r.p.barcode ? `<div class="muted mono" style="font-size:11px">${esc(r.p.barcode)}</div>` : ''}
             <div class="muted" style="font-size:11px">现售价 ¥${Number(r.p.sell_price ?? 0).toFixed(2)}${r.p.supplier_name ? ` · 主供 ${esc(r.p.supplier_name)}` : ' · 无主供应商'}</div></td>
           <td><input type="number" step="0.01" min="0" placeholder="不调" data-cost="${i}" value="${r.newCost ?? ''}" style="width:100px"></td>
@@ -410,8 +410,8 @@ export async function render(view) {
         const d = await must(get('/purchase/supplier-changes'));
         const arr = d.items || [];
         mask.querySelector('#chgLog').innerHTML = arr.length ? `
-          <table><thead><tr><th>变更单号</th><th>商品行数</th><th>原供应商→新供应商</th><th>原因</th><th>操作人</th><th>时间</th><th></th></tr></thead>
-          <tbody>${arr.map(c2 => `<tr>
+          <table><thead><tr><th class="seq">序号</th><th>变更单号</th><th>商品行数</th><th>原供应商→新供应商</th><th>原因</th><th>操作人</th><th>时间</th><th></th></tr></thead>
+          <tbody>${arr.map((c2, i) => `<tr><td class="num seq">${i + 1}</td>
             <td class="mono">${esc(c2.change_no)}</td>
             <td class="num">${Array.isArray(c2.items) ? c2.items.length : 0}</td>
             <td>${esc(c2.old_supplier_name || '（未切换）')} → <b>${esc(c2.new_supplier_name || '—')}</b></td>
@@ -439,8 +439,8 @@ export async function render(view) {
         <span>操作人：${esc(h.creator_name || '—')}</span>
         <span>时间：${dt(h.created_at)}</span>
       </div>
-      ${items.length ? `<table><thead><tr><th>商品</th><th class="num">原进价</th><th class="num">新进价</th><th class="num">原售价</th><th class="num">新售价</th><th>主供应商</th></tr></thead>
-      <tbody>${items.map(it => `<tr>
+      ${items.length ? `<table><thead><tr><th class="seq">序号</th><th>商品</th><th class="num">原进价</th><th class="num">新进价</th><th class="num">原售价</th><th class="num">新售价</th><th>主供应商</th></tr></thead>
+      <tbody>${items.map((it, i) => `<tr><td class="num seq">${i + 1}</td>
         <td><b>${esc(it.productName || '')}</b>${it.barcode ? `<div class="muted mono" style="font-size:11px">${esc(it.barcode)}</div>` : ''}</td>
         <td class="num muted">${it.oldCost != null ? '¥' + Number(it.oldCost).toFixed(2) : '—'}</td>
         <td class="num">${it.newCost != null ? '¥' + Number(it.newCost).toFixed(2) : '<span class="muted">不调</span>'}</td>
@@ -470,8 +470,8 @@ export async function render(view) {
       const all = d.items || [];
       const pg = paginate(all, page, CHG_SIZE);
       box.innerHTML = all.length ? `
-        <table><thead><tr><th>变更单号</th><th class="num">行数</th><th>原供应商 → 新供应商</th><th>原因</th><th>操作人</th><th>时间</th><th></th></tr></thead>
-        <tbody>${pg.slice.map(c2 => `<tr>
+        <table><thead><tr><th class="seq">序号</th><th>变更单号</th><th class="num">行数</th><th>原供应商 → 新供应商</th><th>原因</th><th>操作人</th><th>时间</th><th></th></tr></thead>
+        <tbody>${pg.slice.map((c2, i) => `<tr><td class="num seq">${(pg.page - 1) * CHG_SIZE + i + 1}</td>
           <td class="mono">${esc(c2.change_no)}</td>
           <td class="num">${Array.isArray(c2.items) ? c2.items.length : 0}</td>
           <td>${esc(c2.old_supplier_name || '（未切换）')} → <b>${esc(c2.new_supplier_name || '—')}</b></td>

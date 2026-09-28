@@ -1,7 +1,7 @@
 import { get, esc, toast } from '../api.js';
 
 /**
- * 单据录入表格通用组件（V4.9.5）—— 采购订单 / 采购入库 / 采购退货共用
+ * 单据录入表格通用组件—— 采购订单 / 采购入库 / 采购退货共用
  *   - 行首 ＋/−（可自定义列头文字，如退货单「编辑」）
  *   - 「条码」列：扫码枪 / 手输 / 名称拼音模糊 → 建议下拉定位商品（非下拉选择）
  *   - 定位后自动填充：名称 / 单位 / 类别 / 规格 / 上次含税进价 / 售价 / 库存 / 批次 / 到期日期
@@ -120,7 +120,7 @@ export function renderLines(tb, lines, opts = {}) {
         <button class="btn sm warn" data-minus="${i}" title="${i === 0 ? '首行不可删除（可清空本行数据）' : '删除本行'}" style="padding:2px 7px" ${i === 0 ? 'disabled' : ''}>−</button>
       </td>
       <td class="num" style="width:36px">${i + 1}</td>
-      <td><input data-f="bc" data-i="${i}" data-nav="1" value="${esc(l._q || '')}" placeholder="扫码/条码/名称"
+      <td><input data-f="bc" data-i="${i}" data-nav="1" value="${esc(l._q || '')}" placeholder="扫码/条码/名称" autocomplete="off"
            style="width:128px;font-family:var(--mono,monospace)"></td>
       <td style="min-width:130px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p ? p.name : '')}">${p ? `<b>${esc(p.name)}</b>${l._aiCreate ? ' <span class="tag y" style="font-size:10px;padding:1px 6px">AI建品</span>' : ''}` : '<span class="muted">—</span>'}</td>
       <td><select data-f="unit" data-i="${i}" data-nav="1" style="width:86px" ${p ? '' : 'disabled'}>${p ? unitOpts : '<option>—</option>'}</select></td>
@@ -128,14 +128,14 @@ export function renderLines(tb, lines, opts = {}) {
       <td class="muted" style="font-size:12px;min-width:64px">${p ? esc(p.spec || '—') : '—'}</td>
       ${supCol ? `<td class="muted" style="font-size:12px;min-width:88px" data-sup="${i}">${p ? esc(p.supplier_name || (Number(p.supplier_default_id) > 0 ? '供应商#' + p.supplier_default_id : '未绑定')) : '—'}</td>` : ''}
       ${orderQty ? orderedCell : ''}
-      <td><input data-f="qty" data-i="${i}" data-nav="1" type="number" step="${p && p.is_weighted ? '0.001' : '1'}" min="0" value="${l.qty ?? ''}" placeholder="${qtyLabel}" style="width:76px"></td>
-      ${price ? `<td><input data-f="cost" data-i="${i}" data-nav="1" type="number" step="0.01" min="0" value="${l.unitCost ?? ''}" placeholder="进价" style="width:82px" title="${p && p.min_price != null ? `历史最低 ${fmt(p.min_price)}` : ''}"></td>` : ''}
-      ${sell ? `<td><input data-f="sell" data-i="${i}" data-nav="1" type="number" step="0.01" min="0" value="${l.sellPrice ?? ''}" placeholder="售价" style="width:78px" title="审核后自动更新商品档案最新售价"></td>` : ''}
+      <td><input data-f="qty" data-i="${i}" data-nav="1" type="number" step="${p && p.is_weighted ? '0.001' : '1'}" min="0" value="${l.qty ?? ''}" placeholder="${qtyLabel}" autocomplete="off" style="width:76px"></td>
+      ${price ? `<td><input data-f="cost" data-i="${i}" data-nav="1" type="number" step="0.01" min="0" value="${l.unitCost === '' || l.unitCost == null ? '' : Number(l.unitCost).toFixed(2)}" placeholder="进价" autocomplete="off" style="width:82px" title="${p && p.min_price != null ? `历史最低 ${fmt(p.min_price)}` : ''}"></td>` : ''}
+      ${sell ? `<td><input data-f="sell" data-i="${i}" data-nav="1" type="number" step="0.01" min="0" value="${l.sellPrice ?? ''}" placeholder="售价" autocomplete="off" style="width:78px" title="审核后自动更新商品档案最新售价"></td>` : ''}
       ${prodDate ? `<td><input data-f="pd" data-i="${i}" data-nav="1" type="date" value="${esc(l.productionDate || today)}" style="width:132px"></td>` : ''}
       ${stock ? `<td class="num muted" style="min-width:52px">${p ? Number(p.stock_qty ?? p.stockQty ?? 0) : '—'}</td>` : ''}
       ${batch ? `<td class="mono muted" style="font-size:11.5px;min-width:96px">${esc(l._batchNo || '—')}</td>
                  <td class="num muted" style="font-size:12px;min-width:92px">${esc(l._expiry || '—')}</td>` : ''}
-      <td><input data-f="rm" data-i="${i}" data-nav="1" value="${esc(l.remark || '')}" placeholder="备注" style="width:104px"></td>
+      <td><input data-f="rm" data-i="${i}" data-nav="1" value="${esc(l.remark || '')}" placeholder="备注" autocomplete="off" style="width:104px"></td>
       ${price ? `<td class="num" data-amt="${i}" style="color:var(--warn);min-width:64px">${fmt((Number(l.qty) || 0) * (Number(l.unitCost) || 0))}</td>` : ''}
     </tr>`;
   }).join('');
@@ -215,7 +215,11 @@ export function renderLines(tb, lines, opts = {}) {
   tb.querySelectorAll('input[data-f="qty"],input[data-f="cost"],input[data-f="sell"]').forEach(inp => inp.onchange = () => {
     const i = Number(inp.dataset.i);
     if (inp.dataset.f === 'qty') lines[i].qty = inp.value;
-    else if (inp.dataset.f === 'cost') lines[i].unitCost = inp.value;
+    else if (inp.dataset.f === 'cost') {
+      // V5.0.3：含税进价统一保留两位小数（显示与存储一致；单位换算的内部精度不受影响）
+      lines[i].unitCost = inp.value === '' ? '' : Number(inp.value).toFixed(2);
+      inp.value = lines[i].unitCost;
+    }
     else lines[i].sellPrice = inp.value;
     const amt = tb.querySelector(`[data-amt="${i}"]`);
     if (amt) amt.textContent = fmt((Number(lines[i].qty) || 0) * (Number(lines[i].unitCost) || 0));

@@ -2,7 +2,7 @@ import { API, get, post, del, must, esc, dt, toast, imgUrl } from '../api.js';
 import { confirmBox } from '../ui.js';
 import { paginate, bindPager, pagerBar } from '../common-ui.js';
 
-/** 授权管理（V4.25.1 由「签名管理」扩展）：签字授权 + 设备授权统一入口，挂「系统」菜单
+/** 授权管理：签字授权 + 设备授权统一入口，挂「系统」菜单
  *  V4.14.8 签字1~4：
  *   ① 采集时 AI 识别签名姓名 → 自动匹配供应商业务员（非供应商侧不关联），样本自动入库；
  *   ② 完整性甄别在服务端 attach（签名姓名须完整包含单据署名，张五/刘三类不符拒绝）；
@@ -270,6 +270,29 @@ export async function render(view) {
     tryReadName();
   };
 
+  // V5.0.3：书写停顿 1.8s 防抖自动识别——无需手动点「AI 识别」；识别结果填姓名框（可手改）；失败静默
+  let sigRecT = null, sigRecBusy = false;
+  pad.addEventListener('pointerup', () => {
+    if (shots.length || resampleId) return;                   // 样本已记录/重采模式：不再自动识别
+    if (view.querySelector('#sgName').value.trim()) return;   // 已有姓名（手填或已识别）：不覆盖
+    clearTimeout(sigRecT);
+    sigRecT = setTimeout(async () => {
+      if (sigRecBusy) return;
+      if (padState.strokes < 1 || padInk(pad) / (pad.width * pad.height) < 0.002) return;
+      if (view.querySelector('#sgName').value.trim()) return;
+      sigRecBusy = true;
+      try {
+        const r = await post('/ai/signature/read', { image: pad.toDataURL('image/png') });
+        const nm = String((r?.data || r)?.name || '').trim();
+        if (nm && !view.querySelector('#sgName').value.trim()) {
+          view.querySelector('#sgName').value = nm;
+          toast(`AI 识别姓名：${nm}（可修改）`, true);
+        }
+      } catch { /* 识别服务不可达：静默，仍可手动点「AI 识别」或手填 */ }
+      sigRecBusy = false;
+    }, 1800);
+  });
+
   /* ── 签字样本表（复选框批量 + 单行删除 + 人员分类筛选；V4.16.5 分页 10 条/页） ── */
   let sgRows = [], sgCat = '', sgPage = 1, recPage = 1;   // 两表各自独立页码
   const sgRowById = {};   // id → {name, imgs[]}（点「样本数」弹窗预览用）
@@ -350,7 +373,7 @@ export async function render(view) {
     // V4.17.0 P13④：存量样本无效检测（近空白/纯色块双阈值，canvas 逐张分析打标）
     analyzeInvalid(rows);
   }
-  /* ── 无效样本检测（V4.17.0 P13④）：墨量 <0.3% 疑似空白 / >85% 疑似纯色块，打标不自动删 ── */
+  /* ── 无效样本检测：墨量 <0.3% 疑似空白 / >85% 疑似纯色块，打标不自动删 ── */
   const sgInvalidIds = new Set();   // 疑似无效样本的模板 id（跨页累积）
   const INK_MIN = 0.003, INK_MAX = 0.85;
   function inkRatioOfUrl(url) {
@@ -455,7 +478,7 @@ export async function render(view) {
   }
   view.querySelector('#sgPrevClose').onclick = () => { view.querySelector('#sgPrevModal').style.display = 'none'; };
 
-  /* ── 改分类弹窗（V4.17.0 P13②） ── */
+  /* ── 改分类弹窗 ── */
   let catfixId = 0;
   function openCatFix(id, name) {
     catfixId = id;
