@@ -853,7 +853,7 @@ window.CashierShell = (function () {
     <div id="csRoot">
       <div id="csTop"${LC.topbarMode === 'compact' ? ' class="cs-compact"' : ''}>
         <div class="cs-brand">${esc(localStorage.getItem('pwa_store_name') || '收银台')}<small>收银台</small></div>
-        <span class="cs-ver">V5.0.0</span>
+        <span class="cs-ver" id="csVer">V5.0.3</span>
         <div class="cs-lamps" id="csLamps">
           ${csLamp('scanner', '扫码枪')}${csLamp('scale', '电子秤')}${csLamp('printer', '小票机')}${csLamp('drawer', '钱箱')}${csLamp('display', '客显')}
         </div>
@@ -936,6 +936,24 @@ window.CashierShell = (function () {
     startClock();
     armIdleLock();
     $('#csPbInfo').textContent = Pricebook.ready ? `（本地价目表 ${info.count} 条）` : '（价目表同步中…）';
+    // V5.0.3：左上角版本号 = max(内置常量, Electron 安装包版本)。内置常量随发版手填（当前 5.0.3）；
+    // Electron 安装包版本经 DesktopShell.desktopInfo 桥接（app.getVersion）。取较大者，确保任一来源更新即生效，
+    // 不再因忘记改硬编码而显示旧版本（浏览器 PWA 无 DesktopShell 时直接用内置常量）。
+    (function syncCsVer() {
+      const ve = document.getElementById('csVer');
+      if (!ve) return;
+      const FALLBACK = '5.0.3';
+      const apply = v => { ve.textContent = 'V' + String(v).replace(/^V/i, ''); };
+      apply(FALLBACK);
+      if (window.DesktopShell && window.DesktopShell.desktopInfo) {
+        window.DesktopShell.desktopInfo().then(di => {
+          if (!di || !di.version) return;
+          const cmp = (a, b) => { const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+            for (let i = 0; i < Math.max(pa.length, pb.length); i++) { const x = pa[i] || 0, y = pb[i] || 0; if (x !== y) return x - y; } return 0; };
+          if (cmp(di.version, FALLBACK) > 0) apply(di.version);
+        }).catch(() => {});
+      }
+    })();
     renderQuick(); renderCats(); renderGrid();
     // 联网数据：目录/库存/促销
     loadCategories().then(() => renderCats());
