@@ -160,7 +160,8 @@ export async function render(view) {
       ${serverBar(fPage, d.total ?? rows.length)}`
       : '<div class="empty">无订单</div>';
     bindDblClick(box, 'tr[data-id]', tr => detail(tr.dataset.id));
-    box.querySelectorAll('[data-id]').forEach(b => b.onclick = () => detail(b.dataset.id));
+    // V5.0.2：onclick 只绑「详情」按钮，避免点击按钮时事件冒泡到 tr 再次触发 detail() 弹出第二个叠层弹窗（需关两遍）
+    box.querySelectorAll('button[data-id]').forEach(b => b.onclick = e => { e.stopPropagation(); detail(b.dataset.id); });
     bindServerBar(box, fPage, p => { fPage = Math.max(1, p); list(); });
   }
 
