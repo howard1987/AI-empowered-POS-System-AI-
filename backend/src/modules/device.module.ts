@@ -96,10 +96,10 @@ export const FIELD_POOL: Record<string, { key: string; label: string }[]> = {
   ],
   // V4.15.8 P4：标签两类（价签/秤贴）字段池
   pricetag: [
-    { key: 'name', label: '品名' }, { key: 'price', label: '售价' }, { key: 'promoPrice', label: '促销价' },
-    { key: 'promoTag', label: '特价角标' }, { key: 'promoPeriod', label: '特价有效期' },
-    { key: 'barcode', label: '条码' }, { key: 'unit', label: '单位' }, { key: 'spec', label: '规格' },
-    { key: 'keepDays', label: '保质期' },
+    { key: 'name', label: '品名' }, { key: 'price', label: '售价' }, { key: 'memberPrice', label: '会员价' },
+    { key: 'promoPrice', label: '促销价' }, { key: 'promoTag', label: '特价角标' }, { key: 'promoPeriod', label: '特价有效期' },
+    { key: 'printDate', label: '打印日期' }, { key: 'barcode', label: '条码' }, { key: 'unit', label: '单位' },
+    { key: 'spec', label: '规格' }, { key: 'keepDays', label: '保质期' },
   ],
   scale: [
     { key: 'name', label: '品名' }, { key: 'unitPrice', label: '单价' }, { key: 'weight', label: '重量' },
@@ -484,7 +484,7 @@ class PrintersController {
       }
       return {
         id: Number(p.id), name: p.name, barcode: p.barcode || '', spec: p.spec || '',
-        unit: p.base_unit, price: Number(p.sell_price), promoPrice,
+        unit: p.base_unit, price: Number(p.sell_price), memberPrice: p.member_price != null ? Number(p.member_price) : null, promoPrice,
         keepDays: p.keep_days ? Number(p.keep_days) : null, promoLabel,
       };
     });
@@ -508,6 +508,7 @@ class PrintersController {
       name: String(it.name || '').slice(0, 60),
       price: Number(it.price) || 0,
       promoPrice: it.promoPrice != null && Number(it.promoPrice) < Number(it.price) ? Number(it.promoPrice) : undefined,
+      memberPrice: it.memberPrice != null ? Number(it.memberPrice) : undefined,
       barcode: String(it.barcode || '').trim() || undefined,
       unit: String(it.unit || '').trim() || undefined,
       spec: String(it.spec || '').trim() || undefined,

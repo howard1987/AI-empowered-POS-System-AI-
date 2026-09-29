@@ -225,7 +225,7 @@ export async function render(view) {
       <div class="fld" id="pfWidthRow"><label>纸宽</label>
         <select id="pfWidth">${[58, 80].map(w => `<option value="${w}" ${Number(cur.width_mm || 80) === w ? 'selected' : ''}>${w}mm</option>`).join('')}</select></div>
       <div class="fld" id="pfLabelRow" style="display:none"><label>标签纸型（价签/秤贴）</label>
-        <select id="pfLabel">${['40x30', '50x30', '60x40'].map(s =>
+        <select id="pfLabel">${['40x30', '50x30', '60x40', '70x38', '90x50'].map(s =>
           `<option ${(cur.label_size || '40x30') === s ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
       <div class="fld"><label>自动重连</label>
         <select id="pfReconn"><option value="1" ${cur.auto_reconnect !== false ? 'selected' : ''}>开（断电恢复自动连）</option>

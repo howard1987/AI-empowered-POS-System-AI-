@@ -12,6 +12,8 @@ export const LABEL_SIZES: Record<string, [number, number]> = {
   '40x30': [40, 30],
   '50x30': [50, 30],
   '60x40': [60, 40],
+  '70x38': [70, 38],   // V5.0.5：常见物价局监制版式
+  '90x50': [90, 50],   // V5.0.5：大规格商品价签
 };
 
 /** 品牌 → 指令语言：斑马走 ZPL，其余（含通用）走 TSPL */
@@ -28,6 +30,7 @@ export type LabelItem = {
   unit?: string;
   spec?: string;
   keepDays?: number;         // 保质期天数
+  memberPrice?: number | null; // V5.0.5：会员价
   weight?: number;           // 秤贴：重量 kg
   time?: string;             // 秤贴：称重时间
   copies?: number;           // 该品份数
@@ -232,6 +235,8 @@ export function resolveFieldValue(key: string, it: LabelItem): { text: string; p
     case 'promoLabel': return { text: String(it.promoLabel || '') };
     case 'promoTag': return { text: it.promoPrice && it.promoPrice < it.price ? '特价' : '' };
     case 'promoPeriod': return { text: String(it.promoLabel || '') };
+    case 'memberPrice': return { text: it.memberPrice != null && Number(it.memberPrice) > 0 ? money(it.memberPrice) : '' };
+    case 'printDate': return { text: new Date().toLocaleDateString('zh-CN').replace(/\//g, '.') };
     default: return { text: '' };
   }
 }

@@ -1,6 +1,6 @@
 import { get, post, put, del, must, money, esc, toast, dt, imgUrl } from '../api.js';
 import { confirmBox } from '../ui.js';
-import { openDetailModal } from '../common-ui.js';
+import { openDetailModal, openExportPicker } from '../common-ui.js';
 import { serialSendBase64 } from '../serialprint.js';
 import { segHtml, bindSeg, hl, noResult } from '../ui-polish.js';   // V4.26.3：统一状态筛选 / 搜索命中高亮 / 空态
 
@@ -33,6 +33,13 @@ export async function fireTags(printerId, items, copies) {
   return false;
 }
 
+/** V5.0.5：价签商品导出 Excel（商品名称/单位/规格/保质期/条码/销售价/会员价/特价） */
+function exportTagItems(items) {
+  openExportPicker({ filename: '价签商品明细', columns: [
+    {k:'name',t:'商品名称'},{k:'unit',t:'单位'},{k:'spec',t:'规格'},{k:'keepDays',t:'保质期(天)'},{k:'barcode',t:'条码'},{k:'price',t:'销售价'},{k:'memberPrice',t:'会员价'},{k:'promoPrice',t:'特价'}
+  ], rows: items });
+}
+
 /** V5.0.4：单品快捷打签（取该商品 + 默认价签机 → 可改份数确认） */
 export async function openOneTagModal(id) {
   const ps = await must(get('/printers')).catch(() => []);
@@ -52,10 +59,12 @@ export async function openOneTagModal(id) {
       <input id="ptCopies" type="number" min="1" max="50" value="1" style="width:100px"></div>
     <div class="bar" style="justify-content:flex-end;margin-top:10px;gap:10px">
       <span class="muted" id="ptTip"></span>
+      <button class="btn" id="ptExport">📊 导出 Excel</button>
       <button class="btn" id="ptCancel">取消</button>
       <button class="btn pri" id="ptGo">🖨 打印</button>
     </div>`, { width: 460 });
   mask.querySelector('#ptCancel').onclick = () => mask.remove();
+  mask.querySelector('#ptExport').onclick = () => exportTagItems(items);
   mask.querySelector('#ptGo').onclick = async () => {
     const copies = Math.min(Math.max(Number(mask.querySelector('#ptCopies').value) || 1, 1), 50);
     const tip = mask.querySelector('#ptTip'); tip.textContent = '发送中…';
@@ -917,10 +926,12 @@ export async function render(view) {
           <input id="ptCopies" type="number" min="1" max="50" value="1" style="width:100px"></div>
         <div class="bar" style="justify-content:flex-end;margin-top:10px;gap:10px">
           <span class="muted" id="ptTip"></span>
+          <button class="btn" id="ptExport">📊 导出 Excel</button>
           <button class="btn" id="ptCancel">取消</button>
           <button class="btn pri" id="ptGo">🖨 打印 ${items.length} 品</button>
         </div>`, { width: 520 });
       mask.querySelector('#ptCancel').onclick = () => mask.remove();
+      mask.querySelector('#ptExport').onclick = () => exportTagItems(items);
       mask.querySelector('#ptGo').onclick = () => doPrintTags(mask, def.id, items);
       return;
     }
@@ -943,10 +954,12 @@ export async function render(view) {
         <td class="num" style="color:${i.promoPrice != null ? 'var(--warn)' : 'inherit'}">${i.promoPrice != null ? money(i.promoPrice) : '—'}</td></tr>`).join('')}</tbody></table>
       <div class="bar" style="justify-content:flex-end;margin-top:10px;gap:10px">
         <span class="muted" id="ptTip"></span>
+        <button class="btn" id="ptExport">📊 导出 Excel</button>
         <button class="btn" id="ptCancel">取消</button>
         <button class="btn pri" id="ptGo">🖨 打印标签</button>
       </div>`, { width: 760 });
     mask.querySelector('#ptCancel').onclick = () => mask.remove();
+    mask.querySelector('#ptExport').onclick = () => exportTagItems(items);
     mask.querySelector('#ptGo').onclick = () => doPrintTags(mask, Number(mask.querySelector('#ptPrinter').value), items);
   };
 
