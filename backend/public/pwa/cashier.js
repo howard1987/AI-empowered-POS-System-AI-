@@ -853,7 +853,7 @@ window.CashierShell = (function () {
     <div id="csRoot">
       <div id="csTop"${LC.topbarMode === 'compact' ? ' class="cs-compact"' : ''}>
         <div class="cs-brand">${esc(localStorage.getItem('pwa_store_name') || '收银台')}<small>收银台</small></div>
-        <span class="cs-ver" id="csVer">V5.0.3</span>
+        <span class="cs-ver" id="csVer">V5.0.4</span>
         <div class="cs-lamps" id="csLamps">
           ${csLamp('scanner', '扫码枪')}${csLamp('scale', '电子秤')}${csLamp('printer', '小票机')}${csLamp('drawer', '钱箱')}${csLamp('display', '客显')}
         </div>
@@ -942,7 +942,7 @@ window.CashierShell = (function () {
     (function syncCsVer() {
       const ve = document.getElementById('csVer');
       if (!ve) return;
-      const FALLBACK = '5.0.3';
+      const FALLBACK = '5.0.4';
       const apply = v => { ve.textContent = 'V' + String(v).replace(/^V/i, ''); };
       apply(FALLBACK);
       if (window.DesktopShell && window.DesktopShell.desktopInfo) {

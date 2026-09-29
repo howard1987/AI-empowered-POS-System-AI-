@@ -16,6 +16,13 @@ const BIZ_CN = {
   pricetag: '价签', scale: '秤贴',
 };
 const ST = { 在线: ['g', '在线'], 离线: ['', '离线'], 故障: ['r', '故障'] };
+// V5.0.4：默认用途维度（每业务一个默认机，打对应单据自动路由）
+const DF_CN = { receipt: '小票', pricetag: '价签', scale: '秤贴', a5: '单据' };
+const DF_OPTIONS = {
+  '小票': [['receipt', '小票（收银出单）']],
+  '标签': [['pricetag', '价签'], ['scale', '秤贴']],
+  '激光': [['a5', 'A5/单据（激光·喷墨）']],
+};
 let curPage = 1;   // V4.16.5 打印历史当前页码（翻页不重请求，重查时归 1）
 
 export async function render(view) {
@@ -73,6 +80,26 @@ export async function render(view) {
     return m;
   }
 
+  /** 设/改默认用途（每业务一个默认机） */
+  function openDefaultFor(body, id) {
+    const p = (state.printerRows || []).find(x => Number(x.id) === id) || {};
+    const type = p.printer_type || '小票';
+    const opts = DF_OPTIONS[type] || DF_OPTIONS['小票'];
+    const m = modal(`<h3 style="margin:0 0 10px">设默认用途 · ${esc(p.name || '')}</h3>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">不同用途各可设一台默认机：打对应单据时自动路由，免去每次手动选机。</div>
+      <div style="display:flex;flex-direction:column;gap:8px">${opts.map(([v, t]) =>
+        `<button class="btn ${p.default_for === v ? 'pri' : ''}" data-set="${v}">${t}${p.default_for === v ? ' ✓' : ''}</button>`).join('')}
+        ${p.is_default ? `<button class="btn r" data-clear="1">取消默认</button>` : ''}</div>
+      <div style="text-align:right;margin-top:14px"><button class="btn" id="dfCancel">关闭</button></div>`);
+    m.querySelectorAll('[data-set]').forEach(b => b.onclick = async () => {
+      await must(put(`/printers/${id}/default`, { defaultFor: b.dataset.set }), `已设为默认·${DF_CN[b.dataset.set] || b.dataset.set}`);
+      m.remove(); drawPrinters(body);
+    });
+    const clr = m.querySelector('[data-clear]');
+    if (clr) clr.onclick = async () => { await must(put(`/printers/${id}/default`, { defaultFor: '' }), '已取消默认'); m.remove(); drawPrinters(body); };
+    m.querySelector('#dfCancel').onclick = () => m.remove();
+  }
+
   // ═══════════ 打印机 Tab ═══════════
   async function drawPrinters(body) {
     const [ps, jobs] = await Promise.all([
@@ -85,9 +112,9 @@ export async function render(view) {
           ${canPr() ? `<button class="btn pri" id="pAdd">＋ 新增打印机</button>` : ''}</div>
         <table><thead><tr><th class="seq">序号</th><th>名称</th><th>品牌</th><th>类型</th><th>连接</th><th>纸宽/纸型</th><th>自动重连</th><th>状态</th><th>最近测试</th><th style="width:230px">操作</th></tr></thead>
         <tbody>${ps.length ? ps.map((p, i) => `<tr>
-          <td class="num seq">${i + 1}</td><td><b>${esc(p.name)}</b>${p.is_default ? ' <span class="pill b">默认</span>' : ''}</td>
+          <td class="num seq">${i + 1}</td><td><b>${esc(p.name)}</b>${p.is_default && p.default_for ? ` <span class="pill b">默认·${DF_CN[p.default_for] || p.default_for}</span>` : ''}</td>
           <td class="muted">${esc(p.brand || '通用')}</td>
-          <td>${(p.printer_type || '小票') === '标签' ? '🏷️ 标签机' : '🧾 小票机'}</td>
+          <td>${p.printer_type === '激光' ? '🖨️ 激光' : (p.printer_type || '小票') === '标签' ? '🏷️ 标签机' : '🧾 小票机'}</td>
           <td class="muted">${esc(p.conn_type)}${p.conn_addr ? ' · ' + esc(p.conn_addr) : ''}</td>
           <td class="num">${(p.printer_type || '小票') === '标签' ? esc(p.label_size || '40x30') : p.width_mm + 'mm'}</td>
           <td>${p.auto_reconnect ? '✅' : '—'}</td>
@@ -95,7 +122,7 @@ export async function render(view) {
           <td class="muted">${p.last_test_at ? dt(p.last_test_at) : '—'}</td>
           <td class="ops">
             ${canPr() ? `<button class="btn sm pri" data-test="${p.id}">测试页</button>
-              ${p.is_default ? '' : `<button class="btn sm" data-def="${p.id}">设默认</button>`}
+              <button class="btn sm" data-def="${p.id}">${p.is_default ? '改默认' : '设默认'}</button>
               <button class="btn sm" data-edit="${p.id}">编辑</button>
               <button class="btn sm r" data-del="${p.id}">删除</button>` : '<span class="muted">无权限</span>'}
           </td></tr>`).join('') : `<tr><td colspan="10" class="empty">暂无打印机，点击右上角新增</td></tr>`}
@@ -163,10 +190,7 @@ export async function render(view) {
         await must(post(`/printers/${b.dataset.test}/test`), '测试页打印成功');
         drawPrinters(body);
       });
-      body.querySelectorAll('[data-def]').forEach(b => b.onclick = async () => {
-        await must(put(`/printers/${b.dataset.def}/default`), '已设为默认机');
-        drawPrinters(body);
-      });
+      body.querySelectorAll('[data-def]').forEach(b => b.onclick = () => openDefaultFor(body, Number(b.dataset.def)));
       body.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openPrinter(body, Number(b.dataset.edit)));
       body.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
         if (!confirm('确认删除该打印机？历史记录将保留。')) return;
@@ -186,8 +210,8 @@ export async function render(view) {
         <input id="pfName" value="${esc(cur.name || '')}" placeholder="如：前台小票机" style="width:100%">
         <div class="muted" style="font-size:11px">用于区分用途，如：前台小票机 / 价签标签机 …</div></div>
       <div class="fld"><label>设备类型</label>
-        <select id="pfType">${['小票', '标签'].map(t =>
-          `<option value="${t}" ${curType === t ? 'selected' : ''}>${t === '小票' ? '小票机（ESC/POS 卷纸）' : '标签机（TSPL/ZPL 价签·秤贴）'}</option>`).join('')}</select></div>
+        <select id="pfType">${['小票', '标签', '激光'].map(t =>
+          `<option value="${t}" ${curType === t ? 'selected' : ''}>${t === '小票' ? '小票机（ESC/POS 卷纸）' : t === '标签' ? '标签机（TSPL/ZPL 价签·秤贴）' : '激光/喷墨（A5 单据·本地打印）'}</option>`).join('')}</select></div>
       <div class="fld"><label>连接方式</label>
         <select id="pfConn">${['USB', '网口', '蓝牙', '串口'].map(c =>
           `<option ${cur.conn_type === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
@@ -206,12 +230,18 @@ export async function render(view) {
       <div class="fld"><label>自动重连</label>
         <select id="pfReconn"><option value="1" ${cur.auto_reconnect !== false ? 'selected' : ''}>开（断电恢复自动连）</option>
         <option value="0" ${cur.auto_reconnect === false ? 'selected' : ''}>关</option></select></div>
+      <div class="fld" id="pfDefRow"><label>默认用途</label>
+        <select id="pfDef"><option value="">非默认</option>${(DF_OPTIONS[curType] || DF_OPTIONS['小票']).map(([v, t]) =>
+          `<option value="${v}" ${cur.default_for === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        <div class="muted" style="font-size:11px">设为某用途默认机后，打该业务单据自动路由到本机，免去每次选机</div></div>
       <div style="text-align:right;margin-top:14px">
         <button class="btn" id="pfCancel">取消</button>
         <button class="btn pri" id="pfSave">保存</button></div>`);
     const syncType = () => {
-      const isLabel = m.querySelector('#pfType').value === '标签';
-      m.querySelector('#pfWidthRow').style.display = isLabel ? 'none' : '';
+      const t = m.querySelector('#pfType').value;
+      const isLabel = t === '标签';
+      const isLaser = t === '激光';
+      m.querySelector('#pfWidthRow').style.display = (isLabel || isLaser) ? 'none' : '';
       m.querySelector('#pfLabelRow').style.display = isLabel ? '' : 'none';
     };
     m.querySelector('#pfType').onchange = syncType;
@@ -235,6 +265,11 @@ export async function render(view) {
       }
       if (id) await must(put(`/printers/${id}`, dto), '已保存');
       else await must(post('/printers', dto), '已新增');
+      // V5.0.4：默认用途变更单独同步（后端 setDefault 保证每业务唯一）
+      const newDf = m.querySelector('#pfDef').value;
+      if (id && newDf !== (cur.default_for || '')) {
+        await must(put(`/printers/${id}/default`, { defaultFor: newDf }), newDf ? `已设为默认·${DF_CN[newDf] || newDf}` : '已取消默认');
+      }
       m.remove();
       drawPrinters(body);
     };

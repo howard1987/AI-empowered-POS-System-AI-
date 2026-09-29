@@ -23,6 +23,47 @@ if (typeof window !== 'undefined' && !window.__pdEditHooked) {
 
 /** 商品档案（V4.9.2：功能区在上 · 分类树在主表格左侧 · 主表格列对齐批发/会员折扣/供货商）
  *  新增/编辑弹窗同一版式；进货价只读（仅调价单可改）；图片上传/删除；批量导入弹窗 */
+/* ═══════════ 价签打印公共能力（模块顶层，供 label-print 等模块复用） ═══════════ */
+/** V5.0.4：价签直发核心（网口直发 / 串口·USB WebSerial/WebUSB）；返回是否成功 */
+export async function fireTags(printerId, items, copies) {
+  const payload = { items: items.map(i => ({ ...i, copies })), jobType: '价签打印' };
+  const r = await must(post(`/printers/${printerId}/labels`, payload));
+  if (r.channel === 'network') { toast(`价签已发送（${items.length} 品 × ${copies} 张，网口直发）`); return true; }
+  if (r.channel === 'serial' || r.channel === 'usb') { await serialSendBase64(r.dataBase64); toast(`价签已打印（${items.length} 品 × ${copies} 张，串口直驱）`); return true; }
+  return false;
+}
+
+/** V5.0.4：单品快捷打签（取该商品 + 默认价签机 → 可改份数确认） */
+export async function openOneTagModal(id) {
+  const ps = await must(get('/printers')).catch(() => []);
+  const labelPrinters = (Array.isArray(ps) ? ps : []).filter(p => (p.printer_type || '小票') === '标签');
+  if (!labelPrinters.length) return toast('暂无标签机：请先到「打印中心」新增标签机（网口/串口）', false);
+  const def = labelPrinters.find(p => p.is_default && p.default_for === 'pricetag');
+  if (!def) return toast('请先在「打印中心」把某台标签机设为「价签」默认用途', false);
+  const d = await must(post('/printers/price-tags', { ids: [id] }));
+  const items = d.items || [];
+  if (!items.length) return toast('未取到商品数据', false);
+  const it = items[0];
+  const { mask } = openDetailModal('🏷 打印价签', `
+    <div class="muted" style="font-size:12.5px;padding:2px 0 8px">
+      将用默认价签机 <b>${esc(def.name)}</b>（${esc(def.label_size || '40x30')}）打印：<b>${esc(it.name)}</b>
+      ${it.promoPrice != null ? `（<b style="color:var(--warn)">有特价，自动印划线原价+促销价</b>）` : ''}。</div>
+    <div class="fld" style="max-width:300px"><label>份数</label>
+      <input id="ptCopies" type="number" min="1" max="50" value="1" style="width:100px"></div>
+    <div class="bar" style="justify-content:flex-end;margin-top:10px;gap:10px">
+      <span class="muted" id="ptTip"></span>
+      <button class="btn" id="ptCancel">取消</button>
+      <button class="btn pri" id="ptGo">🖨 打印</button>
+    </div>`, { width: 460 });
+  mask.querySelector('#ptCancel').onclick = () => mask.remove();
+  mask.querySelector('#ptGo').onclick = async () => {
+    const copies = Math.min(Math.max(Number(mask.querySelector('#ptCopies').value) || 1, 1), 50);
+    const tip = mask.querySelector('#ptTip'); tip.textContent = '发送中…';
+    try { if (await fireTags(def.id, items, copies)) mask.remove(); }
+    catch (e) { tip.textContent = ''; toast('打印失败：' + (e.message || e), false); }
+  };
+}
+
 export async function render(view) {
   let cats = [];
   let all = [];           // 当前页商品
@@ -216,6 +257,7 @@ export async function render(view) {
           
           <span style="flex:1"></span>
           <button class="btn" id="dtOnline">🛒 商城下架</button>
+          <button class="btn" id="dtTag">🏷 打印价签</button>
           <button class="btn pri" id="dtEdit">✏️ 编辑档案</button>
         </div>
       </div>
@@ -629,7 +671,7 @@ export async function render(view) {
           <th class="seq">序号</th>
           <th>商品名称</th><th>条码</th><th>规格</th><th>单位</th><th>分类</th>
           <th class="num">进货价</th><th class="num">售价</th><th class="num">会员价</th>
-          <th class="num">批发价</th><th style="text-align:center">会员折扣</th><th class="num">利润率</th><th class="num">库存</th><th>供货商</th>
+          <th class="num">批发价</th><th style="text-align:center">会员折扣</th><th class="num">利润率</th>          <th class="num">库存</th><th>供货商</th><th style="width:44px">打签</th>
         </tr></thead>
         <tbody>${items.map((p, i) => {
           const st = statusOf(p);
@@ -650,6 +692,7 @@ export async function render(view) {
             <td class="num">${marginCell(p)}</td>
             <td class="num">${Number(p.stock_qty || 0)} ${esc(p.base_unit || '')}</td>
             <td class="muted" style="max-width:120px;overflow:hidden;text-overflow:ellipsis">${esc(p.supplier_name || '—')}</td>
+            <td style="text-align:center"><button class="btn sm" data-tag="${p.id}" title="打印价签">🏷</button></td>
           </tr>`;
         }).join('')}</tbody></table>` : (kw
           ? noResult(`没有匹配「${kw}」的商品`, '可试试名称片段、条码后四位或拼音首字母（如「测试商品」→ cssp）')
@@ -658,6 +701,8 @@ export async function render(view) {
       tr.onclick = () => selectRow(Number(tr.dataset.pid));
       tr.ondblclick = () => { selectRow(Number(tr.dataset.pid)); openEdit(Number(tr.dataset.pid)); };
     });
+    // V5.0.4：行内打签图标 → 单品快捷打签（阻止冒泡，不触发行点击详情）
+    view.querySelectorAll('[data-tag]').forEach(b => b.onclick = e => { e.stopPropagation(); if (Number(b.dataset.tag)) openOneTagModal(Number(b.dataset.tag)); });
     // 勾选（删除用）：不触发行点击
     view.querySelectorAll('[data-pchk]').forEach(cb => cb.onchange = () => {
       const pid = Number(cb.dataset.pchk);
@@ -850,7 +895,7 @@ export async function render(view) {
     };
   };
 
-  /* ── 价签批量打印：勾选商品 → 选标签机/份数 → 网口直发 / 串口 WebSerial ── */
+  /* ── 价签批量打印：勾选商品 → 优先默认价签机（可改份数即打）/ 否则选机 ── */
   view.querySelector('#pTags').onclick = async () => {
     const ids = [...delSel];
     if (!ids.length) return;
@@ -861,13 +906,33 @@ export async function render(view) {
     const items = d.items || [];
     if (!items.length) return toast('未取到可打印的商品数据', false);
     const promoN = items.filter(i => i.promoPrice != null).length;
+    const def = labelPrinters.find(p => p.is_default && p.default_for === 'pricetag'); // V5.0.4 默认价签机
+    // 有默认价签机：弹「可改份数」确认条，免选机直接打
+    if (def) {
+      const { mask } = openDetailModal('🏷 价签打印', `
+        <div class="muted" style="font-size:12.5px;padding:2px 0 8px">
+          将用默认价签机 <b>${esc(def.name)}</b>（${esc(def.brand || '通用')} · ${esc(def.label_size || '40x30')}）打印
+          <b>${items.length}</b> 个商品${promoN ? `（<b style="color:var(--warn)">${promoN}</b> 个有特价，标签自动印划线原价+促销价）` : ''}。</div>
+        <div class="fld" style="max-width:300px"><label>每品份数</label>
+          <input id="ptCopies" type="number" min="1" max="50" value="1" style="width:100px"></div>
+        <div class="bar" style="justify-content:flex-end;margin-top:10px;gap:10px">
+          <span class="muted" id="ptTip"></span>
+          <button class="btn" id="ptCancel">取消</button>
+          <button class="btn pri" id="ptGo">🖨 打印 ${items.length} 品</button>
+        </div>`, { width: 520 });
+      mask.querySelector('#ptCancel').onclick = () => mask.remove();
+      mask.querySelector('#ptGo').onclick = () => doPrintTags(mask, def.id, items);
+      return;
+    }
+    // 无默认价签机：回退选机弹窗（默认选中带 pricetag 用途的，否则第一台）
+    const dflt = labelPrinters.find(p => p.default_for === 'pricetag') || labelPrinters[0];
     const { mask } = openDetailModal('🏷 价签批量打印', `
       <div class="muted" style="font-size:12.5px;padding:2px 0 8px">
         共 <b>${items.length}</b> 个商品${promoN ? `（其中 <b style="color:var(--warn)">${promoN}</b> 个有进行中促销价，标签自动印「划线原价 + 促销价」）` : ''}。
         价签含 品名/售价/促销价/条码/单位·规格·保质期，按标签机纸型排版。</div>
       <div class="fld" style="max-width:420px"><label>标签机</label>
         <select id="ptPrinter">${labelPrinters.map(p =>
-          `<option value="${p.id}">${esc(p.name)}（${esc(p.brand || '通用')} · ${esc(p.label_size || '40x30')} · ${esc(p.conn_type)}${p.conn_addr ? ' ' + esc(p.conn_addr) : ''}）</option>`).join('')}</select></div>
+          `<option value="${p.id}" ${p.id === dflt.id ? 'selected' : ''}>${esc(p.name)}（${esc(p.brand || '通用')} · ${esc(p.label_size || '40x30')} · ${esc(p.conn_type)}${p.conn_addr ? ' ' + esc(p.conn_addr) : ''}）</option>`).join('')}</select></div>
       <div class="fld" style="max-width:420px"><label>每品份数</label>
         <input id="ptCopies" type="number" min="1" max="50" value="1" style="width:100px"></div>
       <table style="margin-top:6px"><thead><tr><th class="seq">序号</th><th>商品</th><th>条码</th><th>单位</th><th>规格</th>
@@ -882,31 +947,21 @@ export async function render(view) {
         <button class="btn pri" id="ptGo">🖨 打印标签</button>
       </div>`, { width: 760 });
     mask.querySelector('#ptCancel').onclick = () => mask.remove();
-    mask.querySelector('#ptGo').onclick = async () => {
-      const printerId = Number(mask.querySelector('#ptPrinter').value);
-      const copies = Math.min(Math.max(Number(mask.querySelector('#ptCopies').value) || 1, 1), 50);
-      const tip = mask.querySelector('#ptTip');
-      tip.textContent = '发送中…';
-      const payload = { items: items.map(i => ({ ...i, copies })), jobType: '价签打印' };
-      try {
-        const r = await must(post(`/printers/${printerId}/labels`, payload));
-        if (r.channel === 'network') {
-          toast(`价签已发送（${items.length} 品 × ${copies} 张，网口直发）`);
-          mask.remove(); delSel.clear(); syncDelBtn();
-        } else if (r.channel === 'serial') {
-          // 串口标签机：浏览器 WebSerial 直发（此点击即用户手势，可调起授权窗）
-          try {
-            await serialSendBase64(r.dataBase64);
-            toast(`价签已打印（${items.length} 品 × ${copies} 张，串口直驱）`);
-            mask.remove(); delSel.clear(); syncDelBtn();
-          } catch (e) {
-            tip.textContent = '';
-            toast('串口发送失败：' + (e.message || e) + '（已留痕，可重试或改用网口）', false);
-          }
-        }
-      } catch { tip.textContent = ''; }
-    };
+    mask.querySelector('#ptGo').onclick = () => doPrintTags(mask, Number(mask.querySelector('#ptPrinter').value), items);
   };
+
+  /* V5.0.4：批量价签直发（份数从弹窗读取；发送逻辑见模块顶层 fireTags） */
+  async function doPrintTags(mask, printerId, items) {
+    const copies = Math.min(Math.max(Number(mask.querySelector('#ptCopies').value) || 1, 1), 50);
+    const tip = mask.querySelector('#ptTip');
+    tip.textContent = '发送中…';
+    try {
+      if (await fireTags(printerId, items, copies)) { mask.remove(); delSel.clear(); syncDelBtn(); }
+    } catch {
+      tip.textContent = '';
+      toast('打印失败：网络或串口发送异常（已留痕，可重试或改用网口）', false);
+    }
+  }
 
   /* ── 详情弹窗（点行弹出；关键信息两列栅格，去冗余说明） ── */
   const detModal = view.querySelector('#detModal');
@@ -1880,6 +1935,7 @@ export async function render(view) {
     renderEditPhoto(p.photo_path || '', lastSamples);
     editModal.style.display = 'flex';
   }
+  view.querySelector('#dtTag').onclick = () => { detModal.style.display = 'none'; if (selId) openOneTagModal(selId); };
   view.querySelector('#dtEdit').onclick = () => { detModal.style.display = 'none'; if (selId) openEdit(selId); };
   pdEditCtx = { view, openEdit };   // V4.9.8 供跨页「编辑商品」事件使用
   view.querySelector('#emCancel').onclick = () => { editModal.style.display = 'none'; };

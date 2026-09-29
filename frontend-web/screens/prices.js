@@ -584,9 +584,10 @@ export async function render(view) {
       const tags = await must(post('/printers/price-tags', { ids }));
       const tagItems = (tags.items || []).map(t => ({ ...t, copies: 1 }));
       if (!tagItems.length) return toast('未获取到价签数据', false);
-      // 单台标签机直接打，多台时弹选择
-      let printerId = labels[0].id;
-      if (labels.length > 1) {
+      // V5.0.4：优先默认价签机（default_for=pricetag），否则单台直接打 / 多台 prompt
+      const def = labels.find(p => p.is_default && p.default_for === 'pricetag');
+      let printerId = def ? def.id : labels[0].id;
+      if (!def && labels.length > 1) {
         const opts = labels.map((p, i) => `${i + 1}. ${p.name}(${p.label_size || '40x30'})`).join('\n');
         const n = prompt('请选择标签机（输入序号）：\n' + opts, '1');
         const idx = Number(n) - 1;

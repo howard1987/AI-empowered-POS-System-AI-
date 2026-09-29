@@ -23,6 +23,7 @@ export type LabelItem = {
   name: string;
   price: number;             // 零售价
   promoPrice?: number;       // 促销价（有则原价划线）
+  promoLabel?: string;       // 促销期文案（特价有效期 / 时段特惠）
   barcode?: string;          // 缺省打「无条码」文字
   unit?: string;
   spec?: string;
@@ -71,6 +72,11 @@ function tsplPriceTag(it: LabelItem, W: number, H: number, has: (k: string) => b
   if (info) cmds.push(`TEXT ${M},112,${font},0,1,1,"${safe(info)}"`);
   if (it.barcode && has('barcode')) cmds.push(`BARCODE ${M},${H - 96},"128",80,1,0,2,2,"${safe(it.barcode)}"`);
   else if (!has('barcode') || !it.barcode) cmds.push(`TEXT ${M},${H - 80},${font},0,1,1,""`);
+  // V5.0.4：有促销价自动印「特价」角标 + 有效期（合规）
+  if (it.promoPrice && it.promoPrice < it.price) {
+    if (has('promoTag')) cmds.push(`TEXT ${W - 54},${M},${font},0,1,1,"特价"`);
+    if (has('promoPeriod') && it.promoLabel) cmds.push(`TEXT ${M},${H - 110},${font},0,1,1,"${safe(it.promoLabel)}"`);
+  }
   return cmds;
 }
 
@@ -122,6 +128,11 @@ function zplPriceTag(it: LabelItem, W: number, H: number, has: (k: string) => bo
     .filter(Boolean).join(' · ');
   if (info) s += `^FO${M},${H - 130}^A0N,24,24^FD${safe(info)}^FS`;
   if (it.barcode && has('barcode')) s += `^FO${M},${H - 100}^BY2,2,80^BCN,,Y,N,N^FD${safe(it.barcode)}^FS`;
+  // V5.0.4：有促销价自动印「特价」角标 + 有效期（合规）
+  if (it.promoPrice && it.promoPrice < it.price) {
+    if (has('promoTag')) s += `^FO${W - 60},${M + 2}^A0N,24,24^FD特价^FS`;
+    if (has('promoPeriod') && it.promoLabel) s += `^FO${M},${H - 116}^A0N,24,24^FD${safe(it.promoLabel)}^FS`;
+  }
   return s;
 }
 
@@ -218,6 +229,9 @@ export function resolveFieldValue(key: string, it: LabelItem): { text: string; p
     case 'weight': return { text: `重量:${(Number(it.weight) || 0).toFixed(3)}kg` };
     case 'amount': return { text: `金额:${money(r2((Number(it.price) || 0) * (Number(it.weight) || 0)))}` };
     case 'time': return { text: String(it.time || '') };
+    case 'promoLabel': return { text: String(it.promoLabel || '') };
+    case 'promoTag': return { text: it.promoPrice && it.promoPrice < it.price ? '特价' : '' };
+    case 'promoPeriod': return { text: String(it.promoLabel || '') };
     default: return { text: '' };
   }
 }

@@ -37,7 +37,7 @@ function osRawPrint(winPrinterName: string, bytes: Buffer): { ok: boolean; n: nu
 const DEVICE_KINDS = ['收银主机', '扫码枪', '电子秤', 'AI秤摄像头', '小票机', '副屏', '钱箱', '人脸设备'];
 const PRINTER_CONNS = ['USB', '网口', '蓝牙', '串口'];   // V4.15.6 串口=浏览器 WebSerial 直驱（免系统驱动）
 const PRINTER_BRANDS = ['芯烨', '佳博', '得力', '爱普生', '汉印', 'TSC', '斑马', '通用'];
-const PRINTER_TYPES = ['小票', '标签'];                   // V4.15.7 P2：小票机(ESC/POS) / 标签机(TSPL/ZPL)
+const PRINTER_TYPES = ['小票', '标签', '激光'];           // V4.15.7 P2：小票机(ESC/POS) / 标签机(TSPL/ZPL) / 激光喷墨(A5·本地打印)
 const LABEL_SIZE_KEYS = Object.keys(LABEL_SIZES);        // 40x30 / 50x30 / 60x40
 const TEMPLATE_KINDS = ['小票58', '小票80', 'A5单据', 'A4单据', '标签'];
 const BIZ_TYPES = ['receipt', 'inbound', 'return', 'order', 'transfer', 'count', 'loss', 'recon', 'settlement', 'pricetag', 'scale'];
@@ -97,6 +97,7 @@ export const FIELD_POOL: Record<string, { key: string; label: string }[]> = {
   // V4.15.8 P4：标签两类（价签/秤贴）字段池
   pricetag: [
     { key: 'name', label: '品名' }, { key: 'price', label: '售价' }, { key: 'promoPrice', label: '促销价' },
+    { key: 'promoTag', label: '特价角标' }, { key: 'promoPeriod', label: '特价有效期' },
     { key: 'barcode', label: '条码' }, { key: 'unit', label: '单位' }, { key: 'spec', label: '规格' },
     { key: 'keepDays', label: '保质期' },
   ],
@@ -268,6 +269,8 @@ class PrintersController {
     if (printerType === '标签') {
       if (!LABEL_SIZE_KEYS.includes(labelSize)) throw new BizException(40003, `标签纸型须为：${LABEL_SIZE_KEYS.join('/')}`);
       width = Number(labelSize.split('x')[0]);
+    } else if (printerType === '激光') {
+      width = 0; labelSize = '40x30';   // 激光/喷墨走本地打印机，不强制纸宽/纸型
     } else {
       if (![58, 80].includes(width)) throw new BizException(40003, '纸宽仅支持 58/80mm');
       labelSize = '40x30';
@@ -275,17 +278,19 @@ class PrintersController {
     const brand = PRINTER_BRANDS.includes(String(dto.brand)) ? String(dto.brand) : '通用';
     const cnt = await q1<any>(`SELECT count(*)::int AS n FROM printers WHERE store_id=$1`, [user.storeId]);
     const isDefault = cnt.n === 0 || dto.isDefault === true;
+    // V5.0.4：首台/显式默认机按设备类型推断默认用途（标签→价签，小票→小票），保证每业务有默认
+    const defaultFor = isDefault ? (printerType === '标签' ? 'pricetag' : printerType === '激光' ? 'a5' : 'receipt') : null;
     const r = await tx(async c => {
       if (isDefault) await cx(c, `UPDATE printers SET is_default=false WHERE store_id=$1`, [user.storeId]);
       const m = await cx(c,
-        `INSERT INTO printers (store_id, name, conn_type, conn_addr, width_mm, is_default, auto_reconnect, status, brand, printer_type, label_size)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'在线',$8,$9,$10) RETURNING id`,
-        [user.storeId, name, connType, addr, width, isDefault, dto.autoReconnect !== false, brand, printerType, labelSize]);
+        `INSERT INTO printers (store_id, name, conn_type, conn_addr, width_mm, is_default, auto_reconnect, status, brand, printer_type, label_size, default_for)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'在线',$8,$9,$10,$11) RETURNING id`,
+        [user.storeId, name, connType, addr, width, isDefault, dto.autoReconnect !== false, brand, printerType, labelSize, defaultFor]);
       return m[0];
     });
     await audit(user.storeId, user.sub, '打印', 'printer.create', 'printer', r.id,
-      { name, connType, addr, isDefault, brand, printerType, labelSize });
-    return { id: r.id, name, isDefault };
+      { name, connType, addr, isDefault, defaultFor, brand, printerType, labelSize });
+    return { id: r.id, name, isDefault, defaultFor };
   }
 
   /** 修改（连接/宽度/自动重连/名称；纸宽变更不触发重排历史） */
@@ -305,6 +310,8 @@ class PrintersController {
       labelSize = dto.labelSize !== undefined ? String(dto.labelSize) : labelSize;
       if (!LABEL_SIZE_KEYS.includes(labelSize)) throw new BizException(40003, `标签纸型须为：${LABEL_SIZE_KEYS.join('/')}`);
       widthMm = Number(labelSize.split('x')[0]);
+    } else if (printerType === '激光') {
+      labelSize = '40x30';   // 激光/喷墨走本地打印，纸型占位
     } else {
       if (widthMm !== undefined && ![58, 80].includes(widthMm)) throw new BizException(40003, '纸宽仅支持 58/80mm');
     }
@@ -431,7 +438,7 @@ class PrintersController {
     await storePrice.overlay(user.storeId, prods);
     // 进行中的行级促销：特价(specialPrice)/定时打折(rate+时间窗)，命中取更低价
     const promos = await q<any>(
-      `SELECT kind, rules, scope FROM promotions
+      `SELECT kind, rules, scope, start_at, end_at FROM promotions
         WHERE store_id=$1 AND status='进行中' AND start_at <= now() AND end_at >= now()
           AND kind IN ('特价','定时打折')`, [user.storeId]);
     const scopeHit = (scope: any, p: any): boolean => {
@@ -444,11 +451,12 @@ class PrintersController {
     const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
     const items = prods.map(p => {
       let promoPrice: number | null = null;
+      let promoHit: any = null;
       for (const pr of promos) {
         if (!scopeHit(pr.scope, p)) continue;
         if (pr.kind === '特价') {
           const sp = Math.round(Number(pr.rules?.specialPrice) * 100) / 100;
-          if (sp > 0 && sp < Number(p.sell_price) && (promoPrice == null || sp < promoPrice)) promoPrice = sp;
+          if (sp > 0 && sp < Number(p.sell_price) && (promoPrice == null || sp < promoPrice)) { promoPrice = sp; promoHit = pr; }
         } else {   // 定时打折：当前时间窗内 rate 折
           const [h1, m1] = String(pr.rules?.startTime || '').split(':').map(Number);
           const [h2, m2] = String(pr.rules?.endTime || '').split(':').map(Number);
@@ -457,14 +465,27 @@ class PrintersController {
           const rate = Number(pr.rules?.rate);
           if (inWin && rate > 0 && rate < 1) {
             const sp = Math.round(Math.round(Number(p.sell_price) * 100) * rate) / 100; // 决策③(A4)：售价先化整分再乘折率，杜绝元域浮点二次舍入
-            if (promoPrice == null || sp < promoPrice) promoPrice = sp;
+            if (promoPrice == null || sp < promoPrice) { promoPrice = sp; promoHit = pr; }
           }
+        }
+      }
+      // V5.0.4：促销期标签文案（合规：特价须标注有效期/时段）
+      let promoLabel: string | null = null;
+      if (promoHit) {
+        if (promoHit.kind === '特价') {
+          const f = (d?: string) => { if (!d) return ''; const dt = new Date(d); return `${dt.getMonth() + 1}.${dt.getDate()}`; };
+          const s = f(promoHit.start_at), e = f(promoHit.end_at);
+          promoLabel = `特价 ${s && e ? s + '–' + e : (e || '进行中')}`;
+        } else {
+          const st = String(promoHit.rules?.startTime || '').slice(0, 5);
+          const et = String(promoHit.rules?.endTime || '').slice(0, 5);
+          promoLabel = `每日${st || ''}–${et || ''}特惠`;
         }
       }
       return {
         id: Number(p.id), name: p.name, barcode: p.barcode || '', spec: p.spec || '',
         unit: p.base_unit, price: Number(p.sell_price), promoPrice,
-        keepDays: p.keep_days ? Number(p.keep_days) : null,
+        keepDays: p.keep_days ? Number(p.keep_days) : null, promoLabel,
       };
     });
     return { items };
@@ -493,6 +514,7 @@ class PrintersController {
       keepDays: it.keepDays != null ? Number(it.keepDays) : undefined,
       weight: it.weight != null ? Number(it.weight) : undefined,
       time: String(it.time || '').slice(0, 16) || undefined,
+      promoLabel: it.promoLabel ? String(it.promoLabel).slice(0, 30) : undefined,
       copies: Number(it.copies) || 1,
     }));
     const [wmm, hmm] = LABEL_SIZES[String(p.label_size || '40x30')] || LABEL_SIZES['40x30'];
@@ -552,18 +574,26 @@ class PrintersController {
     return { ok: true, channel: 'network', lang, bytes: bytes.length, costMs: cost };
   }
 
-  /** 设为默认机（店内唯一） */
+  /** 设为默认机（按业务用途唯一：receipt小票 / pricetag价签 / scale秤贴 / a5单据；空=取消默认） */
   @Put(':id/default')
   @RequirePerms('printer.manage')
-  async setDefault(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+  async setDefault(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() dto: any) {
     const cur = await q1(`SELECT * FROM printers WHERE id=$1 AND store_id=$2`, [id, user.storeId]);
     if (!cur) throw new BizException(40400, '打印机不存在');
+    const df = String(dto?.defaultFor || '').trim();
+    const ALLOWED = ['receipt', 'pricetag', 'scale', 'a5'];
     await tx(async c => {
-      await cx(c, `UPDATE printers SET is_default=false WHERE store_id=$1`, [user.storeId]);
-      await cx(c, `UPDATE printers SET is_default=true WHERE id=$1`, [id]);
+      if (!df) {                                   // 取消本台默认
+        await cx(c, `UPDATE printers SET is_default=false, default_for=null WHERE id=$1`, [id]);
+        return;
+      }
+      if (!ALLOWED.includes(df)) throw new BizException(40003, '默认用途须为：' + ALLOWED.join('/'));
+      // 清本店「同业务」其他默认 + 本台原默认（无论何种业务），保证每业务唯一
+      await cx(c, `UPDATE printers SET is_default=false WHERE store_id=$1 AND (default_for=$2 OR id=$3)`, [user.storeId, df, id]);
+      await cx(c, `UPDATE printers SET is_default=true, default_for=$2 WHERE id=$1`, [id, df]);
     });
-    await audit(user.storeId, user.sub, '打印', 'printer.default', 'printer', id, { name: cur.name });
-    return { id, isDefault: true };
+    await audit(user.storeId, user.sub, '打印', 'printer.default', 'printer', id, { name: cur.name, defaultFor: df });
+    return { id, isDefault: !!df, defaultFor: df || null };
   }
 
   /** 一键测试页：网口机真发 ESC/POS 字节（GBK 编码）；其余连接方式渲染+落历史（由浏览器/驱动出纸） */
