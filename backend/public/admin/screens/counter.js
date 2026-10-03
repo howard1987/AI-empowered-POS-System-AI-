@@ -48,12 +48,12 @@ export async function render(view) {
     $('#hCount').textContent = `共 ${rows.length} 单`;
     $('#hBatch').disabled = true;
     $('#hList').innerHTML = rows.length ? `
-      <table><thead><tr><th><input type="checkbox" id="hAll"></th><th>单号</th><th>POS</th><th>挂单人</th>
+      <table><thead><tr><th><input type="checkbox" id="hAll"></th><th class="seq">序号</th><th>单号</th><th>POS</th><th>挂单人</th>
         <th class="num">商品数量</th><th class="num">金额</th><th>备注</th><th>挂单时间</th><th>操作</th></tr></thead>
-      <tbody>${rows.map(h => {
+      <tbody>${rows.map((h, i) => {
         const items = h.items || [];
         const amt = sumAmt(items);
-        return `<tr><td><input type="checkbox" class="hSel" data-id="${h.id}" data-st="${esc(h.status)}"></td>
+        return `<tr><td><input type="checkbox" class="hSel" data-id="${h.id}" data-st="${esc(h.status)}"></td><td class="num seq">${i + 1}</td>
         <td><a href="javascript:void 0" data-detail="${h.id}" style="font-weight:600">${esc(h.order_no || ('#' + h.id))}</a></td>
         <td>${esc(h.pos_no)}</td><td>${esc(h.held_by_name || '—')}</td>
         <td class="num">${sumQty(items)}</td>
@@ -112,9 +112,9 @@ export async function render(view) {
         挂单人 ${esc(h.held_by_name || '—')} · ${dt(h.created_at)} ·
         状态 <b>${esc(h.status)}</b>${h.picked_at ? ` · 取单时间 ${dt(h.picked_at)}` : ''}${h.remark ? ` · 备注：${esc(h.remark)}` : ''}
       </div>
-      ${items.length ? `<table><thead><tr><th>#</th><th>商品</th><th>条码</th><th>单位</th><th class="num">数量</th><th class="num">单价</th><th class="num">小计</th><th>行备注</th></tr></thead>
+      ${items.length ? `<table><thead><tr><th class="seq">序号</th><th>商品</th><th>条码</th><th>单位</th><th class="num">数量</th><th class="num">单价</th><th class="num">小计</th><th>行备注</th></tr></thead>
       <tbody>${items.map((i, k) => `<tr>
-        <td>${k + 1}</td><td>${esc(i.productName || ('#' + i.productId))}</td>
+        <td class="seq">${k + 1}</td><td>${esc(i.productName || ('#' + i.productId))}</td>
         <td class="muted">${esc(i.barcode || '—')}</td><td>${esc(i.unitName || i.unit || '—')}</td>
         <td class="num">${Number(i.qty) || 0}</td>
         <td class="num">${i.unitPrice != null ? money(i.unitPrice) : '—'}</td>

@@ -1,5 +1,6 @@
 import { Module, Controller, Get, Put, Param, Body, Query } from '@nestjs/common';
 import { q, q1, tx, cx, audit } from '../common/db';
+import { existsSync } from 'fs';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { encryptSecret, decryptSecret, maskSecret } from '../common/secret';
@@ -140,12 +141,34 @@ class SettingsController {
       logVal = maskSecret(storeVal);
     }
 
-    // P1-H2 SSRF 收口：URL/Host 类设置写入时校验（拒协议/内嵌凭据/云元数据等；预测服务仅允许本机）
+    // P1-H2 SSRF 收口：URL/Host 类设置写入时校验（覆盖 .base/.url/.host/.gateway/.endpoint 及 _host 形态键名）
     {
       const cand = String(typeof body.value === 'string' ? body.value : JSON.stringify(body.value ?? '')).replace(/^"|"$/g, '').trim();
-      if (cand && /^https?:/i.test(cand) && (/\.(base|url)$/i.test(key) || /(^|\.)host(\.|$)/i.test(key))) {
+      const keyLower = key.toLowerCase();
+      const looksLikeOutboundUrl = /^https?:/i.test(cand) && /(host|base|url|gateway|endpoint)/.test(keyLower);
+      if (cand && looksLikeOutboundUrl) {
         try { assertSafeBaseUrl(cand, { loopbackOnly: key === 'ai.forecast.lgbm.url' }); }
         catch (e: any) { throw new BizException(40003, `目标地址不被允许：${e?.message || '已拦截'}`); }
+      }
+    }
+
+    // P4 训练解释器白名单：ai.autotrain.python 直接喂给 spawn()，必须锁定受信可执行路径
+    if (key === 'ai.autotrain.python') {
+      const p = String(body.value ?? '').trim();
+      const allowed = (process.env.AI_TRAIN_PYTHON_ALLOWLIST || '').split(',').map(s => s.trim()).filter(Boolean);
+      if (allowed.length) {
+        if (!allowed.includes(p)) throw new BizException(40003, '训练解释器不在受信白名单（AI_TRAIN_PYTHON_ALLOWLIST）');
+      } else {
+        const isName = p === 'python' || p === 'python3' || p === '';
+        const isAbs = /^(?:[a-zA-Z]:[\\/]|\/)/.test(p);
+        const base = (p.split(/[\\/]/).pop() || '').toLowerCase();
+        const looksLikePy = /^python[\w.\-]*$/.test(base);
+        if (!isName && !isAbs) {
+          throw new BizException(40003, '训练解释器须为 python/python3 或绝对路径（建议配置 AI_TRAIN_PYTHON_ALLOWLIST 锁定）');
+        }
+        if (isAbs && (!looksLikePy || !existsSync(p))) {
+          throw new BizException(40003, '训练解释器路径不存在或非 python 可执行文件');
+        }
       }
     }
 

@@ -35,6 +35,10 @@
       '.drp-preset{font:inherit;font-size:12px;padding:4px 9px;border:1px solid var(--line,#e3ddcf);border-radius:14px;background:#fff;cursor:pointer;color:var(--ink,#222)}',
       '.drp-preset:hover{border-color:var(--pri,#2f7d4f)}',
       '.drp-ok{font:inherit;font-size:12px;padding:4px 14px;border:1px solid var(--pri,#2f7d4f);border-radius:14px;background:var(--pri,#2f7d4f);color:#fff;cursor:pointer;margin-left:auto}',
+      '.drp-mtitle{cursor:pointer;user-select:none}',
+      '.drp-mtitle:hover{color:var(--pri,#2f7d4f);text-decoration:underline}',
+      '.drp-grid.pick{grid-template-columns:repeat(3,1fr);padding:2px 8px;gap:4px}',
+      '.drp-grid.pick .drp-cell{height:32px;line-height:32px;font-size:12.5px;border-radius:8px}',
       '@media (max-width:640px){',
       '  .drp-pop{width:min(360px,calc(100vw - 16px));max-width:none;left:auto;right:0}',
       '  .drp-months{flex-direction:column;gap:10px}',
@@ -56,6 +60,20 @@
   function sameDay(a, b) { return a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
   function firstOfMonth(s) { var d = parse(s) || new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); }
   var WD = ['一', '二', '三', '四', '五', '六', '日'];
+
+  /* 区间快捷预设：f() 返回 [起始, 结束]。默认集用于普通屏幕；
+     某屏可用 data-drp-presets="m,lm,q,h1" 指定自定义集（键名逗号分隔），如对账单。 */
+  var PRESETS = {
+    today: { t: '今天', f: function () { var d = new Date(); return [fmt(d), fmt(d)]; } },
+    yday:  { t: '昨天', f: function () { var d = new Date(); d.setDate(d.getDate() - 1); return [fmt(d), fmt(d)]; } },
+    d7:    { t: '近7天', f: function () { var d = new Date(), s = new Date(d); s.setDate(d.getDate() - 6); return [fmt(s), fmt(d)]; } },
+    d30:   { t: '近30天', f: function () { var d = new Date(), s = new Date(d); s.setDate(d.getDate() - 29); return [fmt(s), fmt(d)]; } },
+    m:     { t: '本月', f: function () { var d = new Date(); return [fmt(new Date(d.getFullYear(), d.getMonth(), 1)), fmt(d)]; } },
+    lm:    { t: '上月', f: function () { var d = new Date(); return [fmt(new Date(d.getFullYear(), d.getMonth() - 1, 1)), fmt(new Date(d.getFullYear(), d.getMonth(), 0))]; } },
+    q:     { t: '上季度', f: function () { var d = new Date(), y = d.getFullYear(), qi = Math.floor(d.getMonth() / 3); if (qi === 0) { y -= 1; qi = 4; } return [fmt(new Date(y, (qi - 1) * 3, 1)), fmt(new Date(y, (qi - 1) * 3 + 3, 0))]; } },
+    h1:    { t: '上半年', f: function () { var y = new Date().getFullYear(); return [fmt(new Date(y, 0, 1)), fmt(new Date(y, 5, 30))]; } },
+  };
+  var DEFAULT_PRESETS = ['today', 'yday', 'd7', 'd30', 'm', 'lm'];
 
   function monthCells(year, month) {
     var first = new Date(year, month, 1);
@@ -114,7 +132,15 @@
     from.parentElement.insertBefore(wrap, from);
     from.type = 'hidden'; to.type = 'hidden';
 
-    var st = { start: from.value || '', end: to.value || '', vm: firstOfMonth(from.value || today()) };
+    var _vm0 = firstOfMonth(from.value || today());
+    // 左月默认本月、右月默认上月（V5.0.8）
+    var st = { start: from.value || '', end: to.value || '', vmL: _vm0, vmR: addMonths(_vm0, -1), pickMode: null, pickYear: _vm0.getFullYear() };
+    // 快捷预设：默认集；该屏可用 data-drp-presets="键,键" 覆盖（对账单用 m,lm,q,h1）
+    var presetKeys = DEFAULT_PRESETS;
+    if (from.dataset.drpPresets) {
+      var ks = String(from.dataset.drpPresets).split(',').map(function (x) { return x.trim(); }).filter(function (x) { return PRESETS[x]; });
+      if (ks.length) presetKeys = ks;
+    }
 
     function syncTrigger() {
       if (st.start && st.end) btn.textContent = st.start + '  ~  ' + st.end;
@@ -135,20 +161,57 @@
       pop.innerHTML = '';
       var head = document.createElement('div'); head.className = 'drp-head';
       var prev = document.createElement('button'); prev.type = 'button'; prev.className = 'drp-nav'; prev.textContent = '‹';
-      var hint = document.createElement('div'); hint.className = 'drp-hint'; hint.textContent = '点选起止日期';
+      var hint = document.createElement('div'); hint.className = 'drp-hint';
       var next = document.createElement('button'); next.type = 'button'; next.className = 'drp-nav'; next.textContent = '›';
-      prev.onclick = function (e) { e.stopPropagation(); st.vm = addMonths(st.vm, -1); renderCal(); };
-      next.onclick = function (e) { e.stopPropagation(); st.vm = addMonths(st.vm, 1); renderCal(); };
+      var inYearMode = (st.pickMode === 'L' || st.pickMode === 'R');
+      if (inYearMode) {
+        hint.textContent = st.pickYear + ' 年 · 点选月份快速跳转';
+        prev.onclick = function (e) { e.stopPropagation(); st.pickYear -= 1; renderCal(); };
+        next.onclick = function (e) { e.stopPropagation(); st.pickYear += 1; renderCal(); };
+      } else {
+        hint.textContent = '点选起止日期 · ‹左月 ›右月 · 点年月选年';
+        prev.onclick = function (e) { e.stopPropagation(); st.vmL = addMonths(st.vmL, -1); renderCal(); };  // 只动左月
+        next.onclick = function (e) { e.stopPropagation(); st.vmR = addMonths(st.vmR, 1); renderCal(); };    // 只动右月
+      }
       head.appendChild(prev); head.appendChild(hint); head.appendChild(next);
       pop.appendChild(head);
 
+      if (inYearMode) {
+        var ywrap = document.createElement('div'); ywrap.className = 'drp-month';
+        var mg = document.createElement('div'); mg.className = 'drp-grid pick';
+        for (var mi = 0; mi < 12; mi++) {
+          (function (idx) {
+            var c = document.createElement('span'); c.className = 'drp-cell';
+            c.textContent = (idx + 1) + '月';
+            var cur = (st.pickMode === 'L' ? st.vmL : st.vmR);
+            if (cur.getFullYear() === st.pickYear && cur.getMonth() === idx) c.className += ' sel';
+            c.onclick = function (e) {
+              e.stopPropagation();
+              var target = new Date(st.pickYear, idx, 1);
+              if (st.pickMode === 'L') st.vmL = target; else st.vmR = target;
+              st.pickMode = null; renderCal();
+            };
+            mg.appendChild(c);
+          })(mi);
+        }
+        ywrap.appendChild(mg);
+        var yback = document.createElement('button'); yback.type = 'button'; yback.className = 'drp-preset'; yback.textContent = '返回日历';
+        yback.style.marginTop = '6px';
+        yback.onclick = function (e) { e.stopPropagation(); st.pickMode = null; renderCal(); };
+        ywrap.appendChild(yback);
+        pop.appendChild(ywrap);
+        return;   // 年月视图不显示日历与预设
+      }
+
       var mwrap = document.createElement('div'); mwrap.className = 'drp-months';
-      var months = [st.vm, addMonths(st.vm, 1)];
+      var months = [st.vmL, st.vmR];
       var sD = parse(st.start), eD = parse(st.end);
-      months.forEach(function (mv) {
+      months.forEach(function (mv, side) {
         var mc = document.createElement('div'); mc.className = 'drp-month';
         var mt = document.createElement('div'); mt.className = 'drp-mtitle';
         mt.textContent = mv.getFullYear() + '年' + (mv.getMonth() + 1) + '月';
+        mt.title = '点击快速选择年份 / 月份';
+        mt.onclick = function (e) { e.stopPropagation(); st.pickMode = side === 0 ? 'L' : 'R'; st.pickYear = mv.getFullYear(); renderCal(); };
         mc.appendChild(mt);
         var g = document.createElement('div'); g.className = 'drp-grid';
         WD.forEach(function (w) { var c = document.createElement('span'); c.className = 'drp-wd'; c.textContent = w; g.appendChild(c); });
@@ -168,10 +231,10 @@
       pop.appendChild(mwrap);
 
       var bar = document.createElement('div'); bar.className = 'drp-bar';
-      var presets = [['今天', 0, 0], ['昨天', 1, 1], ['近7天', 6, 0], ['近30天', 29, 0], ['本月', null, 'm'], ['上月', null, 'lm']];
-      presets.forEach(function (pp) {
-        var b = document.createElement('button'); b.type = 'button'; b.className = 'drp-preset'; b.textContent = pp[0];
-        b.onclick = function (e) { e.stopPropagation(); applyPreset(pp[1], pp[2]); };
+      presetKeys.forEach(function (k) {
+        var p = PRESETS[k]; if (!p) return;
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'drp-preset'; b.textContent = p.t;
+        b.onclick = function (e) { e.stopPropagation(); var r = p.f(); st.start = r[0]; st.end = r[1]; commit(); };
         bar.appendChild(b);
       });
       var clear = document.createElement('button'); clear.type = 'button'; clear.className = 'drp-preset'; clear.textContent = '清空';
@@ -182,13 +245,6 @@
       bar.appendChild(ok);
       pop.appendChild(bar);
 
-      function applyPreset(back, mode) {
-        var t = new Date();
-        if (mode === 'm') { st.start = fmt(new Date(t.getFullYear(), t.getMonth(), 1)); st.end = fmt(t); }
-        else if (mode === 'lm') { st.start = fmt(new Date(t.getFullYear(), t.getMonth() - 1, 1)); st.end = fmt(new Date(t.getFullYear(), t.getMonth(), 0)); }
-        else { st.end = fmt(t); var s = new Date(t); s.setDate(t.getDate() - back); st.start = fmt(s); }
-        commit();
-      }
       function pick(dateStr) {
         if (!st.start || (st.start && st.end)) { st.start = dateStr; st.end = ''; }
         else if (dateStr < st.start) st.start = dateStr;

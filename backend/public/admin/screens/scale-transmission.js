@@ -33,14 +33,14 @@ export async function render(view) {
           <button class="btn" id="stLoadWeighted">扫描生鲜商品(Q)</button>
           <button class="btn pri" id="stSave">保存(S)</button>
           <button class="btn pri" id="stTransmit">传秤(T)</button>
-          <button class="btn" id="stExport">导出(E)</button>
+          <button class="btn" id="stExport">导出</button>
           <button class="btn" id="stClear">清除(L)</button>
         </div>
         <div class="st-table-wrap tbl-min">
           <table id="stTable">
             <thead><tr>
-              <th><input type="checkbox" id="stCheckAll" title="全选"></th>
-              <th>流水号</th><th>部门号</th><th>商品秤内码</th><th>商品编号</th>
+              <th><input type="checkbox" id="stCheckAll" title="全选" ${rows.length && rows.every(r => r._checked) ? 'checked' : ''}></th>
+              <th class="seq">序号</th><th>部门号</th><th>商品秤内码</th><th>商品编号</th>
               <th>商品名称</th><th>商品生鲜码</th><th>商品简称</th>
               <th class="num">零售价</th><th class="num">会员价</th><th class="num">批发价</th>
               <th>热键</th>
@@ -129,7 +129,7 @@ export async function render(view) {
     tbody.innerHTML = rows.map((r, i) => `
       <tr>
         <td><input type="checkbox" class="st-row-check" data-i="${i}" ${r._checked ? 'checked' : ''}></td>
-        <td>${i + 1}</td>
+        <td class="seq">${i + 1}</td>
         <td><input class="st-in" data-i="${i}" data-f="scale_department" value="${esc(r.scale_department || '')}" maxlength="4" style="width:60px"></td>
         <td><input class="st-in" data-i="${i}" data-f="scale_plu_code" value="${esc(r.scale_plu_code || '')}" maxlength="12" style="width:90px"></td>
         <td>${esc(r.goods_no)}</td>
@@ -288,7 +288,20 @@ export async function render(view) {
   $('#stLoadWeighted').onclick = () => { $('#stKw').value = ''; $('#stCat').value = ''; $('#stOnlyEnabled').checked = false; loadProducts({ page: 1 }); };
   $('#stSave').onclick = saveRows;
   $('#stTransmit').onclick = doTransmit;
-  $('#stExport').onclick = exportCsv;
+  $('#stExport').onclick = () => {
+    const data = (selectedRows().length ? selectedRows() : rows);
+    const cols = [
+      { k: 'idx', t: '流水号' }, { k: 'dept', t: '部门号' }, { k: 'plu', t: '商品秤内码' },
+      { k: 'goods', t: '商品编号' }, { k: 'name', t: '商品名称' }, { k: 'fresh', t: '商品生鲜码' },
+      { k: 'short', t: '商品简称' }, { k: 'sell', t: '零售价' }, { k: 'member', t: '会员价' }, { k: 'wholesale', t: '批发价' },
+    ];
+    const rowsData = data.map((r, i) => ({
+      idx: i + 1, dept: r.scale_department || config.department || '01', plu: r.scale_plu_code || makeDefaultPlu(r),
+      goods: r.goods_no, name: r.name, fresh: r.barcode || '', short: (r.short_name || r.name || '').slice(0, 6),
+      sell: Number(r.sell_price || 0).toFixed(2), member: Number(r.member_price || 0).toFixed(2), wholesale: Number(r.wholesale_price || 0).toFixed(2),
+    }));
+    openExportPicker({ filename: '传秤商品', columns: cols, rows: rowsData });
+  };
   $('#stClear').onclick = () => {
     rows.forEach(r => { r._checked = false; r.scale_plu_code = makeDefaultPlu(r); r.scale_department = config.department || '01'; r.scale_hotkey = ''; });
     drawTable();

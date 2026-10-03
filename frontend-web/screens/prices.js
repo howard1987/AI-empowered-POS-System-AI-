@@ -41,7 +41,7 @@ export async function render(view) {
         <style>#pcTable th, #pcTable td { padding: 7px 12px; } #pcTable td, #pcTable th { vertical-align: middle; } #pcTable input[type="number"] { text-align: right; }</style>
         <table data-colresize="price-change-lines" id="pcTable" style="table-layout:fixed">
           <thead><tr>
-          <th style="width:7%">＋/−</th><th style="width:5%">序号</th><th style="width:16%">条码</th><th style="width:22%">商品</th><th style="width:7%;text-align:right">单位</th>
+          <th style="width:7%">＋/−</th><th style="width:5%">序号</th><th style="width:16%">条码</th><th style="width:22%">商品</th><th style="width:7%;text-align:center">单位</th>
           <th class="num" style="width:11%">现进价</th><th class="num" style="width:11%">新进价</th>
           <th class="num" style="width:11%">现售价</th><th class="num" style="width:10%">新售价</th>
         </tr></thead>

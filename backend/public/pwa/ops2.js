@@ -665,7 +665,7 @@ View.aiTask = async function (v, arg) {
       box.classList.remove('hidden');
       box.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:8px">` + mine.map(s => `
         <div data-img="${esc(s.image_path)}" style="cursor:zoom-in;text-align:center;width:70px">
-          <img src="${esc(s.image_path)}" loading="lazy" style="width:64px;height:64px;border-radius:8px;object-fit:cover;border:1px solid var(--line)" onerror="this.style.opacity=.25">
+          <img src="${esc(s.image_path)}" loading="lazy" style="width:64px;height:64px;border-radius:8px;object-fit:cover;border:1px solid var(--line)">
           <div class="s" style="font-size:10.5px;color:var(--ink-3)">${esc(s.angle || '样本')}</div>
         </div>`).join('') + `</div>`;
       box.querySelectorAll('[data-img]').forEach(el => el.onclick = () => {

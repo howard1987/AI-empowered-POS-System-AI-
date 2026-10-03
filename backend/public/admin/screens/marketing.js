@@ -57,7 +57,7 @@ export async function render(view) {
         <span class="muted" id="mkTotal" style="margin-left:auto;font-size:11.5px"></span>
       </div>
       <div id="mkBody"></div>
-      <div class="bar" style="justify-content:flex-end;margin-top:10px">
+      <div class="doc-foot" style="justify-content:flex-end;margin-top:0">
         <button class="btn sm" id="mkPrev">‹ 上一页</button>
         <span class="muted" style="font-size:11.5px;display:flex;align-items:center;gap:4px">第
           <input type="number" id="mkJump" min="1" value="1" style="width:52px;text-align:center;padding:2px 4px"> /
@@ -142,8 +142,8 @@ export async function render(view) {
         <span class="muted" style="font-size:12px" id="mkSelN"></span>
       </div>
       <table class="tbl">
-        <thead><tr><th style="width:30px"><input type="checkbox" id="mkChkAll" title="全选本页"></th><th>时间</th><th>类型</th><th>对象</th><th>内容</th><th>状态</th><th style="width:150px">操作</th></tr></thead>
-        <tbody>${r.items.map(t => {
+        <thead><tr><th style="width:30px"><input type="checkbox" id="mkChkAll" title="全选/取消全选本页" ${r.items.length && r.items.every(t => mkSel.has(Number(t.id))) ? 'checked' : ''}></th><th class="seq">序号</th><th>时间</th><th>类型</th><th>对象</th><th>内容</th><th>状态</th><th style="width:150px">操作</th></tr></thead>
+        <tbody>${r.items.map((t, i) => {
           const obj = t.member_name ? `👤 ${esc(t.member_name)}${t.phone ? ' · ' + esc(t.phone) : ''}`
             : t.product_name ? `📦 ${esc(t.product_name)}` : '—';
           const stCls = t.status === '待处理' ? 'o' : t.status === '已处理' ? 'g' : '';
@@ -155,7 +155,7 @@ export async function render(view) {
           const obj2 = rcv?.customerName ? `🤝 ${esc(rcv.customerName)}${rcv.phone ? ' · ' + esc(rcv.phone) : ''}` : obj;
           return `<tr>
             <td><input type="checkbox" class="mk-chk" data-id="${t.id}" ${mkSel.has(t.id) ? 'checked' : ''}></td>
-            <td style="white-space:nowrap;color:var(--ink-3);font-size:12px">${dt(t.created_at)}</td>
+            <td class="num seq">${i + 1}</td><td style="white-space:nowrap;color:var(--ink-3);font-size:12px">${dt(t.created_at)}</td>
             <td><span class="badge ${RULE_META[t.touch_type]?.cls || ''}">${TYPE_ICON[t.touch_type] || '🎯'} ${RULE_META[t.touch_type]?.label || t.touch_type}</span></td>
             <td style="white-space:nowrap">${obj2}</td>
             <td style="max-width:420px"><b>${esc(t.title)}</b><div class="muted" style="font-size:11.5px">${esc(t.content)}</div></td>
@@ -272,11 +272,11 @@ export async function render(view) {
     const d = await must(get('/ai/marketing/effects'));
     $('#mkAiEffects').innerHTML = d.items?.length ? `
       <div style="padding:2px 18px 14px">
-      <table><thead><tr><th>方案类型</th><th class="num">目标会员</th><th class="num">触达前7天</th><th class="num">触达后消费</th><th class="num">增量</th><th class="num">触达/处理</th></tr></thead>
-      <tbody>${d.items.map(x => {
+      <table><thead><tr><th class="seq">序号</th><th>方案类型</th><th class="num">目标会员</th><th class="num">触达前7天</th><th class="num">触达后消费</th><th class="num">增量</th><th class="num">触达/处理</th></tr></thead>
+      <tbody>${d.items.map((x, i) => {
         const [label, cls] = aiLabel(x.type);
         const up = Number(x.delta) > 0;
-        return `<tr><td><span class="badge ${cls}">${label}</span></td>
+        return `<tr><td class="num seq">${i + 1}</td><td><span class="badge ${cls}">${label}</span></td>
           <td class="num">${x.members}</td><td class="num">${money(x.before7d)}（${x.beforeBuyers}人）</td>
           <td class="num">${money(x.afterAmt)}（${x.afterBuyers}人）</td>
           <td class="num" style="color:${up ? '#2e9e5b' : '#c0392b'}">${Number(x.delta) >= 0 ? '+' : ''}${money(x.delta)}</td>

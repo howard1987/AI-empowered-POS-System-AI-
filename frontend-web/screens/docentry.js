@@ -1,4 +1,4 @@
-import { get, esc, toast } from '../api.js';
+import { get, num2 as fmt, esc, toast } from '../api.js';
 
 /**
  * 单据录入表格通用组件—— 采购订单 / 采购入库 / 采购退货共用
@@ -100,7 +100,6 @@ export function renderLines(tb, lines, opts = {}) {
   const { products, unitsCache = {}, price = true, sell = false, prodDate = false, stock = true,
           batch = false, orderQty = false, headLabel = '＋/−', today = '', qtyLabel = '数量',
           lowProtect = false, supCol = false, onUnknown, onSum } = opts;
-  const fmt = n => (Number(n) || 0).toFixed(2);
   const colN = 7 + (price ? 2 : 0) + (sell ? 1 : 0) + (prodDate ? 1 : 0) + (stock ? 1 : 0) + (batch ? 2 : 0) + (supCol ? 1 : 0) + 1;
   const emptyHtml = `<tr><td colspan="${colN}" class="empty">空单：在首行「条码」列扫码 / 输入定位商品</td></tr>`;
 

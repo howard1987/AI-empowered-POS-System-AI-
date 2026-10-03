@@ -194,7 +194,7 @@ export async function render(view) {
     host.innerHTML = `<table><thead><tr>
       <th>排名</th><th>门店</th><th>销售额</th><th style="width:150px">占比条形</th><th>单量</th><th>环比涨跌</th></tr></thead><tbody>
       ${items.map((x, i) => `<tr>
-        <td>${i + 1}</td><td class="hr-l">${esc(x.store_name)}</td>
+        <td class="seq">${i + 1}</td><td class="hr-l">${esc(x.store_name)}</td>
         <td>${gm(x.cur_sales)}</td><td>${bar(x.cur_sales, max)}</td>
         <td>${x.cur_orders}</td>
         <td class="${pctCls(x.growth)}">${Number(x.growth) > 0 ? '▲' : Number(x.growth) < 0 ? '▼' : '—'} ${Math.abs(Number(x.growth))}%</td></tr>`).join('')}
@@ -440,9 +440,9 @@ export async function render(view) {
     const items = d.items || [];
     if (!items.length) { host.innerHTML = noResult('区间内没有跨店消费会员'); $('#hrCount').textContent = ''; return; }
     host.innerHTML = `<table><thead><tr>
-      <th>会员</th><th>卡号</th><th>活跃店数</th><th>累计消费</th><th>跨店扣款笔数</th><th>跨店扣款额</th></tr></thead><tbody>
-      ${items.map(x => `<tr>
-        <td class="hr-l">${esc(x.name || '—')}</td><td>${esc(x.card_no)}</td>
+      <th class="seq">序号</th><th>会员</th><th>卡号</th><th>活跃店数</th><th>累计消费</th><th>跨店扣款笔数</th><th>跨店扣款额</th></tr></thead><tbody>
+      ${items.map((x, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td class="hr-l">${esc(x.name || '—')}</td><td>${esc(x.card_no)}</td>
         <td class="${Number(x.active_stores) > 1 ? 'up' : ''}">${x.active_stores}</td>
         <td>${gm(x.total_spend)}</td><td>${x.cross_flows}</td><td>${gm(x.cross_debit)}</td></tr>`).join('')}
       </tbody></table>`;
@@ -455,9 +455,9 @@ export async function render(view) {
     if (d.error) { host.innerHTML = noResult('加载失败', esc(d.error)); return; }
     const items = d.items || [];
     host.innerHTML = `<table><thead><tr>
-      <th>门店</th><th>节点</th><th>节点状态</th><th>待传</th><th>失败</th><th>死信</th><th>末次推送</th><th>末次上报</th></tr></thead><tbody>
-      ${items.map(x => `<tr>
-        <td class="hr-l">${esc(x.store_name)}</td><td>${esc(x.node_code || '—')}</td>
+      <th class="seq">序号</th><th>门店</th><th>节点</th><th>节点状态</th><th>待传</th><th>失败</th><th>死信</th><th>末次推送</th><th>末次上报</th></tr></thead><tbody>
+      ${items.map((x, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td class="hr-l">${esc(x.store_name)}</td><td>${esc(x.node_code || '—')}</td>
         <td class="${x.node_status === '启用' ? 'down' : 'up'}" title="${x.node_status ? '' : '该门店尚未在总部注册连锁同步节点：未分配节点编码，仅独立运行，不参与总部数据同步。可在「门店管理」编辑该店完成节点接入。'}">${esc(x.node_status || '未注册')}</td>
         <td class="${Number(x.pending_count) > 50 ? 'up' : ''}">${x.pending_count}</td>
         <td class="${Number(x.failed_count) > 0 ? 'up' : ''}">${x.failed_count}</td>

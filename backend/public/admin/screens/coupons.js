@@ -72,10 +72,10 @@ export async function render(view) {
     const rows = kw ? all.filter(c => String(c.name || '').toLowerCase().includes(kw) || String(c.code || '').toLowerCase().includes(kw)) : all;
     view.querySelector('#cKw').oninput = () => { clearTimeout(list._t); list._t = setTimeout(list, 250); };
     view.querySelector('#clist').innerHTML = rows.length ? `
-      <table><thead><tr><th>ID</th><th>大类码</th><th>名称</th><th>类型</th><th class="num">门槛</th><th class="num">面额/折扣</th>
+      <table><thead><tr><th class="seq">序号</th><th>ID</th><th>大类码</th><th>名称</th><th>类型</th><th class="num">门槛</th><th class="num">面额/折扣</th>
         <th class="num">在库</th><th class="num">未使用</th><th class="num">已核销</th><th class="num">已过期</th><th class="num">作废</th><th>创建时间</th><th>状态</th><th></th></tr></thead>
-      <tbody>${rows.map(c => `<tr>
-        <td>${c.id}</td><td><code>${esc(c.code || '')}</code></td><td>${esc(c.name)}</td><td>${esc(c.type)}</td>
+      <tbody>${rows.map((c, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td>${c.id}</td><td><code>${esc(c.code || '')}</code></td><td>${esc(c.name)}</td><td>${esc(c.type)}</td>
         <td class="num">${c.threshold ? money(c.threshold) : '—'}</td>
         <td class="num">${c.type === '折扣券' ? Number(c.discount) + ' 折率' : c.discount ? money(c.discount) : '—'}</td>
         <td class="num">${c.stock_controlled ? (Number(c.in_stock) ?? '—') : '不限'}</td>
@@ -214,9 +214,9 @@ export async function render(view) {
         String(r.member_phone || '').includes(kw) ||
         String(r.code || '').toLowerCase().includes(kw)) : cache;
       mask.querySelector('#iList').innerHTML = rows.length ? `
-        <table><thead><tr><th>小码</th><th>会员</th><th>状态</th><th>来源</th><th>领取时间</th><th>使用时间</th><th>关联单据</th><th></th></tr></thead>
-        <tbody>${rows.map(r => `<tr>
-          <td><code>${esc(r.code || '')}</code></td>
+        <table><thead><tr><th class="seq">序号</th><th>小码</th><th>会员</th><th>状态</th><th>来源</th><th>领取时间</th><th>使用时间</th><th>关联单据</th><th></th></tr></thead>
+        <tbody>${rows.map((r, i) => `<tr>
+          <td class="num seq">${i + 1}</td><td><code>${esc(r.code || '')}</code></td>
           <td>${esc(r.member_name || '')}${r.member_phone ? `<span class="muted"> ${esc(r.member_phone)}</span>` : ''}</td>
           <td>${esc(ST(r.status))}</td><td>${esc(SRC(r.issue_source || ''))}</td>
           <td>${r.received_at ? dt(r.received_at) : '—'}</td>

@@ -1,5 +1,6 @@
 import { Module, Controller, Post, Get, Body, Param, Query, ParseIntPipe } from '@nestjs/common';
 import { q, q1, tx, cx, r2, r3, audit, seqLock } from '../common/db';
+import { consumeBatches } from './sales.fifo';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms, JWT_SECRET } from '../common/auth';
 import * as jwt from 'jsonwebtoken';
@@ -669,18 +670,10 @@ export class SalesService {
              VALUES ($1,$2,$3,$4,$5,$6)`,
             [user.storeId, ln.p.id, orderId, item[0].id, ln.shortage.qty, ln.shortage.basis]);
         }
-        for (const a of ln.allocs) {
-          await cx(c, `INSERT INTO sale_item_batches (sale_item_id, batch_id, qty, unit_cost) VALUES ($1,$2,$3,$4)`,
-            [item[0].id, a.batchId, a.qty, a.cost]);
-          await cx(c,
-            `UPDATE batches SET remain_qty = remain_qty - $2,
-                status = CASE WHEN remain_qty - $2 <= 0 THEN '售罄' ELSE status END
-              WHERE id=$1`, [a.batchId, a.qty]);
-          await cx(c,
-            `INSERT INTO stock_flows (store_id, product_id, batch_id, direction, qty, unit_cost, ref_type, ref_id, ref_item_id, employee_id)
-             VALUES ($1,$2,$3,'出库',$4,$5,'sale',$6,$7,$8)`,
-            [user.storeId, ln.p.id, a.batchId, a.qty, a.cost, orderId, item[0].id, operatorId]);
-        }
+        await consumeBatches(c, {
+          storeId: user.storeId, productId: ln.p.id, saleItemId: item[0].id,
+          orderId, allocs: ln.allocs, employeeId: operatorId,
+        });
         if (ln.p.track_inventory) {
           await cx(c,
             `UPDATE inventory_current SET qty_total = qty_total - $2, updated_at=now()

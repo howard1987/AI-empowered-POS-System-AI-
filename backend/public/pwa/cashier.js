@@ -853,7 +853,7 @@ window.CashierShell = (function () {
     <div id="csRoot">
       <div id="csTop"${LC.topbarMode === 'compact' ? ' class="cs-compact"' : ''}>
         <div class="cs-brand">${esc(localStorage.getItem('pwa_store_name') || '收银台')}<small>收银台</small></div>
-        <span class="cs-ver" id="csVer">V5.0.5</span>
+        <span class="cs-ver" id="csVer">V5.0.8</span>
         <div class="cs-lamps" id="csLamps">
           ${csLamp('scanner', '扫码枪')}${csLamp('scale', '电子秤')}${csLamp('printer', '小票机')}${csLamp('drawer', '钱箱')}${csLamp('display', '客显')}
         </div>
@@ -936,13 +936,13 @@ window.CashierShell = (function () {
     startClock();
     armIdleLock();
     $('#csPbInfo').textContent = Pricebook.ready ? `（本地价目表 ${info.count} 条）` : '（价目表同步中…）';
-    // V5.0.3：左上角版本号 = max(内置常量, Electron 安装包版本)。内置常量随发版手填（当前 5.0.3）；
+    // V5.0.3：左上角版本号 = max(内置常量, Electron 安装包版本)。内置常量随发版手填（当前 5.0.7）；
     // Electron 安装包版本经 DesktopShell.desktopInfo 桥接（app.getVersion）。取较大者，确保任一来源更新即生效，
     // 不再因忘记改硬编码而显示旧版本（浏览器 PWA 无 DesktopShell 时直接用内置常量）。
     (function syncCsVer() {
       const ve = document.getElementById('csVer');
       if (!ve) return;
-      const FALLBACK = '5.0.5';
+      const FALLBACK = '5.0.8';
       const apply = v => { ve.textContent = 'V' + String(v).replace(/^V/i, ''); };
       apply(FALLBACK);
       if (window.DesktopShell && window.DesktopShell.desktopInfo) {
@@ -2098,10 +2098,11 @@ window.CashierShell = (function () {
     }
     const f = document.createElement('iframe');
     f.style.cssText = 'position:fixed;width:0;height:0;border:0;visibility:hidden';
-    document.body.appendChild(f); f.srcdoc = html;
+    const _blobUrl = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+    document.body.appendChild(f); f.src = _blobUrl;
     await new Promise(r => { f.onload = r; setTimeout(r, 800); });
     try { f.contentWindow.focus(); f.contentWindow.print(); } catch { /* 打印被拒不阻断 */ }
-    setTimeout(() => f.remove(), 60000);
+    setTimeout(() => { URL.revokeObjectURL(_blobUrl); f.remove(); }, 60000);
   }
 
   function openShiftModal() {
@@ -2361,23 +2362,8 @@ window.CashierShell = (function () {
     };
     m.querySelector('#csDyPrint').onclick = async () => {
       if (!data) return;
-      const t = data.totals;
-      try {
-        await csPrintHtml(`<h1>营业日报</h1>
-          <div class="m"><div><span>门店</span><span>${esc(localStorage.getItem('pwa_store_name') || '')}</span></div>
-          <div><span>日期</span><span>${data.date}（自然日 · 支付完成口径）</span></div></div>
-          <table><tbody>
-            <tr><td>订单数</td><td class="r">${t.orders}</td></tr>
-            <tr><td>商品金额</td><td class="r">¥${money(t.goods)}</td></tr>
-            <tr><td>促销 / 券 / 整单折扣</td><td class="r">-¥${money(t.promo)} / -¥${money(t.coupon)} / -¥${money(t.discount)}</td></tr>
-            <tr><td>抹零</td><td class="r">-¥${money(t.round)}</td></tr>
-            ${(data.channels || []).map(c => `<tr><td>${esc(c.channel)}</td><td class="r">¥${money(c.amount)}（${c.orders} 单）</td></tr>`).join('')}
-            <tr><td>退款</td><td class="r">-¥${money(data.refunds.amount)} / ${data.refunds.count} 笔</td></tr>
-            <tr><td>成本 / 毛利</td><td class="r">¥${money(t.cost)} / ¥${money(t.profit)}</td></tr>
-            ${data.negativeCount > 0 ? `<tr><td>负库存售卖</td><td class="r">${data.negativeCount} 笔（待入库/盘盈）</td></tr>` : ''}
-          </tbody></table>
-          <div class="foot">日结结「店」· 交接班结「人」<div class="cut">✂</div></div>`);
-      } catch { /* 打印失败不阻断 */ }
+      // V5.0.6：原此处整段照抄 dailyPrint 的 HTML，两处易各自漂移——统一复用同一函数
+      try { await dailyPrint(data); } catch { /* 打印失败不阻断 */ }
     };
   }
 

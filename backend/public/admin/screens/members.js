@@ -41,7 +41,7 @@ export async function render(view) {
         <button class="btn" id="mGo">查询</button>
         <span class="muted" style="font-weight:400;margin-left:8px">每页 10 条 · 双击行弹会员详情</span></h3>
       <div id="mList" class="tbl-min" style="max-height:calc(10 * 40px + 42px);overflow:auto"></div>
-      <div class="bar" style="justify-content:flex-end;margin-top:8px">
+      <div class="doc-foot" style="justify-content:flex-end;margin-top:0">
         <button class="btn sm" id="mPrev">‹ 上一页</button>
         <span class="muted" style="font-size:12px;display:flex;align-items:center;gap:4px">共 <span id="mTotal">0</span> 人 · 第
           <input type="number" id="mJump" min="1" value="1" style="width:52px;text-align:center;padding:2px 4px"> /
@@ -99,14 +99,14 @@ export async function render(view) {
     if (page > pages && items.length === 0) { page = pages; return list(); }   // V4.15.1 防御：越界空页自动回退末页重拉
     view.querySelector('#mList').innerHTML = items.length ? `
       <div class="bar" style="padding:4px 2px 0">
-        <button class="btn sm" id="mBatExp" style="display:none">📥 导出所选 (<b id="mExpN">0</b>)</button>
+        <button class="btn sm" id="mBatExp" style="display:none">导出所选 (<b id="mExpN">0</b>)</button>
         <span class="muted" style="font-size:12px" id="mSelN"></span>
       </div>
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="mChkAll" title="全选/取消全选本页"></th><th>卡号</th><th>姓名</th><th>手机号</th><th>等级</th><th class="num">余额</th>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="mChkAll" title="全选/取消全选本页" ${items.length && items.every(m => mSel.has(Number(m.id))) ? 'checked' : ''}></th><th class="seq">序号</th><th>卡号</th><th>姓名</th><th>手机号</th><th>等级</th><th class="num">余额</th>
         <th class="num">其中本金</th><th class="num">分红余额</th><th class="num">积分</th>
         <th>封顶</th><th>最后活跃</th><th></th></tr></thead>
-      <tbody>${items.map(m => `<tr data-mid="${m.id}" style="cursor:pointer" title="双击查看会员详情">
-        <td onclick="event.stopPropagation()"><input type="checkbox" data-mchk="${m.id}" ${mSel.has(Number(m.id)) ? 'checked' : ''}></td>
+      <tbody>${items.map((m, i) => `<tr data-mid="${m.id}" style="cursor:pointer" title="双击查看会员详情">
+        <td onclick="event.stopPropagation()"><input type="checkbox" data-mchk="${m.id}" ${mSel.has(Number(m.id)) ? 'checked' : ''}></td><td class="num seq">${i + 1}</td>
         <td style="font-family:var(--mono)">${esc(m.card_no)}</td><td>${esc(m.name || '—')}</td><td>${esc(m.phone || '—')}</td>
         <td><span class="tag b">${esc(m.level_name || '普通会员')}</span></td>
         <td class="num"><b>${money(m.balance)}</b></td>
@@ -144,7 +144,7 @@ export async function render(view) {
     if (mBatExp) mBatExp.onclick = () => {
       const picked = items.filter(m => mSel.has(Number(m.id)));
       if (!picked.length) return;
-      exportRows({ filename: '会员列表', format: 'xls',
+      openExportPicker({ filename: '会员列表',
         columns: [{ k: 'card_no', t: '卡号' }, { k: 'name', t: '姓名' }, { k: 'phone', t: '手机号' },
           { k: 'level_name', t: '等级' }, { k: 'balance', t: '余额' }, { k: 'principal_balance', t: '本金' },
           { k: 'dividend_balance', t: '分红余额' }, { k: 'points', t: '积分' }, { k: 'last_active_date', t: '最后活跃' }],
@@ -217,8 +217,8 @@ export async function render(view) {
 
     const renderOrders = () => {
       body.innerHTML = o.length ? `
-        <table><thead><tr><th>单号</th><th>渠道</th><th class="num">件数</th><th class="num">应收</th><th class="num">毛利</th><th class="num">积分</th><th>时间</th></tr></thead>
-        <tbody>${o.map(x => `<tr><td>${esc(x.order_no)}</td><td>${esc(x.channel)}</td>
+        <table><thead><tr><th class="seq">序号</th><th>单号</th><th>渠道</th><th class="num">件数</th><th class="num">应收</th><th class="num">毛利</th><th class="num">积分</th><th>时间</th></tr></thead>
+        <tbody>${o.map((x, i) => `<tr><td class="num seq">${i + 1}</td><td>${esc(x.order_no)}</td><td>${esc(x.channel)}</td>
           <td class="num">${x.item_count}</td><td class="num"><b>${money(x.payable_amount)}</b></td>
           <td class="num">${money(x.profit_amount)}</td><td class="num">${x.points_earned}</td>
           <td>${dt(x.created_at)}</td></tr>`).join('')}</tbody></table>`
@@ -226,8 +226,8 @@ export async function render(view) {
     };
     const renderBal = () => {
       body.innerHTML = bf.length ? `
-        <table><thead><tr><th>方向</th><th class="num">金额</th><th class="num">本金/赠送</th><th>类型</th><th class="num">余额快照</th><th>备注</th><th>时间</th></tr></thead>
-        <tbody>${bf.map(x => `<tr>
+        <table><thead><tr><th class="seq">序号</th><th>方向</th><th class="num">金额</th><th class="num">本金/赠送</th><th>类型</th><th class="num">余额快照</th><th>备注</th><th>时间</th></tr></thead>
+        <tbody>${bf.map((x, i) => `<tr><td class="num seq">${i + 1}</td>
           <td>${x.direction === '入' ? '<span class="tag g">入</span>' : '<span class="tag r">出</span>'}</td>
           <td class="num">${money(x.amount)}</td>
           <td class="num muted">${Number(x.principal_part) || ''} / ${Number(x.gift_part) || ''}</td>
@@ -239,8 +239,8 @@ export async function render(view) {
       const tag = { '计提': '<span class="tag b">计提</span>', '抵扣': '<span class="tag g">抵扣</span>',
                     '失效回冲': '<span class="tag y">失效回冲</span>' };
       body.innerHTML = df.length ? `
-        <table><thead><tr><th>类型</th><th class="num">金额</th><th class="num">权重快照</th><th>失效日</th><th>备注</th><th>时间</th></tr></thead>
-        <tbody>${df.map(x => `<tr>
+        <table><thead><tr><th class="seq">序号</th><th>类型</th><th class="num">金额</th><th class="num">权重快照</th><th>失效日</th><th>备注</th><th>时间</th></tr></thead>
+        <tbody>${df.map((x, i) => `<tr><td class="num seq">${i + 1}</td>
           <td>${tag[x.record_type] || esc(x.record_type)}</td><td class="num">${money(x.amount)}</td>
           <td class="num">${Number(x.weight_snapshot) || '—'}</td>
           <td>${x.expire_at ? String(x.expire_at).slice(0, 10) : '—'}</td>
@@ -249,8 +249,8 @@ export async function render(view) {
     };
     const renderCoupon = () => {
       body.innerHTML = cp.length ? `
-        <table><thead><tr><th>券</th><th>类型</th><th class="num">门槛/面额</th><th>券码</th><th>状态</th><th>有效期至</th><th>使用时间</th></tr></thead>
-        <tbody>${cp.map(x => `<tr>
+        <table><thead><tr><th class="seq">序号</th><th>券</th><th>类型</th><th class="num">门槛/面额</th><th>券码</th><th>状态</th><th>有效期至</th><th>使用时间</th></tr></thead>
+        <tbody>${cp.map((x, i) => `<tr><td class="num seq">${i + 1}</td>
           <td>${esc(x.name)}</td><td>${esc(x.type)}</td>
           <td class="num">${x.type === '次卡'
             ? `已用 ${Number(x.times_used ?? 0)} / 共 ${Number(x.discount)} 次`
@@ -285,8 +285,8 @@ export async function render(view) {
         return parts.join(' · ');
       };
       body.innerHTML = lg.length ? `
-        <table><thead><tr><th>操作</th><th>模块</th><th>操作人</th><th>摘要</th><th>时间</th></tr></thead>
-        <tbody>${lg.map(x => `<tr>
+        <table><thead><tr><th class="seq">序号</th><th>操作</th><th>模块</th><th>操作人</th><th>摘要</th><th>时间</th></tr></thead>
+        <tbody>${lg.map((x, i) => `<tr><td class="num seq">${i + 1}</td>
           <td><span class="tag b">${esc(label[x.action] || x.action)}</span></td>
           <td>${esc(x.module)}</td><td>${esc(x.operator_name)}</td>
           <td class="muted">${esc(summarize(x) || '—')}</td><td>${dt(x.created_at)}</td></tr>`).join('')}</tbody></table>`
@@ -385,8 +385,8 @@ export async function render(view) {
     const items = d?.data || d || [];
     const box = view.querySelector('#pList');
     box.innerHTML = Array.isArray(items) && items.length ? `
-      <table><thead><tr><th>名称</th><th class="num">充</th><th class="num">送</th><th>状态</th><th></th></tr></thead>
-      <tbody>${items.map(p => `<tr>
+      <table><thead><tr><th class="seq">序号</th><th>名称</th><th class="num">充</th><th class="num">送</th><th>状态</th><th></th></tr></thead>
+      <tbody>${items.map((p, i) => `<tr><td class="num seq">${i + 1}</td>
         <td>${esc(p.name)}</td><td class="num">${money(p.principal)}</td><td class="num">${money(p.gift)}</td>
         <td>${p.status === '启用' ? '<span class="tag g">启用</span>' : '<span class="tag r">停用</span>'}</td>
         <td><button class="btn sm" data-pid="${p.id}" data-to="${p.status === '启用' ? '停用' : '启用'}">${p.status === '启用' ? '停用' : '启用'}</button></td>
@@ -462,8 +462,8 @@ export async function render(view) {
         + ` · 拒付待补付 <b style="color:#c0392b">${d.sum.rejectedCnt}</b> 笔 / ¥${money(d.sum.rejectedAmt)}`;
       offList.innerHTML = !d.items.length
         ? '<div class="muted" style="padding:8px">无挂账记录（断网余额支付后才会产生）</div>'
-        : `<table class="tbl"><thead><tr><th>时间</th><th>卡号</th><th>会员</th><th>订单号</th><th>金额</th><th>状态</th><th>补付通道</th><th>操作</th></tr></thead><tbody>`
-        + d.items.map(r => `<tr>
+        : `<table class="tbl"><thead><tr><th class="seq">序号</th><th>时间</th><th>卡号</th><th>会员</th><th>订单号</th><th>金额</th><th>状态</th><th>补付通道</th><th>操作</th></tr></thead><tbody>`
+        + d.items.map((r, i) => `<tr><td class="num seq">${i + 1}</td>
             <td>${dt(r.created_at)}</td><td>${esc(r.card_no || '')}</td>
             <td>${esc(r.member_name || '')}</td><td>${esc(r.ref_no || '')}</td>
             <td>¥${money(r.amount)}</td>

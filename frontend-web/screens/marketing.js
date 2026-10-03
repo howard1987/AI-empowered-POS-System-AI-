@@ -57,7 +57,7 @@ export async function render(view) {
         <span class="muted" id="mkTotal" style="margin-left:auto;font-size:11.5px"></span>
       </div>
       <div id="mkBody"></div>
-      <div class="bar" style="justify-content:flex-end;margin-top:10px">
+      <div class="doc-foot" style="justify-content:flex-end;margin-top:0">
         <button class="btn sm" id="mkPrev">‹ 上一页</button>
         <span class="muted" style="font-size:11.5px;display:flex;align-items:center;gap:4px">第
           <input type="number" id="mkJump" min="1" value="1" style="width:52px;text-align:center;padding:2px 4px"> /

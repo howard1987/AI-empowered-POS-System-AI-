@@ -89,10 +89,12 @@ export async function render(view) {
     $body.innerHTML = `
       <div class="sec-t">跨店退货单（总部生成 · 总部审核；受理店收货后自动回执）</div>
       ${rows.length ? `<table><thead><tr>
+        <th class="seq">序号</th>
         <th>退货单号</th><th>原单号</th><th>受理门店</th><th>原销门店</th><th>金额</th>
         <th>退款渠道</th><th>状态</th><th>收货回执</th><th>申请时间</th><th>操作</th>
-      </tr></thead><tbody>${rows.map(r => `
+      </tr></thead><tbody>${rows.map((r, i) => `
         <tr>
+          <td class="seq">${(crtPage - 1) * SIZE + i + 1}</td>
           <td>${esc(r.refund_no)}</td>
           <td class="ht-l">${esc(r.order_no ?? '')}</td>
           <td>${esc(r.accept_store ?? '')}</td>
@@ -133,10 +135,12 @@ export async function render(view) {
     $body.innerHTML = `
       <div class="sec-t">门店往来台账（店间资金/货值；线下两店两讫后由总部确认结清）</div>
       ${rows.length ? `<table><thead><tr>
+        <th class="seq">序号</th>
         <th>类型</th><th>关联单号</th><th>付出方</th><th>受益方</th><th>金额</th>
         <th>状态</th><th>发生时间</th><th>备注</th><th>操作</th>
-      </tr></thead><tbody>${rows.map(r => `
+      </tr></thead><tbody>${rows.map((r, i) => `
         <tr>
+          <td class="seq">${(ledPage - 1) * SIZE + i + 1}</td>
           <td>${esc(BIZ[r.biz_type] ?? r.biz_type)}</td>
           <td>${esc(r.biz_ref)}</td>
           <td>${esc(r.from_store ?? '')}</td>
@@ -179,12 +183,14 @@ export async function render(view) {
       ${dash}
       <div class="sec-t">进价差异单（对账按 L1 结算 · 差异不进应付 · 两个出口）</div>
       ${rows.length ? `<table><thead><tr>
+        <th class="seq">序号</th>
         <th>差异单号</th><th>账期</th><th>差异金额</th><th>行数</th><th>状态</th>
         <th>出口动作</th><th>审核时间</th><th>操作</th>
-      </tr></thead><tbody>${rows.map(r => {
+      </tr></thead><tbody>${rows.map((r, i) => {
         const st = VS_STATUS[r.status] ?? [r.status, '#555'];
         return `
         <tr>
+          <td class="seq">${(vsPage - 1) * SIZE + i + 1}</td>
           <td>${esc(r.cvd_no)}</td>
           <td>${esc(String(r.period_start).slice(0, 10))} ~ ${esc(String(r.period_end).slice(0, 10))}</td>
           <td class="${Number(r.variance_amount) >= 0 ? 'ht-pos' : 'ht-neg'}"><b>${money(r.variance_amount)}</b></td>
@@ -226,11 +232,13 @@ export async function render(view) {
         （${d.item_count} 行）｜ 状态：${(VS_STATUS[d.status] ?? [d.status])[0]}
       </div>
       <table><thead><tr>
+        <th class="seq">序号</th>
         <th>门店</th><th>业务日期</th><th>商品名称</th><th>条码</th><th>数量</th>
         <th>总部进价</th><th>供应商进价</th><th>差异值</th><th>差异金额</th><th>入库单号</th>
       </tr></thead><tbody>
-        ${(Array.isArray(d.items) ? d.items : []).map(x => `
+        ${(Array.isArray(d.items) ? d.items : []).map((x, i) => `
           <tr>
+            <td class="seq">${i + 1}</td>
             <td>${esc(x.store_name ?? '')}</td>
             <td>${esc(String(x.biz_date ?? '').slice(0, 10))}</td>
             <td class="ht-l">${esc(x.product_name)}</td>

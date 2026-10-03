@@ -399,7 +399,7 @@ export async function render(view) {
     // 展示区（V4.14.9 版式统一：表格式两列布局——模块名固定列宽 + 权限点统一标签规格，附颜色图例）
     view.querySelector('#pList').innerHTML = `
       <table style="width:100%;font-size:12.5px">
-        <thead><tr><th style="width:110px;text-align:left">模块</th><th style="text-align:left">权限点（<span class="tag g" style="font-size:10px;padding:1px 8px">常规</span> <span class="tag y" style="font-size:10px;padding:1px 8px">敏感</span> <span class="tag r" style="font-size:10px;padding:1px 8px">高危</span>，悬停看风险等级）</th></tr></thead>
+        <thead><tr><th style="width:110px;text-align:center">模块</th><th style="text-align:center">权限点（<span class="tag g" style="font-size:10px;padding:1px 8px">常规</span> <span class="tag y" style="font-size:10px;padding:1px 8px">敏感</span> <span class="tag r" style="font-size:10px;padding:1px 8px">高危</span>，悬停看风险等级）</th></tr></thead>
         <tbody>${Object.entries(byMod).map(([mod, ps]) => `
           <tr><td><b>${esc(mod)}</b> <span class="muted" style="font-size:11px">${ps.length}</span></td>
           <td>${ps.map(p =>

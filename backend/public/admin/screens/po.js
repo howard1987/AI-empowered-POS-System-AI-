@@ -1,7 +1,7 @@
-import { get, post, put, del, must, money, esc, dt, toast, imgUrl, API } from '../api.js';
+import { get, post, put, del, must, money, num2 as fmt, esc, dt, toast, imgUrl, API } from '../api.js';
 import { renderLines, makeLine, toBase, createUnitsCache } from './docentry.js';
 import { confirmBox } from '../ui.js';
-import { paginate, bindPager } from '../common-ui.js';
+import { paginate, bindPager, docTable } from '../common-ui.js';
 import { openA5Print, autoPrintA5AfterAudit, canPrintA5 } from '../docprint.js';
 
 /** 采购订单（V4.9.6：状态文案「已下单/待入库」· 双击行开明细 · 状态列前移 · 已完成可作废二次确认
@@ -62,7 +62,7 @@ export async function render(view) {
     <div id="tab-list">
       <div class="card">
         <div class="doc-head" style="display:flex;flex-wrap:nowrap;align-items:end;gap:14px">
-          <div class="fld" style="flex:none"><label>单据日期</label><span style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap"><input id="poFrom" type="date" value="${monthStart}" style="flex:1;min-width:0"><span style="color:var(--ink-3)">~</span><input id="poTo" type="date" value="${today}" style="flex:1;min-width:0"></span></div>
+          <div class="fld" style="flex:none"><label>单据日期</label><span style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap"><input id="poFrom" type="date" style="flex:1;min-width:0"><span style="color:var(--ink-3)">~</span><input id="poTo" type="date" style="flex:1;min-width:0"></span></div>
           <div class="fld" style="flex:none"><label>供应商</label><input id="poQSup" list="poQSupDl7" placeholder="输入名称快速匹配（留空=全部）" style="width:160px"><datalist id="poQSupDl7"></datalist></div>
           <div class="fld" style="flex:none"><label>状态</label><span class="seg" id="poStatSel" style="display:flex;gap:2px;flex-wrap:nowrap">
             <button class="btn sm segbtn" data-v="草稿">草稿</button>
@@ -147,7 +147,6 @@ export async function render(view) {
     view.querySelector('#poPrN').textContent = String(poPrSel.size);
   }
   view.querySelector('#poPrints').onclick = () => { if (poPrSel.size) openA5Print('order', [...poPrSel]); };
-  const fmt = n => (Number(n) || 0).toFixed(2);
 
   /* ── 分页式：列表页 ⇄ 新增页（V4.9.7：切页失败不再卡死，返回列表必生效） ── */
   const showPage = (mode) => {
@@ -370,14 +369,14 @@ export async function render(view) {
       });
     } else {
       view.querySelector('#poItems').innerHTML = its.length ? `
-        <table><thead><tr><th>序号</th><th>条码</th><th>商品</th><th>单位</th><th class="num">订购数量</th>
+        <table><thead><tr><th class="seq">序号</th><th>条码</th><th>商品</th><th>单位</th><th class="num">订购数量</th>
           <th class="num">已到货</th><th class="num">含税进价</th><th class="num">金额</th><th>到货状态</th></tr></thead>
         <tbody>${its.map((it, i) => {
           const p = allProducts.find(x => String(x.id) === String(it.product_id));
           const arrived = Number(it.arrived_qty || 0), order = Number(it.order_qty || 0);
           const lineStat = arrived >= order ? '<span class="tag g">已到齐</span>'
             : arrived > 0 ? `<span class="tag y">部分到货 ${arrived}</span>` : '<span class="tag b">待收</span>';
-          return `<tr><td class="num">${i + 1}</td><td class="mono">${esc(p ? p.barcode || '—' : '—')}</td><td>${esc(it.product_name)}</td><td>${esc(it.base_unit || '—')}</td>
+          return `<tr><td class="num seq">${i + 1}</td><td class="mono">${esc(p ? p.barcode || '—' : '—')}</td><td>${esc(it.product_name)}</td><td>${esc(it.base_unit || '—')}</td>
             <td class="num">${order}</td><td class="num">${arrived}</td>
             <td class="num">${it.price != null ? money(it.price) : '—'}</td>
             <td class="num">${money(order * (Number(it.price) || 0))}</td><td>${lineStat}</td></tr>`;
@@ -434,28 +433,40 @@ export async function render(view) {
     // （原来只统计可删行，导致全选后表头复选框不复原、看起来"只能全选不能取消"）
     const allChecked = rows.length > 0 && rows.every(o => poSel.has(Number(o.id)));
     view.querySelector('#poList').innerHTML = rows.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="poChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}></th>
-        <th>单号</th><th>供应商</th><th class="num">数量</th><th class="num">金额</th>
-        <th>预计到货</th><th>创建</th><th>来源</th><th>状态</th><th style="width:190px">操作</th></tr></thead>
-      <tbody>${rows.map(o => {
-        const deletable = DELETABLE.includes(o.status);
-        const cancellable = o.status !== '已取消';   // V4.9.6 已完成也可作废
-        return `<tr data-po="${o.id}" style="cursor:pointer" title="双击查看单据详情">
-        <td onclick="event.stopPropagation()"><input type="checkbox" data-pochk="${o.id}" data-deletable="${deletable ? 1 : 0}" ${poSel.has(Number(o.id)) ? 'checked' : ''} title="${deletable ? '勾选：批量打印 / 批量删除' : '勾选：批量打印（已产生业务的单据不可删除，可作废）'}"></td>
-        <td style="font-family:var(--mono);font-weight:600">${esc(o.po_no)}</td>
-        <td>${esc(o.supplier_name || '')}</td>
-        <td class="num">${Math.round(Number(o.total_qty ?? o.totalQty ?? 0))}</td>
-        <td class="num">${money(o.total_amount ?? o.totalAmount)}</td>
-        <td>${o.expect_arrival ? String(o.expect_arrival).slice(0, 10) : '—'}</td>
-        <td>${dt(o.created_at || o.createdAt)}</td>
-        <td><span class="tag ${o.source === '补货建议' ? 'b' : o.source === '订货申请' ? 'y' : o.source === '库存缺货' ? 'n' : o.source === '调拨缺口' ? 'b' : ''}" title="单据来源">${esc(o.source_label || '自建')}</span></td>
-        <td><span class="tag ${STATUS_TAG[o.status] || 'y'}">${esc(STATUS_TXT[o.status] || o.status)}</span></td>
-        <td style="white-space:nowrap">
+      ${docTable({
+        cols: [
+          { h: `<input type="checkbox" id="poChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}>`, w: 34 },
+          { h: '序号', cls: 'seq' },
+          { h: '单号' }, { h: '供应商' },
+          { h: '数量', cls: 'num' }, { h: '金额', cls: 'num' },
+          { h: '预计到货' }, { h: '创建时间' }, { h: '来源' }, { h: '状态' },
+          { h: '操作', w: 190 },
+        ],
+        rows: rows.map((o, i) => {
+          const deletable = DELETABLE.includes(o.status);
+          const cancellable = o.status !== '已取消';   // V4.9.6 已完成也可作废
+          return {
+            attrs: `data-po="${o.id}" style="cursor:pointer" title="双击查看单据详情"`,
+            cells: [
+              `<td onclick="event.stopPropagation()"><input type="checkbox" data-pochk="${o.id}" data-deletable="${deletable ? 1 : 0}" ${poSel.has(Number(o.id)) ? 'checked' : ''} title="${deletable ? '勾选：批量打印 / 批量删除' : '勾选：批量打印（已产生业务的单据不可删除，可作废）'}"></td>`,
+              { h: (pg.page - 1) * 10 + i + 1, cls: 'num seq' },
+              { h: esc(o.po_no), style: 'font-family:var(--mono);font-weight:600' },
+              esc(o.supplier_name || ''),
+              { h: Math.round(Number(o.total_qty ?? o.totalQty ?? 0)), cls: 'num' },
+              { h: money(o.total_amount ?? o.totalAmount), cls: 'num' },
+              o.expect_arrival ? String(o.expect_arrival).slice(0, 10) : '—',
+              dt(o.created_at || o.createdAt),
+              `<span class="tag ${o.source === '补货建议' ? 'b' : o.source === '订货申请' ? 'y' : o.source === '库存缺货' ? 'n' : o.source === '调拨缺口' ? 'b' : ''}" title="单据来源">${esc(o.source_label || '自建')}</span>`,
+              `<span class="tag ${STATUS_TAG[o.status] || 'y'}">${esc(STATUS_TXT[o.status] || o.status)}</span>`,
+              `<td style="white-space:nowrap">
           ${o.status === '草稿' ? `<button class="btn sm" data-submit="${o.id}">提交审批</button>` : ''}
           ${o.status === '待审批' && canApprove ? `<button class="btn sm pri" data-approve="${o.id}">✓ 审批</button>` : ''}
           ${cancellable ? `<button class="btn sm warn" data-void="${o.id}">作废</button>` : ''}
-        </td>
-      </tr>`; }).join('')}</tbody></table>
+        </td>`,
+            ],
+          };
+        }),
+      })}
       ${pg.bar}`
       : '<div class="empty">无符合条件的采购订单</div>';
     bindPager(view.querySelector('#poList'), p => { poPage = p; drawList(); });

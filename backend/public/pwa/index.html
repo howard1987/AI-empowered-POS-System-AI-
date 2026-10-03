@@ -4,6 +4,9 @@
 <meta charset="UTF-8" data-page-node-id="GuGVeubakJ1E2lCMvCVMgo">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" data-page-node-id="mEgJmwDs4rahi1VgyNFtDC">
 <meta name="theme-color" content="#20663f" data-page-node-id="v5PNFJfE7GCSXtnpWLg15Q">
+<!-- PWA CSP（安全审计整改 P4）：阻断 XSS→Electron IPC 利用链。与后端下发 HTTP 头一致；HTTP 头存在时本 meta 作兜底。
+     meta 不支持 frame-ancestors，故此处从略（由 HTTP 头承担）。 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'">
 <link rel="manifest" href="./manifest.webmanifest" data-page-node-id="hfg014Li78S8iPYhpYeNCR">
 <link rel="icon" href="./icon.svg" type="image/svg+xml" data-page-node-id="MEbDOhaouIkHxELb2CMwiX">
 <title>员工移动端工作台</title>
@@ -461,8 +464,8 @@
         </div>
         <button class="btn" id="lgGo" data-page-node-id="CVRWRFTGvCn2HXcBIjMoa4">登 录</button>
         <div class="lg-alt">
-          <a href="javascript:void(0)" id="lgMode" class="hidden">用 PIN 快速登录</a>
-          <a href="javascript:void(0)" id="lgForgot" data-page-node-id="hUo2VAoCJp6WULXrZBKRd8">忘记密码？</a>
+          <a href="#" id="lgMode" class="hidden">用 PIN 快速登录</a>
+          <a href="#" id="lgForgot" data-page-node-id="hUo2VAoCJp6WULXrZBKRd8">忘记密码？</a>
         </div>
       </div>
 
@@ -523,7 +526,8 @@
 <script src="./printers.js" defer></script>
 <script src="./receipt.js" defer></script>
 <script src="./voice.js" defer></script>
-<script src="./pick-panel.js" defer></script>
+<!-- V5.0.6：pick-panel 与后台 admin 共用同一文件（ESM，模块内自带自初始化 Observer + 首屏扫描） -->
+<script type="module" src="./pick-panel.js"></script>
 <script src="./work.js" defer></script>
 <script src="./checkout.js" defer></script>
 <script src="./cdisp.js" defer></script>

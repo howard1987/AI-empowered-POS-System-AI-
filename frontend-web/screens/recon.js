@@ -1,6 +1,6 @@
-import { API, get, post, put, must, money, esc, dt, toast } from '../api.js';
-import { confirmBox } from '../ui.js';
-import { paginate, bindPager } from '../common-ui.js';
+import { API, get, post, num2 as fmt, put, must, money, esc, dt, toast } from '../api.js';
+import { confirmBox, bindPad as uiBindPad, clearPad as uiClearPad } from '../ui.js';
+import { paginate, bindPager, docTable } from '../common-ui.js';
 import { renderConsign } from './consign.js';
 import { anchorNav } from '../ui-polish.js';   // V4.26.3 长页面锚点导航
 
@@ -9,6 +9,7 @@ import { anchorNav } from '../ui-polish.js';   // V4.26.3 长页面锚点导航
  *  购销：勾选单据（未审核灰显·去审核）→ 生成对账单 → 现场确认（签字板）→ A5 结算单实时预览；
  *  联营：renderConsign 子视图（看板 / 预览 / LC 对账单 / 签字模板）。 */
 export async function render(view) {
+  view.classList.add('screen-recon');   // 标记容器，供 styles.css 作用域：表头与数据居中
   const today = new Date().toISOString().slice(0, 10);
   const monthStart = today.slice(0, 8) + '01';
   const todayMMDD = today.slice(5).replace('-', '-');
@@ -37,7 +38,7 @@ export async function render(view) {
         </div>
         <div class="bar" style="margin:12px 18px 2px">
           <input id="rcKw" placeholder="🔍 对账单列表搜索：对账单号 / 供应商 / 期次（即输即查）" style="flex:1;min-width:230px;font-weight:400;color:var(--ink-3)">
-          <input id="cFrom" type="date" style="width:138px"><span style="color:var(--ink-3)">~</span><input id="cTo" type="date" style="width:138px">
+          <input id="cFrom" type="date" data-drp-presets="m,lm,q,h1" style="width:138px"><span style="color:var(--ink-3)">~</span><input id="cTo" type="date" style="width:138px">
           <button class="btn pri" id="cPrev">🔍 加载待对账单据</button>
           <span class="pill g" style="cursor:pointer" data-p="cur">本期</span>
           <span class="pill" style="cursor:pointer" data-p="prev">上期</span>
@@ -188,7 +189,6 @@ export async function render(view) {
 
   let suppliers = [], feeTypes = [], curSup = 0, curRecon = null, reconAll = [];
   let rcPage = 1, stPage = 1, agPage = 1, fePage = 1, lgPage = 1, pvPage = 1;
-  const fmt = n => (Number(n) || 0).toFixed(2);
   const d0 = new Date(); d0.setDate(1);
   view.querySelector('#cFrom').value = d0.toISOString().slice(0, 10);
   view.querySelector('#cTo').value = today;
@@ -214,25 +214,11 @@ export async function render(view) {
     });
   }
 
-  /* ── 签字板 ── */
+  /* ── 签字板（统一走 ui.js；padDirty 仍是本模块的脏标记） ── */
   let cfmReconId = 0, padDirty = false;
-  function bindPad() {
-    const pad = view.querySelector('#cfmPad');
-    const ctx = pad.getContext('2d');
-    ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.strokeStyle = '#111';
-    let drawing = false, last = null;
-    const pos = e => { const r = pad.getBoundingClientRect();
-      return { x: (e.clientX - r.left) * pad.width / r.width, y: (e.clientY - r.top) * pad.height / r.height }; };
-    pad.onpointerdown = e => { drawing = true; padDirty = true; last = pos(e); pad.setPointerCapture(e.pointerId); };
-    pad.onpointermove = e => { if (!drawing) return; const p = pos(e);
-      ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p; };
-    pad.onpointerup = pad.onpointercancel = () => { drawing = false; };
-  }
-  function clearPad() {
-    const pad = view.querySelector('#cfmPad');
-    pad.getContext('2d').clearRect(0, 0, pad.width, pad.height);
-    padDirty = false;
-  }
+  const cfmPadEl = () => view.querySelector('#cfmPad');
+  function bindPad() { uiBindPad(cfmPadEl(), { onStroke: () => { padDirty = true; } }); }
+  function clearPad() { uiClearPad(cfmPadEl()); padDirty = false; }
 
   /* ── 往来账 ── */
   async function drawLedger(sid) {
@@ -286,6 +272,7 @@ export async function render(view) {
       return `<tr style="${aud ? '' : 'opacity:.55'}">
         <td><input type="checkbox" ${aud ? `data-pv="${key}" data-id="${x.id}" ${picked[key].has(x.id) ? 'checked' : ''}` : 'disabled'}></td>
         <td class="num">${idx}</td>
+        <td>${x.audit_date ? dt(x.audit_date).slice(0, 10) : '—'}</td>
         <td><a style="cursor:pointer;color:var(--info);font-family:var(--mono)" data-doc="${dtype}" data-docid="${docId}" data-no="${esc(x.doc_no || x.docNo || '')}">${esc(x.doc_no || x.docNo || '')}</a></td>
         <td>${type}</td>
         <td class="num" ${amtCls}>${amtTxt}</td>
@@ -309,7 +296,7 @@ export async function render(view) {
       && pv.fees.every(x => picked.fees.has(x.id))
       && (pv.inbounds.some(x => audited(x)) || pv.returns.some(x => audited(x)) || pv.fees.length > 0);
     box.innerHTML = allRows.length ? `
-      <table style="margin-top:10px"><thead><tr><th style="width:34px"><input type="checkbox" id="pvChkAll" ${allPicked ? 'checked' : ''} title="全选/取消全选（已审核单据）"></th><th class="seq">序号</th><th>原始单号</th><th>类型</th><th class="num">金额</th><th>状态</th></tr></thead>
+      <table style="margin-top:10px"><thead><tr><th style="width:34px"><input type="checkbox" id="pvChkAll" ${allPicked ? 'checked' : ''} title="全选/取消全选（已审核单据）"></th><th class="seq">序号</th><th>审核日期</th><th>原始单号</th><th>类型</th><th class="num">金额</th><th>状态</th></tr></thead>
       <tbody>${pg.slice.join('')}</tbody></table>${pg.bar}` : '<div class="empty" style="padding:18px">该区间无匹配单据（或单据已被对账单吸收）</div>';
     view.querySelector('#rcPay').textContent = money(pvSum(true).pay); // 本期应付=全部已审核单据合计
     // V4.9.7 修复复选框：勾选只更新汇总与 A5 预览，不整表重绘（勾选状态不再丢失）
@@ -603,28 +590,39 @@ export async function render(view) {
     const pg = paginate(rcArr, rcPage, 10);
     refreshHead(reconAll);
     view.querySelector('#cList').innerHTML = rcArr.length ? `
-      <table><thead><tr><th style="width:34px"></th><th class="seq">序号</th><th>对账单号</th><th>供应商</th><th>区间</th>
-        <th class="num">货款</th><th class="num">费用收</th><th class="num">费用付</th><th class="num">应付</th><th>状态</th><th></th></tr></thead>
-      <tbody>${pg.slice.map((r, i) => {
-        const pay = Number(r.payable_total ?? r.payable ?? 0);
-        const voidable = r.status === '生成' || r.status === '待供应商确认';
-        return `<tr>
-        <td>${voidable ? `<input type="checkbox" data-rchk="${r.id}">` : ''}</td>
-        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td style="font-family:var(--mono);font-weight:600">${esc(r.recon_no || r.reconNo || r.id)}</td>
-        <td>${esc(r.supplier_name || r.supplierName || '')}</td>
-        <td class="muted">${String(r.period_from || r.periodFrom || '').slice(0, 10)} ~ ${String(r.period_to || r.periodTo || '').slice(0, 10)}</td>
-        <td class="num">${money(r.goods_total ?? 0)}</td>
-        <td class="num" style="color:var(--pri)">−${money(r.fee_income_total ?? 0)}</td>
-        <td class="num" style="color:var(--warn)">+${money(r.fee_pay_total ?? 0)}</td>
-        <td class="num"><b>${money(pay)}</b></td>
-        <td><span class="tag ${['已确认', '已结算'].includes(r.status) ? 'g' : r.status === '已作废' ? 'r' : 'y'}">${esc(r.status)}</span></td>
-        <td style="white-space:nowrap">
+      ${docTable({
+        cols: [
+          { h: '', w: 34 },
+          { h: '序号', cls: 'seq' }, { h: '日期' }, { h: '对账单号' }, { h: '供应商' }, { h: '区间' },
+          { h: '货款', cls: 'num' }, { h: '费用收', cls: 'num' }, { h: '费用付', cls: 'num' }, { h: '应付', cls: 'num' },
+          { h: '状态' }, { h: '' },
+        ],
+        rows: pg.slice.map((r, i) => {
+          const pay = Number(r.payable_total ?? r.payable ?? 0);
+          const voidable = r.status === '生成' || r.status === '待供应商确认';
+          return {
+            cells: [
+              { h: voidable ? `<input type="checkbox" data-rchk="${r.id}">` : '' },
+              { h: (pg.page - 1) * 10 + i + 1, cls: 'num seq' },
+              { h: dt(r.confirmed_at).slice(0, 10), cls: 'muted' },
+              { h: esc(r.recon_no || r.reconNo || r.id), style: 'font-family:var(--mono);font-weight:600' },
+              esc(r.supplier_name || r.supplierName || ''),
+              { h: `${String(r.period_from || r.periodFrom || '').slice(0, 10)} ~ ${String(r.period_to || r.periodTo || '').slice(0, 10)}`, cls: 'muted' },
+              { h: money(r.goods_total ?? 0), cls: 'num' },
+              { h: `−${money(r.fee_income_total ?? 0)}`, cls: 'num', style: 'color:var(--pri)' },
+              { h: `+${money(r.fee_pay_total ?? 0)}`, cls: 'num', style: 'color:var(--warn)' },
+              { h: `<b>${money(pay)}</b>`, cls: 'num' },
+              `<span class="tag ${['已确认', '已结算'].includes(r.status) ? 'g' : r.status === '已作废' ? 'r' : 'y'}">${esc(r.status)}</span>`,
+              `<td style="white-space:nowrap">
           ${r.status === '生成' || r.status === '待供应商确认' ? `<button class="btn sm pri" data-c="${r.id}">确认</button>` : ''}
           ${pay === 0 && r.status !== '已结算' && r.status !== '已作废' ? `<button class="btn sm g" data-z="${r.id}">0元直结算</button>` : ''}
           ${r.status === '已确认' ? `<button class="btn sm" data-st="${r.id}">生成结算单</button>` : ''}
           ${r.status !== '已作废' ? `<button class="btn sm" data-print="${r.id}">🖨 对账单</button>` : ''}
-        </td>
-      </tr>`; }).join('')}</tbody></table>${pg.bar}` : '<div class="empty">暂无对账单</div>';
+        </td>`,
+            ],
+          };
+        }),
+      })}${pg.bar}` : '<div class="empty">暂无对账单</div>';
     bindPager(view.querySelector('#cList'), p => { rcPage = p; lists(); });
     view.querySelectorAll('[data-c]').forEach(b => b.onclick = () => openConfirm(b.dataset.c));
     view.querySelectorAll('[data-z]').forEach(b => b.onclick = async () => {
@@ -711,21 +709,29 @@ export async function render(view) {
     view.querySelector('#qSum').textContent = fmt(sum);
     view.querySelector('#qCount').textContent = `共 ${rows.length} 张结算单`;
     view.querySelector('#sList').innerHTML = rows.length ? `
-      <table><thead><tr><th class="seq">序号</th><th>结算单号</th><th>供应商</th><th>对账单</th><th class="num">结算金额</th><th>付款方式</th><th>状态</th><th>创建</th><th></th></tr></thead>
-      <tbody>${pg.slice.map((r, i) => `<tr>
-        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td style="font-family:var(--mono);font-weight:600">${esc(r.settle_no || r.settleNo || r.id)}</td>
-        <td>${esc(r.supplier_name || r.supplierName || '')}</td>
-        <td class="muted" style="font-family:var(--mono)">${esc(r.recon_no || '')}</td>
-        <td class="num">${money(r.amount ?? r.settle_amount ?? 0)}</td>
-        <td class="muted">${esc(r.pay_mode || '—')}</td>
-        <td><span class="tag ${r.status === '已审核' || r.status === '已付款' ? 'g' : r.status === '付款中' ? 'b' : 'y'}">${esc(r.status)}</span></td>
-        <td>${dt(r.created_at || r.createdAt)}</td>
-        <td style="white-space:nowrap">
+      ${docTable({
+        cols: [
+          { h: '序号', cls: 'seq' }, { h: '结算单号' }, { h: '供应商' }, { h: '对账单' },
+          { h: '结算金额', cls: 'num' }, { h: '付款方式' }, { h: '状态' }, { h: '创建时间' }, { h: '' },
+        ],
+        rows: pg.slice.map((r, i) => ({
+          cells: [
+            { h: (pg.page - 1) * 10 + i + 1, cls: 'num seq' },
+            { h: esc(r.settle_no || r.settleNo || r.id), style: 'font-family:var(--mono);font-weight:600' },
+            esc(r.supplier_name || r.supplierName || ''),
+            { h: esc(r.recon_no || ''), cls: 'muted', style: 'font-family:var(--mono)' },
+            { h: money(r.amount ?? r.settle_amount ?? 0), cls: 'num' },
+            { h: esc(r.pay_mode || '—'), cls: 'muted' },
+            `<span class="tag ${r.status === '已审核' || r.status === '已付款' ? 'g' : r.status === '付款中' ? 'b' : 'y'}">${esc(r.status)}</span>`,
+            dt(r.created_at || r.createdAt),
+            `<td style="white-space:nowrap">
           ${r.status === '待审核' ? `<button class="btn sm pri" data-s="${r.id}">✓ 审核</button>` : ''}
           ${r.status === '付款中' ? `<button class="btn sm pri" data-sp="${r.id}">💰 确认已付款</button>` : ''}
           <button class="btn sm" data-sprint="${r.id}">🖨 打印</button>
-        </td>
-      </tr>`).join('')}</tbody></table>${pg.bar}` : '<div class="empty">暂无结算单（对账确认后生成；0元应付可直结算）</div>';
+        </td>`,
+          ],
+        })),
+      })}${pg.bar}` : '<div class="empty">暂无结算单（对账确认后生成；0元应付可直结算）</div>';
     bindPager(view.querySelector('#sList'), p => { stPage = p; loadSettlements(); });
     view.querySelectorAll('[data-s]').forEach(b => b.onclick = async () => {
       await must(post(`/purchase/settlements/${b.dataset.s}/audit`), '结算单审核完成');

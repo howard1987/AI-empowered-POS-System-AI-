@@ -262,18 +262,16 @@ class PrintersController {
     if (!name) throw new BizException(40003, '打印机名称必填');
     const addr = String(dto.connAddr || '').trim();
     if (!['串口', 'USB'].includes(connType) && !addr) throw new BizException(40003, '连接地址必填（网口 IP:port / 蓝牙MAC）');
-    // V4.15.7 P2：设备类型 小票/标签；标签机纸型 40x30/50x30/60x40（width_mm 存纸宽，版式由 label_size 决定）
+    // V5.0.5：标签机纸型/纸宽改由所选打印模板决定，打印机本身不再指定 label_size
     const printerType = PRINTER_TYPES.includes(String(dto.printerType)) ? String(dto.printerType) : '小票';
     let width = Number(dto.widthMm) || 80;
-    let labelSize = String(dto.labelSize || '40x30');
+    const labelSize = '40x30';
     if (printerType === '标签') {
-      if (!LABEL_SIZE_KEYS.includes(labelSize)) throw new BizException(40003, `标签纸型须为：${LABEL_SIZE_KEYS.join('/')}`);
-      width = Number(labelSize.split('x')[0]);
+      width = 0;                       // 纸宽由模板决定
     } else if (printerType === '激光') {
-      width = 0; labelSize = '40x30';   // 激光/喷墨走本地打印机，不强制纸宽/纸型
+      width = 0;                       // 激光/喷墨走本地打印机，不强制纸宽/纸型
     } else {
       if (![58, 80].includes(width)) throw new BizException(40003, '纸宽仅支持 58/80mm');
-      labelSize = '40x30';
     }
     const brand = PRINTER_BRANDS.includes(String(dto.brand)) ? String(dto.brand) : '通用';
     const cnt = await q1<any>(`SELECT count(*)::int AS n FROM printers WHERE store_id=$1`, [user.storeId]);
@@ -300,21 +298,19 @@ class PrintersController {
     const cur = await q1(`SELECT * FROM printers WHERE id=$1 AND store_id=$2`, [id, user.storeId]);
     if (!cur) throw new BizException(40400, '打印机不存在');
     if (dto.connType !== undefined && !PRINTER_CONNS.includes(String(dto.connType))) throw new BizException(40003, '连接方式非法');
-    // V4.15.7 P2：设备类型/纸型（标签机 width_mm 随纸型宽同步）
+    // V5.0.5：标签机纸型/纸宽改由所选打印模板决定，打印机本身不再维护 label_size
     const printerType = dto.printerType !== undefined
       ? (PRINTER_TYPES.includes(String(dto.printerType)) ? String(dto.printerType) : (() => { throw new BizException(40003, `设备类型须为：${PRINTER_TYPES.join('/')}`); })())
       : (cur.printer_type || '小票');
-    let labelSize = String(cur.label_size || '40x30');
     let widthMm = dto.widthMm !== undefined ? Number(dto.widthMm) : Number(cur.width_mm);
     if (printerType === '标签') {
-      labelSize = dto.labelSize !== undefined ? String(dto.labelSize) : labelSize;
-      if (!LABEL_SIZE_KEYS.includes(labelSize)) throw new BizException(40003, `标签纸型须为：${LABEL_SIZE_KEYS.join('/')}`);
-      widthMm = Number(labelSize.split('x')[0]);
+      widthMm = 0;           // 纸宽由模板决定
     } else if (printerType === '激光') {
-      labelSize = '40x30';   // 激光/喷墨走本地打印，纸型占位
+      widthMm = 0;           // 激光/喷墨走本地打印，不强制纸宽/纸型
     } else {
       if (widthMm !== undefined && ![58, 80].includes(widthMm)) throw new BizException(40003, '纸宽仅支持 58/80mm');
     }
+    const labelSize = '40x30';
     const r = await q1(
       `UPDATE printers SET name=$3, conn_type=$4, conn_addr=$5, width_mm=$6, auto_reconnect=$7, brand=$8, printer_type=$9, label_size=$10
         WHERE id=$1 AND store_id=$2 RETURNING id`,
@@ -518,7 +514,6 @@ class PrintersController {
       promoLabel: it.promoLabel ? String(it.promoLabel).slice(0, 30) : undefined,
       copies: Number(it.copies) || 1,
     }));
-    const [wmm, hmm] = LABEL_SIZES[String(p.label_size || '40x30')] || LABEL_SIZES['40x30'];
     const lang = brandToLang(p.brand);
     const totalCopies = items.reduce((s, it) => s + it.copies, 0);
     const jobType = String(dto.jobType || (items.some(i => i.weight != null) ? '秤贴' : '价签打印'));
@@ -529,12 +524,17 @@ class PrintersController {
       ? await q1(`SELECT content FROM print_templates WHERE id=$1 AND store_id=$2 AND kind='标签'`, [Number(dto.templateId), user.storeId])
       : await q1(`SELECT content FROM print_templates WHERE store_id=$1 AND kind='标签' AND biz_type=$2 AND is_default ORDER BY id LIMIT 1`, [user.storeId, tplBiz]);
     if (tpl) { try { labelCfg = typeof tpl.content === 'string' ? JSON.parse(tpl.content) : tpl.content; } catch { labelCfg = undefined; } }
+    // V5.0.5：标签纸型/纸宽优先由所选打印模板的 paper 决定；模板未指定则回退到设备旧 label_size
+    let [wmm, hmm] = LABEL_SIZES[String(p.label_size || '40x30')] || LABEL_SIZES['40x30'];
+    if (labelCfg && labelCfg.paper && typeof labelCfg.paper.wmm === 'number' && typeof labelCfg.paper.hmm === 'number') {
+      [wmm, hmm] = [labelCfg.paper.wmm, labelCfg.paper.hmm];
+    }
     // V4.15.9：v3(hiprint 排版) 由 normalizeLayoutDoc 转为 mm 元素渲染；v1/v2 原样
     const layoutDoc = normalizeLayoutDoc(labelCfg);
     const bytes = layoutDoc
       ? buildLayoutBytes(lang, items as any, wmm, hmm, 1, layoutDoc as any)
       : buildLayoutBytes(lang, items as any, wmm, hmm, 1, labelCfg);
-    const summary = `（${lang.toUpperCase()} ${bytes.length} 字节 · ${items.length} 品 ${totalCopies} 张 · ${p.label_size}）`;
+    const summary = `（${lang.toUpperCase()} ${bytes.length} 字节 · ${items.length} 品 ${totalCopies} 张 · ${wmm}x${hmm}mm）`;
     if (['串口', 'USB'].includes(String(p.conn_type))) {
       // V4.18.7b USB+绑定系统打印机名 → 后端 RAW 直发标签
       if (String(p.conn_type) === 'USB' && String(p.conn_addr || '').trim()) {

@@ -59,26 +59,43 @@ body.side-collapsed #side { display: none !important; }
   box-shadow: 2px 2px 10px rgba(0,0,0,.25);
 }
 #side nav { flex: 1; overflow-y: auto; padding: 10px 0; }
-#side .grp { padding: 12px 16px 4px; font-size: 11px; color: #9fb2a0; letter-spacing: .12em; }
-/* V5.0.0 连锁：总部专属分组（hqOnly 项对门店账号整体隐藏）——用一条分隔线做视觉区隔 */
-#side .grp-hq { color: #c8b98a; border-top: 1px solid rgba(255,255,255,.08); margin-top: 6px; }
-#side nav a {
-  display: block; margin: 2px 8px; padding: 8px 12px; border-radius: 9px;
-  color: #cfd8c8; font-size: 13px; transition: .15s;
+/* 分组标题：清晰的业务域分隔（左侧强调条 + 字母间距 + 顶部分隔线） */
+#side .grp {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 16px 6px; margin-top: 8px;
+  border-top: 1px solid rgba(247,243,230,.12);
+  font-size: 11px; color: #9fb2a0; letter-spacing: .14em; font-weight: 700;
 }
-#side nav a:hover { background: rgba(247,243,230,.09); color: #f7f3e6; }
-#side nav a.on { background: var(--pri-2); color: #fff; font-weight: 600; box-shadow: 0 4px 12px -4px rgba(0,0,0,.4); }
-/* 树形菜单（三级）：父级可展开/收起，子级缩进 */
-#side .nav-parent {
-  display: flex; align-items: center; gap: 6px; margin: 2px 8px; padding: 8px 6px;
-  color: #e8ead9; font-size: 13px; font-weight: 600; border-radius: 9px; cursor: pointer;
-  transition: .15s; user-select: none;
+#side .grp:first-of-type { margin-top: 0; border-top: none; }
+#side .grp-bar { width: 3px; height: 12px; border-radius: 2px; background: var(--pri-2); flex: none; }
+#side .grp-txt { flex: 1; }
+#side .grp-tag { font-size: 10px; letter-spacing: .04em; font-weight: 700; color: #1d3a2a; background: #c8b98a; border-radius: 6px; padding: 1px 6px; }
+#side .grp-hq { color: #c8b98a; border-top-color: rgba(200,185,138,.35); }
+#side .grp-hq .grp-bar { background: #c8b98a; }
+/* 导航项：一级（顶级）/ 二级 / 三级 逐级缩进 + 左侧层级引导线 */
+#side .nav-leaf, #side .nav-parent {
+  display: flex; align-items: center; gap: 8px;
+  margin: 2px 8px; padding: 8px 12px; border-radius: 9px;
+  color: #cfd8c8; font-size: 13px; transition: .15s; cursor: pointer;
+  border-left: 2px solid transparent;
 }
-#side .nav-parent:hover { background: rgba(247,243,230,.09); color: #fff; }
-#side .nav-parent .nav-arrow { flex: none; width: 12px; font-size: 10px; color: #9fb2a0; }
-#side .nav-children a { font-size: 12.5px; padding-top: 6px; padding-bottom: 6px; }
-#side .nav-children .nav-parent { font-size: 12.5px; font-weight: 400; }
-#side nav a.on { position: relative; }
+#side .nav-leaf { text-decoration: none; }
+#side .nav-ico { flex: none; width: 18px; text-align: center; }
+#side .nav-txt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#side .nav-arrow { flex: none; width: 12px; font-size: 10px; color: #9fb2a0; transition: transform .15s; }
+#side .nav-parent { font-weight: 600; color: #e8ead9; user-select: none; }
+/* 子级：缩进 + 左侧层级引导线，逐级加深 */
+#side .nav-leaf[data-depth="1"], #side .nav-parent[data-depth="1"] {
+  margin-left: 22px; padding-left: 12px; border-left: 2px solid rgba(247,243,230,.16);
+  font-size: 12.5px; color: #bcc7b4; font-weight: 400;
+}
+#side .nav-leaf[data-depth="2"], #side .nav-parent[data-depth="2"] {
+  margin-left: 40px; padding-left: 12px; border-left: 2px solid rgba(247,243,230,.30);
+  font-size: 12px; color: #a8b49c; font-weight: 400;
+}
+#side .nav-leaf:hover, #side .nav-parent:hover { background: rgba(247,243,230,.09); color: #f7f3e6; }
+#side .nav-leaf.on { background: var(--pri-2); color: #fff; font-weight: 600; box-shadow: 0 4px 12px -4px rgba(0,0,0,.4); }
+#side .nav-children { margin: 1px 0; }
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 #topbar {
   background: var(--card); border-bottom: 1px dashed var(--line);
@@ -143,6 +160,11 @@ body.side-collapsed #side { display: none !important; }
 .card > table, .card > .pg-host { margin: 0; }
 .card > .bar { padding: 0; }
 .card > h3 + .bar { margin: 14px 18px 4px; }
+/* V5.0.5：卡片内右对齐按钮/操作栏统一右侧呼吸间距——覆盖内联 `margin:0 0 Npx` 把 right 置 0 导致的按钮贴边 */
+.card [style*="text-align:right" i],
+.card [style*="text-align: right" i] { margin-right: 14px !important; }
+/* V5.0.5：卡片内 flex 筛选/操作行若被内联 `margin:0 ...` 清零左右间距，统一补回左右呼吸间距 */
+.card > [style*="display:flex" i][style*="margin:0" i] { margin-left: 18px !important; margin-right: 18px !important; }
 .grid { display: grid; gap: 16px; }
 .kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 .kpi {
@@ -155,14 +177,22 @@ body.side-collapsed #side { display: none !important; }
 /* ── 表格（虚线行分隔 + mono 数字） ── */
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th {
-  font-size: 11.5px; color: var(--ink-3); font-weight: 600; text-align: left;
+  font-size: 11.5px; color: var(--ink-3); font-weight: 600; text-align: center;
   padding: 9px 12px; border-bottom: 1px solid var(--line);
   letter-spacing: .04em; white-space: nowrap; background: var(--paper-2);
 }
 td { padding: 9px 12px; border-bottom: 1px dashed var(--line); vertical-align: middle; white-space: nowrap; }
 tr:last-child td { border-bottom: none; }
 tbody tr:hover td { background: rgba(46,133,87,.045); }
-td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; }
+/* 数字列：单元格右对齐（金额类）；表头统一居中（与全局表头规则一致） */
+td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; }
+th.num { text-align: center; }
+/* 序号列：数据居中显示（表头与单元格） */
+td.seq, th.seq { text-align: center; font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; }
+/* 按列语义的数据对齐（col-align.js 按表头自动打标）：长度一致的编码/状态/日期类列居中，数值类列居右。
+   置于 .num/.seq 之后，确保「居中列」即使带 .num 也正确居中。 */
+td.tac { text-align: center; }
+td.tar { text-align: right; }
 tfoot td { border-top: 1px solid var(--line-2); border-bottom: none; background: var(--paper-2); font-weight: 700; }
 
 /* ── V4.26.2 表格观感对齐 Element Plus：整体边框 + 斑马纹 ──
@@ -290,6 +320,12 @@ input[type="checkbox"] { accent-color: var(--pri); }
   display: flex; gap: 9px; align-items: center; flex-wrap: wrap;
   padding: 12px 18px; border-top: 1px dashed var(--line); margin-top: 2px;
 }
+/* V5.0.7c：自定义翻页容器（.pager）统一为 doc-foot 同款通栏页脚；无内容时整条隐藏 */
+.pager {
+  display: flex; gap: 9px; align-items: center; flex-wrap: wrap; justify-content: flex-end;
+  padding: 9px 18px; border-top: 1px dashed var(--line); margin: 0;
+}
+.pager:empty { display: none; }
 .doc-foot .sum { margin-left: auto; font-size: 13px; color: var(--ink-2); }
 .doc-foot .sum b { font-family: var(--mono); font-size: 17px; color: var(--pri); }
 
@@ -474,7 +510,9 @@ html, #view { scroll-behavior: smooth; }
   /* 不做 overscroll-behavior:contain —— 表格区只是页面的一部分，
      内滚到底后要能自然接着滚整页（加了 contain 会「卡住」，用户以为页面到底了）。 */
 }
-.pg-host > .pg-bar, .pg-bar-sticky { position: sticky; bottom: 0; }
+/* V5.0.7 修复：吸底只对「滚动宿主的直接子分页条」生效——原先裸 .pg-bar-sticky 会让
+   所有服务端分页条无条件吸附视口底边，页面滚动中浮到表格行上盖数据（采购入库列表复现） */
+.pg-host > .pg-bar, .pg-host > .pg-bar-sticky { position: sticky; bottom: 0; }
 
 /* ── ③-3 卡片微交互：只作用于「小卡片」，大表格卡片不加（滚动时会整块晃） ── */
 .kpi, .mini-card, .card.hoverable, .glass-card {
@@ -629,3 +667,20 @@ mark.hl { background: #ffe6a3; color: inherit; padding: 0 1px; border-radius: 2p
 .mr0 { margin-right: 0 !important; }  .p0 { padding: 0 !important; }
 .nowrap { white-space: nowrap; }   .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .full-w { width: 100%; }
+
+/* ═══════════════════════════════════════════════════════════════
+   V5.0.7 主表格铺满窗口（不溢出）· 统一表格/分页布局
+   .fill-pane   定高面板：JS fitFillPanes() 把高度精确设为「视口剩余高度」；
+   .split-rows  两卡均分窗口高（优惠券明细：库存看板 / 出入库流水各占一半）；
+   .fill-card   卡片变体：纵向 flex，其直接子元素默认不伸缩，.tbl-host 吃满剩余高；
+   .tbl-host    表格滚动宿主：内部滚动 + 表头吸顶 + 分页条吸容器底（固定在容器内最下方，不随数据行数走）。
+   ═══════════════════════════════════════════════════════════════ */
+.fill-pane { display: flex; flex-direction: column; min-height: 320px; }
+.fill-pane > .card { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; margin-bottom: 0; }
+.split-rows { display: grid; grid-template-rows: 1fr 1fr; gap: 14px; min-height: 320px; }
+.split-rows > .card { margin-bottom: 0; min-height: 0; }
+.fill-card { display: flex; flex-direction: column; min-height: 0; }
+.fill-card > * { flex: 0 0 auto; }
+.fill-card > .tbl-host { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.tbl-host > .pg-bar, .tbl-host > .pg-bar-sticky { position: sticky; bottom: 0; }
+.tbl-host thead th { position: sticky; top: 0; z-index: 1; }

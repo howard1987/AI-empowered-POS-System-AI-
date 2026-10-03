@@ -161,3 +161,68 @@ export async function loadSuppliers() {
     return (Array.isArray(d) ? d : (d.items || [])) || [];
   } catch { return []; }
 }
+
+/* ── 手写签字板（canvas + 指针事件） ──
+ * V5.0.6 收敛：consign / recon / signatures / signpad / purchase 五处曾是同一份实现的复制，
+ * 统一走本模块，改一处即全端生效。
+ *   bindPad(pad, { onStroke }) —— 落笔回调用于笔画计数/脏标记
+ *   padDirty(pad) 任一像素非零　padInk(pad) 不透明像素数（乱签初筛）　clearPad(pad) 清空 */
+export function bindPad(pad, { onStroke } = {}) {
+  const ctx = pad.getContext('2d');
+  ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.strokeStyle = '#111';
+  let drawing = false, last = null;
+  const pos = e => { const r = pad.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * pad.width / r.width, y: (e.clientY - r.top) * pad.height / r.height }; };
+  pad.onpointerdown = e => { drawing = true; onStroke?.(); last = pos(e); pad.setPointerCapture(e.pointerId); };
+  pad.onpointermove = e => { if (!drawing) return; const p = pos(e);
+    ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p; };
+  pad.onpointerup = pad.onpointercancel = () => { drawing = false; };
+}
+export function padDirty(pad) {
+  const d = pad.getContext('2d').getImageData(0, 0, pad.width, pad.height).data;
+  return d.some(v => v !== 0);
+}
+export function padInk(pad) {
+  const d = pad.getContext('2d').getImageData(0, 0, pad.width, pad.height).data;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+  return n;
+}
+export function clearPad(pad) { pad.getContext('2d').clearRect(0, 0, pad.width, pad.height); }
+
+/* ── 供应商名称 → id（全等优先，其次互含）。原 purchase / returns 两处各写一份 ── */
+export function matchSupplierId(name, suppliers) {
+  const n = String(name || '').trim();
+  if (!n) return 0;
+  const s = suppliers.find(x => x.name === n) ||
+    suppliers.find(x => (x.name || '').includes(n) || n.includes(x.name || ''));
+  return s ? Number(s.id) : 0;
+}
+
+/* ── 本机取景拍照 → dataURL（#camModal / #camVideo / #camCancel / #camShot 四件套） ──
+ * V5.0.6 收敛：ops.js（报损）与 returns.js（退货凭证）曾各写一份。
+ *   onFail(why)  why = 'none' 无摄像头设备 | 'denied' 授权/启动失败
+ *   onShot(dataUrl) 拍摄完成（遮罩与摄像头已自动关闭释放） */
+export async function capturePhoto(scope, { onFail, onShot } = {}) {
+  let hasCam = false;
+  try {
+    hasCam = (await navigator.mediaDevices.enumerateDevices()).some(d => d.kind === 'videoinput');
+  } catch { hasCam = false; }
+  if (!hasCam) return onFail?.('none');
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); }
+  catch { return onFail?.('denied'); }
+  const modal = scope.querySelector('#camModal');
+  const video = scope.querySelector('#camVideo');
+  video.srcObject = stream;
+  modal.style.display = 'flex';
+  const close = () => { stream.getTracks().forEach(t => t.stop()); modal.style.display = 'none'; };
+  scope.querySelector('#camCancel').onclick = close;
+  scope.querySelector('#camShot').onclick = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    close();
+    onShot?.(canvas.toDataURL('image/jpeg', 0.85));
+  };
+}

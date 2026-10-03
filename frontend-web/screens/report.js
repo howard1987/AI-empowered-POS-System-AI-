@@ -1,8 +1,11 @@
 import { get, must, money, esc, dt, unwrap } from '../api.js';
-import { paginate, bindPager } from '../common-ui.js';
+import { paginate, bindPager, serverPagerBar, fitFillPanes } from '../common-ui.js';
 import { segHtml, bindSeg } from '../ui-polish.js';   // V4.26.4 统一分段控件
 
-/** 报表中心（P1-1）：商品销售明细 / 会员消费报表 / 员工业绩报表 三 Tab + CSV 导出 */
+/** 报表中心（P1-1）：商品销售明细 / 会员消费报表 / 员工业绩报表 三 Tab + CSV 导出
+ *  V5.0.7：六个 Tab 全部「表格容器铺满窗口不溢出」——Tab 根 = .fill-pane（JS 定高），
+ *  卡片 = .fill-card，表格宿主 = .tbl-host（内部滚动 + 表头吸顶 + 分页条吸容器底）；
+ *  优惠券明细两卡用 .split-rows 均分窗口高。展示内容不变。 */
 export async function render(view) {
   view.innerHTML = `
     <div class="doc-tools" style="margin-bottom:14px;border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow)">
@@ -11,8 +14,8 @@ export async function render(view) {
       <span class="muted" style="margin-left:auto;font-size:11.5px">口径：已完成订单 · 支持区间/关键词/分类筛选 · 一键导出 CSV（Excel 可直接打开）</span>
     </div>
 
-    <div id="tab-sale">
-      <div class="card" style="padding-bottom:14px">
+    <div id="tab-sale" class="fill-pane">
+      <div class="card fill-card" style="padding-bottom:14px">
         <h3>商品销售明细 </h3>
         <div class="bar">
           <input type="date" id="sdFrom"> <span class="muted">至</span> <input type="date" id="sdTo">
@@ -21,12 +24,12 @@ export async function render(view) {
           <button class="btn pri" id="sdGo">查询</button>
           <button class="btn" id="sdCsv">导出</button>
         </div>
-        <div id="sdBody" class="pg-host"></div>
+        <div id="sdBody" class="tbl-host"></div>
       </div>
     </div>
 
-    <div id="tab-member" style="display:none">
-      <div class="card">
+    <div id="tab-member" class="fill-pane" style="display:none">
+      <div class="card fill-card">
         <h3>会员消费报表 </h3>
         <div class="bar">
           <input type="date" id="mbFrom"> <span class="muted">至</span> <input type="date" id="mbTo">
@@ -34,12 +37,12 @@ export async function render(view) {
           <button class="btn" id="mbCsv">导出</button>
         </div>
         <div id="mbSum"></div>
-        <div id="mbBody"></div>
+        <div id="mbBody" class="tbl-host"></div>
       </div>
     </div>
 
-    <div id="tab-employee" style="display:none">
-      <div class="card">
+    <div id="tab-employee" class="fill-pane" style="display:none">
+      <div class="card fill-card">
         <h3>员工业绩报表 </h3>
         <div class="bar">
           <input type="date" id="emFrom"> <span class="muted">至</span> <input type="date" id="emTo">
@@ -47,12 +50,12 @@ export async function render(view) {
           <button class="btn pri" id="emGo">查询</button>
           <button class="btn" id="emCsv">导出</button>
         </div>
-        <div id="emBody"></div>
+        <div id="emBody" class="tbl-host"></div>
       </div>
     </div>
 
-    <div id="tab-inventory" style="display:none">
-      <div class="card">
+    <div id="tab-inventory" class="fill-pane" style="display:none">
+      <div class="card fill-card">
         <h3>进销存报表 </h3>
         <div class="bar">
           <input type="date" id="ivFrom"> <span class="muted">至</span> <input type="date" id="ivTo">
@@ -62,12 +65,12 @@ export async function render(view) {
           <button class="btn" id="ivCsv">导出</button>
           <span class="muted">期初=区间起始日前累计净入；期末=期初+入库−出库（stock_flows 全量流水）</span>
         </div>
-        <div id="ivBody"></div>
+        <div id="ivBody" class="tbl-host"></div>
       </div>
     </div>
 
-    <div id="tab-gift" style="display:none">
-      <div class="card">
+    <div id="tab-gift" class="fill-pane" style="display:none">
+      <div class="card fill-card">
         <h3>🎁 赠送记录 <span class="muted" style="font-size:11.5px">含手工赠品与促销自动赠品（均为 0 元真实出库，扣批次库存）</span></h3>
         <div class="bar">
           <input type="date" id="gfFrom"> <span class="muted">至</span> <input type="date" id="gfTo">
@@ -75,11 +78,11 @@ export async function render(view) {
           <button class="btn" id="gfCsv">导出</button>
         </div>
         <div id="gfSum"></div>
-        <div id="gfBody"></div>
+        <div id="gfBody" class="tbl-host"></div>
       </div>
     </div>
-    <div id="tab-coupon" style="display:none">
-      <div class="card">
+    <div id="tab-coupon" class="fill-pane split-rows" style="display:none">
+      <div class="card fill-card">
         <h3>🎟 优惠券库存看板 <span class="muted" style="font-size:11.5px">生成入库→发放→核销出库（一次性商品，不退券）</span></h3>
         <div class="bar">
           <input id="cpKw" placeholder="大类码/名称" style="width:160px">
@@ -87,9 +90,9 @@ export async function render(view) {
           <button class="btn" id="cpCsv">导出</button>
         </div>
         <div id="cpSum"></div>
-        <div id="cpBody"></div>
+        <div id="cpBody" class="tbl-host"></div>
       </div>
-      <div class="card" style="margin-top:14px">
+      <div class="card fill-card">
         <h3>优惠券出入库流水 <span class="muted" style="font-size:11.5px">谁领取/使用·何时·关联单据，全链路可追溯</span></h3>
         <div class="bar">
           <input id="clKw" placeholder="大类码/名称/id" style="width:150px">
@@ -100,7 +103,7 @@ export async function render(view) {
           <button class="btn pri" id="clGo">查询</button>
           <button class="btn" id="clCsv">导出</button>
         </div>
-        <div id="clBody"></div>
+        <div id="clBody" class="tbl-host"></div>
       </div>
     </div>`;
 
@@ -118,6 +121,7 @@ export async function render(view) {
   }
   function switchTab(k) {
     Object.entries(tabs).forEach(([key, id]) => view.querySelector('#' + id).style.display = key === k ? '' : 'none');
+    fitFillPanes(view);   // V5.0.7：隐藏 Tab 刚显示，重算铺满高度（此前 display:none 量不到）
   }
   /* ═══ 优惠券明细（V5.0：库存闭环 + 全链路流水） ═══ */
   let cpRows = [];
@@ -176,12 +180,9 @@ export async function render(view) {
         <td class="num">${r.qty > 0 ? '+' : ''}${r.qty}</td><td class="num">${r.stock_after}</td>
         <td>${esc(r.related_doc_no || '')}</td><td>${esc(r.remark || '')}</td>
       </tr>`).join('')}</tbody></table>
-      <div class="bar muted">共 ${d.total || 0} 条 · 第 ${page} 页
-        <button class="btn sm" id="clPrev">上一页</button><button class="btn sm" id="clNext">下一页</button></div>`
+      ${serverPagerBar({ page, total: d.total || 0, size: 50 })}`
       : '<div class="empty">无流水</div>';
-    const prev = view.querySelector('#clPrev'), next = view.querySelector('#clNext');
-    if (prev) prev.onclick = () => drawCouponLog(Math.max(1, page - 1));
-    if (next) next.onclick = () => drawCouponLog(page + 1);
+    bindPager(view.querySelector('#clBody'), p => drawCouponLog(p));
   }
   view.querySelector('#clGo').onclick = () => drawCouponLog(1);
   view.querySelector('#clCsv').onclick = async () => {

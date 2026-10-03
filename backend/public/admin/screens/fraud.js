@@ -28,26 +28,26 @@ export async function render(view) {
       <div class="card">
         <h3>🚨 异常折扣 · 按收银员（近7天，手工改价或折扣率超阈值；点击行查看单据）</h3>
         ${d.byCashier?.length ? `
-        <table><thead><tr><th>收银员</th><th class="num">折扣行</th><th class="num">单数</th><th class="num">让利金额</th></tr></thead>
-        <tbody>${d.byCashier.map(r => `<tr data-kpi="disc" style="cursor:pointer" title="双击/点击查看该类单据（可再按收银员筛选）">
-          <td>${esc(r.name)}</td><td class="num">${r.lines}</td><td class="num">${r.bills}</td>
+        <table><thead><tr><th class="seq">序号</th><th>收银员</th><th class="num">折扣行</th><th class="num">单数</th><th class="num">让利金额</th></tr></thead>
+        <tbody>${d.byCashier.map((r, i) => `<tr data-kpi="disc" style="cursor:pointer" title="双击/点击查看该类单据（可再按收银员筛选）">
+          <td class="num seq">${i + 1}</td><td>${esc(r.name)}</td><td class="num">${r.lines}</td><td class="num">${r.bills}</td>
           <td class="num">¥${Number(r.amt).toFixed(2)}</td></tr>`).join('')}</tbody></table>`
         : '<div class="empty">近7天无异常折扣</div>'}
       </div>
       <div class="card">
         <h3>📦 采购退货 · 按供应商 TOP（近30天；点击行查看退货单）</h3>
         ${d.bySupplier?.length ? `
-        <table><thead><tr><th>供应商</th><th class="num">退货单</th><th class="num">退货金额</th></tr></thead>
-        <tbody>${d.bySupplier.map(r => `<tr data-sup="${esc(r.supplier)}" style="cursor:pointer" title="点击查看该供应商退货单">
-          <td>${esc(r.supplier)}</td><td class="num">${r.bills}</td><td class="num">¥${Number(r.amt).toFixed(2)}</td></tr>`).join('')}</tbody></table>`
+        <table><thead><tr><th class="seq">序号</th><th>供应商</th><th class="num">退货单</th><th class="num">退货金额</th></tr></thead>
+        <tbody>${d.bySupplier.map((r, i) => `<tr data-sup="${esc(r.supplier)}" style="cursor:pointer" title="点击查看该供应商退货单">
+          <td class="num seq">${i + 1}</td><td>${esc(r.supplier)}</td><td class="num">${r.bills}</td><td class="num">¥${Number(r.amt).toFixed(2)}</td></tr>`).join('')}</tbody></table>`
         : '<div class="empty">近30天无采购退货</div>'}
       </div>
       <div class="card">
         <h3>💰 收银差异（近30天已交班，|差异| 超 ¥${d.thresholds?.cashGap ?? 10}；点击行查看班次时段）</h3>
         ${d.cashGaps?.length ? `
-        <table><thead><tr><th>收银员</th><th>台号</th><th>交班时间</th><th class="num">现金应收</th><th class="num">差异</th></tr></thead>
+        <table><thead><tr><th class="seq">序号</th><th>收银员</th><th>台号</th><th>交班时间</th><th class="num">现金应收</th><th class="num">差异</th></tr></thead>
         <tbody>${d.cashGaps.map((c, i) => `<tr data-gap="${i}" style="cursor:pointer" title="点击查看差异说明">
-          <td>${esc(c.name)}</td><td>${esc(c.posNo)}</td><td>${dt(c.closedAt)}</td>
+          <td class="num seq">${i + 1}</td><td>${esc(c.name)}</td><td>${esc(c.posNo)}</td><td>${dt(c.closedAt)}</td>
           <td class="num">¥${Number(c.cashTotal ?? 0).toFixed(2)}</td>
           <td class="num" style="color:${Number(c.diff) >= 0 ? '#c0392b' : '#2e9e5b'}">${Number(c.diff).toFixed(2)}</td></tr>`).join('')}</tbody></table>`
         : '<div class="empty">近30天无超阈值收银差异</div>'}
@@ -120,9 +120,9 @@ export async function render(view) {
       const draw = () => {
         const pg = paginate(items, page, 10);
         mask.querySelector('#fDrillBody').innerHTML = items.length ? `
-          <table><thead><tr><th>单号</th><th>收银员</th><th class="num">异常行</th><th class="num">让利金额</th><th class="num">应收</th><th>时间</th></tr></thead>
-          <tbody>${pg.slice.map(o => `<tr>
-            <td><a href="javascript:void 0" data-oid="${o.id}" style="font-family:var(--mono);color:var(--pri);text-decoration:underline">${esc(o.order_no)}</a></td>
+          <table><thead><tr><th class="seq">序号</th><th>单号</th><th>收银员</th><th class="num">异常行</th><th class="num">让利金额</th><th class="num">应收</th><th>时间</th></tr></thead>
+          <tbody>${pg.slice.map((o, i) => `<tr>
+            <td class="num seq">${(page - 1) * 10 + i + 1}</td><td><a href="javascript:void 0" data-oid="${o.id}" style="font-family:var(--mono);color:var(--pri);text-decoration:underline">${esc(o.order_no)}</a></td>
             <td>${esc(o.cashier_name || '—')}</td><td class="num">${o.disc_lines}</td>
             <td class="num" style="color:#c0392b">¥${Number(o.disc_amt).toFixed(2)}</td>
             <td class="num">¥${Number(o.payable_amount).toFixed(2)}</td><td class="muted">${dt(o.created_at)}</td></tr>`).join('')}</tbody></table>${pg.bar}`
@@ -142,9 +142,9 @@ export async function render(view) {
       const draw = () => {
         const pg = paginate(items, page, 10);
         mask.querySelector('#fDrillBody').innerHTML = items.length ? `
-          <table><thead><tr><th>订单号</th><th class="num">退款金额</th><th>退款状态</th><th>原因</th><th>收银员</th><th>时间</th></tr></thead>
-          <tbody>${pg.slice.map(x => `<tr>
-            <td><a href="javascript:void 0" data-oid="${x.order_id}" style="font-family:var(--mono);color:var(--pri);text-decoration:underline">${esc(x.order_no)}</a></td>
+          <table><thead><tr><th class="seq">序号</th><th>订单号</th><th class="num">退款金额</th><th>退款状态</th><th>原因</th><th>收银员</th><th>时间</th></tr></thead>
+          <tbody>${pg.slice.map((x, i) => `<tr>
+            <td class="num seq">${(page - 1) * 10 + i + 1}</td><td><a href="javascript:void 0" data-oid="${x.order_id}" style="font-family:var(--mono);color:var(--pri);text-decoration:underline">${esc(x.order_no)}</a></td>
             <td class="num" style="color:#c0392b">¥${Number(x.amount).toFixed(2)}</td>
             <td>${esc(x.status || '—')}</td><td class="muted">${esc(x.reason || '—')}</td>
             <td>${esc(x.cashier_name || '—')}</td><td class="muted">${dt(x.created_at)}</td></tr>`).join('')}</tbody></table>${pg.bar}`
@@ -164,9 +164,9 @@ export async function render(view) {
       const draw = () => {
         const pg = paginate(items, page, 10);
         mask.querySelector('#fDrillBody').innerHTML = items.length ? `
-          <table><thead><tr><th>退货单号</th><th>供应商</th><th class="num">项数</th><th class="num">金额</th><th>状态</th><th>时间</th></tr></thead>
-          <tbody>${pg.slice.map(x => `<tr>
-            <td><a href="javascript:void 0" data-rid="${x.id}" style="font-family:var(--mono);color:var(--pri);text-decoration:underline">${esc(x.return_no)}</a></td>
+          <table><thead><tr><th class="seq">序号</th><th>退货单号</th><th>供应商</th><th class="num">项数</th><th class="num">金额</th><th>状态</th><th>时间</th></tr></thead>
+          <tbody>${pg.slice.map((x, i) => `<tr>
+            <td class="num seq">${(page - 1) * 10 + i + 1}</td><td><a href="javascript:void 0" data-rid="${x.id}" style="font-family:var(--mono);color:var(--pri);text-decoration:underline">${esc(x.return_no)}</a></td>
             <td>${esc(x.supplier_name)}</td><td class="num">${x.item_count}</td>
             <td class="num">¥${Number(x.total_amount).toFixed(2)}</td>
             <td>${esc(x.status)}</td><td class="muted">${dt(x.created_at)}</td></tr>`).join('')}</tbody></table>${pg.bar}`
@@ -184,8 +184,8 @@ export async function render(view) {
         const o = dd.order;
         openDetailModal(`订单详情`, `
           <div class="bar muted">单号 <b>${esc(o.order_no)}</b> · 渠道 ${esc(o.channel)} · 状态 ${esc(o.status)} · ${esc(o.member_name || '散客')} · 收银员 ${esc(o.cashier_name || '—')} · ${dt(o.created_at)}</div>
-          <table style="margin-top:8px"><thead><tr><th>商品</th><th class="num">数量</th><th class="num">原价</th><th class="num">售价</th><th class="num">小计</th><th>批次溯源</th></tr></thead>
-          <tbody>${dd.items.map(i => `<tr><td>${esc(i.product_name)}</td><td class="num">${Number(i.qty)}</td>
+          <table style="margin-top:8px"><thead><tr><th class="seq">序号</th><th>商品</th><th class="num">数量</th><th class="num">原价</th><th class="num">售价</th><th class="num">小计</th><th>批次溯源</th></tr></thead>
+          <tbody>${dd.items.map((i, idx) => `<tr><td class="num seq">${idx + 1}</td><td>${esc(i.product_name)}</td><td class="num">${Number(i.qty)}</td>
             <td class="num">${money(i.origin_price)}</td><td class="num">${money(i.unit_price)}</td>
             <td class="num">${money(i.line_amount)}</td>
             <td class="muted">${(i.batch_trace || []).map(b => `${b.batch}×${Number(b.qty)}`).join('，')}</td></tr>`).join('')}</tbody></table>
@@ -206,8 +206,8 @@ export async function render(view) {
         const ret = dd.return || dd.order || dd;
         openDetailModal(`采购退货单 ${esc(ret.return_no || '')}`, `
           <div class="bar muted">供应商 ${esc(ret.supplier_name || '')} · 状态 ${esc(ret.status)} · 金额 ¥${Number(ret.total_amount ?? 0).toFixed(2)} · ${dt(ret.created_at)}</div>
-          <table style="margin-top:8px"><thead><tr><th>商品</th><th class="num">数量</th><th class="num">单价</th><th class="num">小计</th></tr></thead>
-          <tbody>${(dd.items || []).map(i => `<tr><td>${esc(i.product_name || i.name || '')}</td>
+          <table style="margin-top:8px"><thead><tr><th class="seq">序号</th><th>商品</th><th class="num">数量</th><th class="num">单价</th><th class="num">小计</th></tr></thead>
+          <tbody>${(dd.items || []).map((i, idx) => `<tr><td class="num seq">${idx + 1}</td><td>${esc(i.product_name || i.name || '')}</td>
             <td class="num">${Number(i.qty)}</td><td class="num">${money(i.unit_price ?? i.price ?? 0)}</td>
             <td class="num">${money(i.line_amount ?? Number(i.qty) * Number(i.unit_price ?? i.price ?? 0))}</td></tr>`).join('')}</tbody></table>`, { width: 640 });
       });

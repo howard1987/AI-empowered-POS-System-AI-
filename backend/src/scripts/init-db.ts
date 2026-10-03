@@ -62,9 +62,12 @@ function splitStatements(sql: string): string[] {
 }
 
 async function main() {
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL || 'postgres://cashier:cashier123@localhost:5432/cashier',
-  });
+  const DATABASE_URL = process.env.DATABASE_URL;
+  if (!DATABASE_URL) {
+    console.error('[init-db] 致命：缺少 DATABASE_URL 环境变量，拒绝以弱口令默认值初始化。请在 .env 配置 DATABASE_URL');
+    process.exit(1);
+  }
+  const pool = new Pool({ connectionString: DATABASE_URL });
 
   const dir = path.join(__dirname, '..', '..', 'db');
   const files = fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort();
@@ -74,6 +77,31 @@ async function main() {
     name VARCHAR(128) PRIMARY KEY, checksum VARCHAR(64) NOT NULL,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT now(), last_run_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
   const crypto = await import('crypto');
+  // P4 迁移完整性：若 db/migrations.manifest.json 存在，校验每个迁移文件的 sha256 与清单一致，
+  // 并禁止出现清单外的未知迁移文件（防本地文件写者/供应链注入 SQL）。无清单则跳过（开发兼容）。
+  const manifestPath = path.join(dir, 'migrations.manifest.json');
+  if (fs.existsSync(manifestPath)) {
+    let manifest: Record<string, string> | null = null;
+    try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch { manifest = null; }
+    if (manifest) {
+      for (const f of files) {
+        const sql = fs.readFileSync(path.join(dir, f), 'utf8');
+        const checksum = crypto.createHash('sha256').update(sql).digest('hex');
+        if (!(f in manifest)) {
+          // 清单外文件：生产应拒绝（防注入）；默认仅告警，避免阻断开发期新增迁移（需先更新 manifest）
+          if (process.env.MIGRATION_STRICT === '1') {
+            throw new Error(`迁移完整性校验失败：发现清单外未知迁移文件 ${f}（疑似未授权注入，已拒绝执行；如需新增迁移请先更新 db/migrations.manifest.json）`);
+          }
+          console.warn(`⚠ 迁移完整性：清单外未知文件 ${f}（非清单登记迁移，请确认非未授权注入；生产部署建议设 MIGRATION_STRICT=1 强制拒绝）`);
+          continue;
+        }
+        if (manifest[f] !== checksum) {
+          throw new Error(`迁移完整性校验失败：迁移文件 ${f} 的校验和与清单不一致（疑似被篡改，已拒绝执行）`);
+        }
+      }
+      console.log(`✓ 迁移清单校验通过（${files.length} 个文件，防篡改）`);
+    }
+  }
   for (const f of files) {
     const sql = fs.readFileSync(path.join(dir, f), 'utf8');
     const checksum = crypto.createHash('sha256').update(sql).digest('hex');

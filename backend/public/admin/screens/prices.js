@@ -41,7 +41,7 @@ export async function render(view) {
         <style>#pcTable th, #pcTable td { padding: 7px 12px; } #pcTable td, #pcTable th { vertical-align: middle; } #pcTable input[type="number"] { text-align: right; }</style>
         <table data-colresize="price-change-lines" id="pcTable" style="table-layout:fixed">
           <thead><tr>
-          <th style="width:7%">＋/−</th><th style="width:5%">序号</th><th style="width:16%">条码</th><th style="width:22%">商品</th><th style="width:7%;text-align:right">单位</th>
+          <th style="width:7%">＋/−</th><th style="width:5%">序号</th><th style="width:16%">条码</th><th style="width:22%">商品</th><th style="width:7%;text-align:center">单位</th>
           <th class="num" style="width:11%">现进价</th><th class="num" style="width:11%">新进价</th>
           <th class="num" style="width:11%">现售价</th><th class="num" style="width:10%">新售价</th>
         </tr></thead>
@@ -150,7 +150,7 @@ export async function render(view) {
           <button class="btn sm" data-plus="${i}" title="在下方插入一行" style="padding:2px 7px">＋</button>
           <button class="btn sm warn" data-minus="${i}" title="${i === 0 ? '首行不可删除（可清空本行数据）' : '删除本行'}" style="padding:2px 7px" ${i === 0 ? 'disabled' : ''}>−</button>
         </td>
-        <td style="width:36px">${i + 1}</td>
+        <td class="seq" style="width:36px">${i + 1}</td>
         <td><input data-bc="${i}" value="${esc(l._q || '')}" placeholder="扫码/条码/名称"
              style="width:92%;font-family:var(--mono,monospace)"></td>
         <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(l.name || '')}">${l.name ? `<b>${esc(l.name)}</b>` : '<span class="muted">—</span>'}</td>
@@ -332,12 +332,12 @@ export async function render(view) {
         const rows = await must(get(`/price-changes/store-prices?storeId=${sid}&keyword=${encodeURIComponent(kw)}`));
         const list = Array.isArray(rows) ? rows : (rows.items || []);
         q1('#spList').innerHTML = list.length ? `
-          <table><thead><tr><th>门店</th><th>商品</th><th>条码</th><th class="num">门店价</th><th class="num">默认价</th>
+          <table><thead><tr><th class="seq">序号</th><th>门店</th><th>商品</th><th>条码</th><th class="num">门店价</th><th class="num">默认价</th>
             <th class="num">差额</th><th>来源单号</th><th class="muted">更新时间</th><th>操作</th></tr></thead>
-          <tbody>${list.map(r => {
+          <tbody>${list.map((r, i) => {
             const d = Number(r.sell_price) - Number(r.base_price);
             return `<tr>
-              <td>🏪 ${esc(r.store_name || ('#' + r.store_id))}</td>
+              <td class="num seq">${i + 1}</td><td>🏪 ${esc(r.store_name || ('#' + r.store_id))}</td>
               <td>${esc(r.product_name || '')}</td>
               <td class="mono muted">${esc(r.barcode || '—')}</td>
               <td class="num" style="color:var(--pri);font-weight:700">${money(r.sell_price)}</td>
@@ -381,12 +381,12 @@ export async function render(view) {
     pcPage = pg.page;
     // V4.9.7 调价管理：主表格数据靠左 · 状态列移到操作列前 · 取消「明细」按钮（双击行弹窗看明细）
     $('#pcList').innerHTML = pcs.length ? `
-      <table><thead><tr><th>单号</th><th>类型</th><th>范围</th><th>生效日期</th><th>行数</th><th>差额</th><th>备注</th><th>制单</th><th>时间</th><th>状态</th><th>操作</th></tr></thead>
-      <tbody>${pg.slice.map(c => {
+      <table><thead><tr><th class="seq">序号</th><th>单号</th><th>类型</th><th>范围</th><th>生效日期</th><th>行数</th><th>差额</th><th>备注</th><th>制单</th><th>时间</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody>${pg.slice.map((c, i) => {
         const neg = Number(c.diff_total) < 0;
         const pending = c.status === 'pending';
         return `<tr data-pcrow="${c.id}" style="cursor:pointer" title="双击查看调价明细">
-        <td class="mono" style="font-weight:600">${esc(c.pc_no)}</td>
+        <td class="num seq">${(pcPage - 1) * 10 + i + 1}</td><td class="mono" style="font-weight:600">${esc(c.pc_no)}</td>
         <td>${typeName(c.price_type)}</td>
         <td>${scopeName(c)}</td>
         <td>${dt(c.effective_date).slice(0, 10)}</td>
@@ -441,10 +441,10 @@ export async function render(view) {
         <div class="muted" style="font-size:12.5px;margin-bottom:10px">
           类型：${typeName(o.price_type)} · 状态：${statusTag(o.status)} · ${scopeTxt} · 生效日期：${o.effective_date ? dt(o.effective_date).slice(0, 10) : '—'} · 备注：${esc(o.remark || '—')}${ovTxt}</div>
         ${its.length ? `
-        <table><thead><tr><th>条码</th><th>商品</th><th>单位</th><th class="num">现售价</th><th class="num">新售价</th>
+        <table><thead><tr><th class="seq">序号</th><th>条码</th><th>商品</th><th>单位</th><th class="num">现售价</th><th class="num">新售价</th>
           <th class="num">现进价</th><th class="num">新进价</th></tr></thead>
-        <tbody>${its.map(i => `<tr>
-          <td class="mono">${esc(i.barcode || '—')}</td>
+        <tbody>${its.map((i, idx) => `<tr>
+          <td class="num seq">${idx + 1}</td><td class="mono">${esc(i.barcode || '—')}</td>
           <td>${esc(i.product_name)}</td><td>${esc(i.base_unit || i.unit || '—')}</td>
           <td class="num">${i.old_price != null ? money(i.old_price) : '—'}</td>
           <td class="num" style="color:var(--pri)">${i.new_price != null ? money(i.new_price) : '—'}</td>
@@ -584,9 +584,10 @@ export async function render(view) {
       const tags = await must(post('/printers/price-tags', { ids }));
       const tagItems = (tags.items || []).map(t => ({ ...t, copies: 1 }));
       if (!tagItems.length) return toast('未获取到价签数据', false);
-      // 单台标签机直接打，多台时弹选择
-      let printerId = labels[0].id;
-      if (labels.length > 1) {
+      // V5.0.4：优先默认价签机（default_for=pricetag），否则单台直接打 / 多台 prompt
+      const def = labels.find(p => p.is_default && p.default_for === 'pricetag');
+      let printerId = def ? def.id : labels[0].id;
+      if (!def && labels.length > 1) {
         const opts = labels.map((p, i) => `${i + 1}. ${p.name}(${p.label_size || '40x30'})`).join('\n');
         const n = prompt('请选择标签机（输入序号）：\n' + opts, '1');
         const idx = Number(n) - 1;

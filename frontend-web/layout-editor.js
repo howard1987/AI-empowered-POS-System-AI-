@@ -210,17 +210,22 @@ export function mountLayoutEditor(container, tpl, fieldPool, hooks = {}) {
     options: { qr: !!content.options?.qr, ad: !!content.options?.ad, cut: content.options?.cut !== false,
       cashDrawer: !!content.options?.cashDrawer },
   };
+  // V5.0.5：编辑期在纸张四周预留空白（mm），让 hiprint 认为的“纸张”比真实打印纸大，元素可拖到纸外排列
+  const PAD_W = 120, PAD_H = 240;
+  const designPaper = () => ({ wmm: state.paper.wmm + PAD_W, hmm: state.paper.hmm + PAD_H });
 
   container.innerHTML = `
     <style>
       .le-wrap { display:grid; grid-template-columns:190px 1fr 265px; gap:10px; align-items:stretch; }
       .le-palette { border:1px solid var(--line,#e5e2da); border-radius:10px; background:#fff; padding:8px;
-        overflow:auto; max-height:660px; }
+        overflow:auto; height:calc(100vh - 250px); }
       .le-palette .hiprint-printElement-type { margin-bottom:4px; }
       .le-canvas { border:1px solid var(--line,#e5e2da); border-radius:10px; background:#eef0f2; padding:14px;
-        overflow:auto; max-height:660px; position:relative; }
+        overflow:auto; height:calc(100vh - 250px); position:relative; }
       .le-setting { border:1px solid var(--line,#e5e2da); border-radius:10px; background:#fff; padding:8px;
-        overflow:auto; max-height:660px; }
+        overflow:auto; height:calc(100vh - 250px); }
+      /* V5.0.5：编辑期纸张虚拟放大（四周留白），纸张区显示为灰底空白，元素可拖到纸外排列；保存时还原真实尺寸 */
+      .hiprint-printPaper.design { background:#eef0f2; }
       .le-bar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:10px; }
       .le-bar input, .le-bar select { padding:4px 8px; border:1px solid var(--line,#e5e2da); border-radius:6px; }
       .le-hint { font-size:11.5px; color:var(--muted,#8a8577); }
@@ -244,7 +249,7 @@ export function mountLayoutEditor(container, tpl, fieldPool, hooks = {}) {
         <input id="leCh" type="number" min="15" max="500" style="width:56px" placeholder="高mm">
         <button class="le-paperbtn" id="leCApply">应用</button></span>
       <button class="le-paperbtn" id="leZoomOut" title="缩小">－</button><span class="le-hint" id="leZoomPct">100%</span>
-      <button class="le-paperbtn" id="leZoomIn" title="放大">＋</button>
+      <button class="le-paperbtn" id="leZoomIn" title="放大">＋</button><span class="le-hint" title="在排版画布区滚动鼠标滚轮可缩放">滚轮缩放</span>
       <button class="le-paperbtn" id="leGrid">网格</button>
       <button class="le-paperbtn" id="leRotate" title="纸张旋转（横/竖向）">旋转</button>
       <button class="le-paperbtn" id="leClear" title="清空画布">清空</button>
@@ -347,7 +352,7 @@ export function mountLayoutEditor(container, tpl, fieldPool, hooks = {}) {
     applyScale();
   }
 
-  buildTpl(els2hp(doc.elements, state.paper, bizType));
+  buildTpl(els2hp(doc.elements, designPaper(), bizType));
   H.PrintElementTypeManager.build('.le-ep', 'pos');
 
   /* ── 纸张按钮 ── */
@@ -370,7 +375,7 @@ export function mountLayoutEditor(container, tpl, fieldPool, hooks = {}) {
   }
   function setPaper(w, h) {
     state.paper.wmm = Math.round(w); state.paper.hmm = Math.round(h);
-    try { hpTpl.setPaper(state.paper.wmm, state.paper.hmm); } catch { buildTpl(els2hp(currentEls(), state.paper, bizType)); }
+    try { hpTpl.setPaper(state.paper.wmm + PAD_W, state.paper.hmm + PAD_H); } catch { buildTpl(els2hp(currentEls(), designPaper(), bizType)); }
     drawPapers();
   }
   drawPapers();
@@ -395,6 +400,26 @@ export function mountLayoutEditor(container, tpl, fieldPool, hooks = {}) {
   }
   container.querySelector('#leZoomIn').onclick = () => { state.scale = Math.min(2, Math.round((state.scale + 0.1) * 10) / 10); applyScale(); };
   container.querySelector('#leZoomOut').onclick = () => { state.scale = Math.max(0.5, Math.round((state.scale - 0.1) * 10) / 10); applyScale(); };
+  // V5.0.5：在排版画布区滚动鼠标滚轮即可缩放，方便编辑时微调查看
+  const leCanvas = container.querySelector('.le-canvas');
+  leCanvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const dir = e.deltaY < 0 ? 1 : -1;
+    const next = Math.min(2, Math.max(0.5, Math.round((state.scale + dir * 0.1) * 10) / 10));
+    if (next !== state.scale) { state.scale = next; applyScale(); }
+  }, { passive: false });
+  // V5.0.5：在画布空白处（非元素/控件）按住左键拖动可平移视图，方便把元素拖到纸张外排列
+  leCanvas.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest('.hiprint-printElement') || e.target.closest('.le-paperbtn')
+      || e.target.closest('input') || e.target.closest('button') || e.target.closest('select')) return;
+    const sx = e.clientX, sy = e.clientY, sl = leCanvas.scrollLeft, st = leCanvas.scrollTop;
+    leCanvas.style.cursor = 'grabbing';
+    const mv = (ev) => { leCanvas.scrollLeft = sl - (ev.clientX - sx); leCanvas.scrollTop = st - (ev.clientY - sy); };
+    const up = () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); leCanvas.style.cursor = ''; };
+    window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
+    e.preventDefault();
+  });
   const gridBtn = container.querySelector('#leGrid');
   gridBtn.classList.toggle('le-paperbtn', true);
   gridBtn.onclick = () => {
@@ -408,7 +433,7 @@ export function mountLayoutEditor(container, tpl, fieldPool, hooks = {}) {
   container.querySelector('#leClear').onclick = async () => {
     if (!canTpl) { toast('无编辑权限', false); return; }
     if (!confirm('确认清空画布所有元素？（不保存不生效）')) return;
-    buildTpl(els2hp([], state.paper, bizType));
+    buildTpl(els2hp([], designPaper(), bizType));
   };
 
   /* ── 保存 / 试打 / 导入导出 / 删除 / 设默认 ── */
@@ -419,7 +444,18 @@ export function mountLayoutEditor(container, tpl, fieldPool, hooks = {}) {
     } catch { return doc.elements; }
   }
   function collect() {
-    const json = hpTpl.getJson();
+    const raw = hpTpl.getJson();
+    const json = typeof raw === 'string' ? JSON.parse(raw) : JSON.parse(JSON.stringify(raw));
+    // 编辑期纸张放大了留白，保存时还原为真实纸张尺寸（超界元素打印/预览按真实纸裁切）
+    const fixPaper = (j) => {
+      if (!j) return;
+      const ps = j.panels || (j.template && j.template.panels);
+      if (ps && ps[0]) {
+        ps[0].width = state.paper.wmm; ps[0].height = state.paper.hmm; ps[0].paperFooter = mm2pt(state.paper.hmm);
+      }
+      if (typeof j.width === 'number') { j.width = state.paper.wmm; j.height = state.paper.hmm; }
+    };
+    fixPaper(json); fixPaper(json && json.template);
     return {
       name: container.querySelector('#leName').value.trim() || tpl.name,
       copies: Number(container.querySelector('#leCopies').value) || 1,

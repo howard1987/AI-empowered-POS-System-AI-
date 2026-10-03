@@ -1,5 +1,5 @@
 import { API, get, post, del, must, esc, dt, toast, imgUrl } from '../api.js';
-import { confirmBox } from '../ui.js';
+import { confirmBox, bindPad as uiBindPad, padInk, clearPad as uiClearPad } from '../ui.js';
 import { paginate, bindPager, pagerBar } from '../common-ui.js';
 
 /** 授权管理：签字授权 + 设备授权统一入口，挂「系统」菜单
@@ -148,27 +148,11 @@ export async function render(view) {
       </div>
     </div>`;
 
-  /* ── 签字板（带笔画统计：V4.14.8 乱签初筛） ── */
+  /* ── 签字板（统一走 ui.js；笔画统计用于 V4.14.8 乱签初筛） ── */
   const padState = { strokes: 0 };
-  function bindPad(pad) {
-    const ctx = pad.getContext('2d');
-    ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.strokeStyle = '#111';
-    let drawing = false, last = null;
-    const pos = e => { const r = pad.getBoundingClientRect();
-      return { x: (e.clientX - r.left) * pad.width / r.width, y: (e.clientY - r.top) * pad.height / r.height }; };
-    pad.onpointerdown = e => { drawing = true; padState.strokes++; last = pos(e); pad.setPointerCapture(e.pointerId); };
-    pad.onpointermove = e => { if (!drawing) return; const p = pos(e);
-      ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p; };
-    pad.onpointerup = pad.onpointercancel = () => { drawing = false; };
-  }
-  function padInk(pad) {
-    const d = pad.getContext('2d').getImageData(0, 0, pad.width, pad.height).data;
-    let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
-    return n;
-  }
-  function clearPad(pad) { padState.strokes = 0; pad.getContext('2d').clearRect(0, 0, pad.width, pad.height); }
+  function clearPad(pad) { padState.strokes = 0; uiClearPad(pad); }
   const pad = view.querySelector('#sgPad');
-  bindPad(pad);
+  uiBindPad(pad, { onStroke: () => { padState.strokes++; } });
 
   /* ── 采集会话（≥3 遍画像；V4.17.0 支持「重采模式」整体替换某人的画像） ── */
   let shots = [];   // dataURL[]

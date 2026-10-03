@@ -176,6 +176,28 @@ $('#hdBack').onclick = () => {
 window.addEventListener('popstate', () => { if (stack.length) popView(); });
 document.querySelectorAll('#tabbar .tab').forEach(b => b.onclick = () => openTab(b.dataset.tab));
 
+// V5.0.5：PWA 手机端底部 Tab 支持左右滑动换页（桌面端不启用；避免误触输入框/按钮/横向滚动容器）
+if (!IS_DESKTOP) {
+  const TABS = ['work', 'docs', 'msg', 'me'];
+  const view = $('#view');
+  let sx = 0, sy = 0, tracking = false;
+  view.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1) { tracking = false; return; }
+    if (e.target.closest && e.target.closest('input,textarea,select,button,a,[contenteditable],[data-noswipe]')) { tracking = false; return; }
+    tracking = true; sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+  }, { passive: true });
+  view.addEventListener('touchend', e => {
+    if (!tracking) return; tracking = false;
+    const t = e.changedTouches[0]; if (!t) return;
+    const dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;  // 仅明显水平滑动才换页
+    const i = TABS.indexOf(CURRENT_TAB);
+    if (i < 0) return;
+    const ni = dx < 0 ? i + 1 : i - 1;   // 左滑=下一页，右滑=上一页
+    if (ni >= 0 && ni < TABS.length) openTab(TABS[ni]);
+  }, { passive: true });
+}
+
 /* ── V4.9.8 弹层返回兜底：任何弹窗若没有关闭/取消入口，自动注入顶部「‹ 返回」条 ──
  * 解决"部分功能模块弹层进得去出不来"（如缺货登记、AI 识别、扫码、一码多品选择）。 */
 const CLOSE_RE = /(关闭|取消|返回|✕|×|完成)/;
@@ -322,8 +344,13 @@ function showMain() {
   $('#app').classList.remove('hidden');
   setShellMode('cashier');   // V4.22.3：EXE 壳进全屏收银台（盖任务栏，但不置顶 → Alt+Tab 可切其他程序）
   openTab('work');
-  // V4.18.0 P14：登录/恢复会话后直落新收银台（开关 pos.cashier.new_ui=0 回退旧「作业-收银」）
-  if (window.CashierShell) window.CashierShell.maybeEnter();
+  // V5.0.6：手机端（小屏）登录后直落 checkout.js 移动收银；电脑/平板/桌面壳进入 cashier.js 全屏收银台
+  const isPhone = !IS_DESKTOP && window.matchMedia('(max-width:768px)').matches;
+  if (isPhone && View.checkout) {
+    push('移动收银', View.checkout);
+  } else if (window.CashierShell) {
+    window.CashierShell.maybeEnter();
+  }
 }
 
 // ══ V4.24.0 ⑨ 登录页：只记工号 + 记住 PIN ══
@@ -938,6 +965,8 @@ View.me = async function (v) {
   try {
     if ('serviceWorker' in navigator && !location.search.includes('nosw=1')) {
       await navigator.serviceWorker.register('./sw.js');
+      // V5.0.6：新版本 Service Worker 接管后自动刷新一次，确保手机端立刻用上新界面（避免扫旧码/旧缓存）
+      navigator.serviceWorker.addEventListener('controllerchange', () => { try { location.reload(); } catch { /* 忽略 */ } });
     }
   } catch { /* 非安全上下文，忽略 */ }
   // 扫码登录：链接带 #qr=<ticket>（后台设置页生成）→ 一次性换 token 免密登录

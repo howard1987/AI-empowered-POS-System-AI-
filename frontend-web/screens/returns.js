@@ -1,9 +1,9 @@
 import { get, post, del, must, esc, dt, toast, imgUrl, API } from '../api.js';
 import { signCell, signBtn, handleSignInfo, mountSignActions } from './signpad.js';
 import { renderLines, makeLine, createUnitsCache, loadSupplierProducts, loadBatchesFor } from './docentry.js';
-import { confirmBox } from '../ui.js';
+import { confirmBox, matchSupplierId, capturePhoto } from '../ui.js';
 import { openA5Print, autoPrintA5AfterAudit, canPrintA5 } from '../docprint.js';
-import { paginate, bindPager } from '../common-ui.js';
+import { docTable, paginate, bindPager } from '../common-ui.js';
 
 /** 采购退货（V4.9.6：状态文案 待审核/已审核/已取消/已作废 · 列重排（退货数量/退货金额/制单时间/凭证/状态/操作）
  *  · 弹窗左右结构（左明细右凭证可点击放大）· 明细打印含电子签字 · 双击行开明细 · 供应商输入匹配
@@ -67,7 +67,7 @@ export async function render(view) {
     <div id="tab-list">
       <div class="card">
         <div class="doc-head" style="display:flex;flex-wrap:nowrap;align-items:end;gap:14px">
-          <div class="fld" style="flex:none"><label>单据日期</label><span style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap"><input id="qFrom" type="date" value="${monthStart}" style="flex:1;min-width:0"><span style="color:var(--ink-3)">~</span><input id="qTo" type="date" value="${today}" style="flex:1;min-width:0"></span></div>
+          <div class="fld" style="flex:none"><label>单据日期</label><span style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap"><input id="qFrom" type="date" style="flex:1;min-width:0"><span style="color:var(--ink-3)">~</span><input id="qTo" type="date" style="flex:1;min-width:0"></span></div>
           <div class="fld" style="flex:none"><label>供应商</label><input id="qSup" placeholder="输入名称快速匹配（留空=全部）" style="width:170px"></div>
           <div class="fld" style="flex:none"><label>审核状态</label><span id="qStat" style="display:flex;gap:2px;flex-wrap:nowrap">
             <button class="btn sm segbtn" data-v="待审核">待审核</button>
@@ -149,14 +149,8 @@ export async function render(view) {
   view.querySelector('#rNewDoc').onclick = () => { showPage('new'); draftCache ? restoreDraft() : newDoc(); };
   view.querySelector('#rBackList').onclick = () => showPage('list');
 
-  /* V4.9.6 供应商输入匹配（datalist）→ 商品绑定过滤 */
-  const resolveSupId = () => {
-    const name = view.querySelector('#rSup').value.trim();
-    if (!name) return 0;
-    const s = supList.find(x => x.name === name) ||
-      supList.find(x => (x.name || '').includes(name) || name.includes(x.name || ''));
-    return s ? Number(s.id) : 0;
-  };
+  /* V4.9.6 供应商输入匹配（datalist）→ 商品绑定过滤；名称→id 匹配统一走 ui.js matchSupplierId */
+  const resolveSupId = () => matchSupplierId(view.querySelector('#rSup').value, supList);
   const bindSupplierProducts = async () => {
     const sid = resolveSupId();
     products = await loadSupplierProducts(sid, allProducts);
@@ -264,31 +258,10 @@ export async function render(view) {
       }, 3000);
     } catch (e) { toast(e.message || '发送拍摄指令失败', false); }
   };
-  const openCamera = async () => {
-    let hasCam = false;
-    try {
-      const devs = await navigator.mediaDevices.enumerateDevices();
-      hasCam = devs.some(d => d.kind === 'videoinput');
-    } catch { hasCam = false; }
-    if (!hasCam) return dispatchMobile();
-    let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); }
-    catch { return dispatchMobile(); }
-    const modal = view.querySelector('#camModal');
-    const video = view.querySelector('#camVideo');
-    video.srcObject = stream;
-    modal.style.display = 'flex';
-    const close = () => { stream.getTracks().forEach(t => t.stop()); modal.style.display = 'none'; };
-    view.querySelector('#camCancel').onclick = close;
-    view.querySelector('#camShot').onclick = async () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth || 1280;
-      canvas.height = video.videoHeight || 720;
-      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-      close();
-      await uploadDataUrl(canvas.toDataURL('image/jpeg', 0.85), '凭证已拍摄上传');
-    };
-  };
+  const openCamera = () => capturePhoto(view, {
+    onFail: () => dispatchMobile(),
+    onShot: dataUrl => uploadDataUrl(dataUrl, '凭证已拍摄上传'),
+  });
   view.querySelector('#rEviCam').onclick = openShootChoice;
   view.querySelector('#rEviPic').onclick = () => {
     const f = view.querySelector('#rEviFile');
@@ -535,31 +508,43 @@ export async function render(view) {
     // V4.26.2 合并为一列后，回显条件与勾选范围一致
     const allChecked = rows.length > 0 && rows.every(r => delSel.has(Number(r.id)));
     view.querySelector('#rList').innerHTML = rows.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="rChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}></th><th class="seq">序号</th>
-        <th>退货单号</th><th>供应商</th><th class="num">退货数量</th><th class="num">退货金额</th>
-        <th>制单时间</th><th>凭证</th><th>状态</th><th style="width:220px">操作</th></tr></thead>
-      <tbody>${pg.slice.map((r, i) => {
-        const pre = r.status === '待审核';
-        const deletable = DELETABLE.includes(r.status);
-        const evi = r.evidence_path || r.evidencePath || '';
-        return `<tr data-ret="${r.id}" style="cursor:pointer" title="双击查看单据详情">
-        <td onclick="event.stopPropagation()"><input type="checkbox" data-chk="${r.id}" data-del="${r.id}" data-deletable="${deletable ? 1 : 0}" data-auditable="${pre ? 1 : 0}"
+      ${docTable({
+        cols: [
+          { h: `<input type="checkbox" id="rChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}>`, w: 34 },
+          { h: '序号', cls: 'seq' },
+          { h: '退货单号' }, { h: '供应商' },
+          { h: '退货数量', cls: 'num' }, { h: '退货金额', cls: 'num' },
+          { h: '制单时间' }, { h: '凭证' }, { h: '状态' },
+          { h: '操作', w: 220 },
+        ],
+        rows: pg.slice.map((r, i) => {
+          const pre = r.status === '待审核';
+          const deletable = DELETABLE.includes(r.status);
+          const evi = r.evidence_path || r.evidencePath || '';
+          return {
+            attrs: `data-ret="${r.id}" style="cursor:pointer" title="双击查看单据详情"`,
+            cells: [
+              `<td onclick="event.stopPropagation()"><input type="checkbox" data-chk="${r.id}" data-del="${r.id}" data-deletable="${deletable ? 1 : 0}" data-auditable="${pre ? 1 : 0}"
           ${delSel.has(Number(r.id)) ? 'checked' : ''}
-          title="${deletable ? '勾选：批量打印 / 批量审核 / 批量删除' : '勾选：批量打印（已产生业务的单据不可删除）'}"></td><td class="num seq">${(pg.page - 1) * 10 + i + 1}</td>
-        <td style="font-family:var(--mono);font-weight:600">${esc(r.return_no || r.returnNo)}</td>
-        <td>${esc(r.supplier_name || r.supplierName || '')}</td>
-        <td class="num">${Math.round(Number(r.total_qty ?? 0))}</td>
-        <td class="num">${Number(r.total_amount || 0).toFixed(2)}</td>
-        <td>${dt(r.created_at || r.createdAt)}</td>
-        <td>${evi ? `<img data-eviimg="${esc(imgUrl(evi))}" src="${esc(imgUrl(evi))}" style="height:32px;border-radius:6px;border:1px solid var(--line);cursor:zoom-in">` : '<span class="muted">—</span>'}</td>
-        <td><span class="tag ${r.status === '已审核' ? 'g' : (r.status === '已取消' || r.status === '已作废') ? 'r' : 'y'}">${esc(r.status)}</span>
-            ${pre && !evi ? '<span class="tag r">缺凭证</span>' : ''}</td>
-        <td style="white-space:nowrap">
+          title="${deletable ? '勾选：批量打印 / 批量审核 / 批量删除' : '勾选：批量打印（已产生业务的单据不可删除）'}"></td>`,
+              { h: (pg.page - 1) * 10 + i + 1, cls: 'num seq' },
+              { h: esc(r.return_no || r.returnNo), style: 'font-family:var(--mono);font-weight:600' },
+              esc(r.supplier_name || r.supplierName || ''),
+              { h: Math.round(Number(r.total_qty ?? 0)), cls: 'num' },
+              { h: Number(r.total_amount || 0).toFixed(2), cls: 'num' },
+              dt(r.created_at || r.createdAt),
+              evi ? `<img data-eviimg="${esc(imgUrl(evi))}" src="${esc(imgUrl(evi))}" style="height:32px;border-radius:6px;border:1px solid var(--line);cursor:zoom-in">` : '<span class="muted">—</span>',
+              `<span class="tag ${r.status === '已审核' ? 'g' : (r.status === '已取消' || r.status === '已作废') ? 'r' : 'y'}">${esc(r.status)}</span>
+            ${pre && !evi ? '<span class="tag r">缺凭证</span>' : ''}`,
+              `<td style="white-space:nowrap">
           ${pre ? `<button class="btn sm ${evi ? 'pri' : 'warn'}" data-evi="${r.id}">${evi ? '🔄 换凭证' : '📎 补凭证'}</button>
                    <button class="btn sm pri" data-a="${r.id}">✓ 审核</button>
                    <button class="btn sm warn" data-v="${r.id}">✖ 作废</button>` : ''}
-        </td>
-      </tr>`; }).join('')}</tbody></table>
+        </td>`,
+            ],
+          };
+        }),
+      })}
       ${pg.bar}`
       : '<div class="empty">无符合条件的退货单</div>';
     bindPager(view.querySelector('#rList'), p => { rePage = p; drawList(); });

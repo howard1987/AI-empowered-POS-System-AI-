@@ -162,11 +162,12 @@
     const f = document.createElement('iframe');
     f.id = 'pwa-receipt-frame';
     f.style.cssText = 'position:fixed;width:0;height:0;border:0;visibility:hidden';
+    const _blobUrl = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
     document.body.appendChild(f);
-    f.srcdoc = html;
+    f.src = _blobUrl;
     await new Promise(r => { f.onload = r; setTimeout(r, 800); });
     try { f.contentWindow.focus(); f.contentWindow.print(); } catch { /* 打印被拒绝不阻断 */ }
-    setTimeout(() => f.remove(), 60000); // 打完回收
+    setTimeout(() => { URL.revokeObjectURL(_blobUrl); f.remove(); }, 60000); // 打完回收
     return true;
   }
 

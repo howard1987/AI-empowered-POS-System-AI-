@@ -280,8 +280,11 @@ class PurchaseController {
   }
 
   @Get('suppliers')
-  async suppliers(@Query('keyword') keyword?: string) {
+  async suppliers(@Query('keyword') keyword?: string, @Query('includeDisabled') includeDisabled?: string) {
     const kw = (keyword || '').trim();
+    // V5.0.6：默认仅返回启用（status=1）供应商（采购订单等下拉用）；
+    // 管理页传 includeDisabled=1 时返回 启用+停用（status IN (1,2)），停用满 90 天方可删除
+    const inc = includeDisabled === '1';
     return q(
       `SELECT s.*,
               EXISTS (SELECT 1 FROM purchase_orders o WHERE o.supplier_id = s.id
@@ -290,30 +293,57 @@ class PurchaseController {
               OR EXISTS (SELECT 1 FROM purchase_returns r WHERE r.supplier_id = s.id AND r.status NOT IN ('待审核', '已取消', '已作废'))
               AS has_business
          FROM suppliers s
-        WHERE s.status = 1 AND ($1 = '' OR s.name ILIKE '%'||$1||'%' OR s.pinyin_code ILIKE '%'||$1||'%')
+        WHERE s.status ${inc ? '<> 0' : '= 1'}
+          AND ($1 = '' OR s.name ILIKE '%'||$1||'%' OR s.pinyin_code ILIKE '%'||$1||'%')
         ORDER BY s.id`, [kw],
     );
   }
 
-  /** V4.9.6 未产生业务供应商删除（硬删留审计；任一业务单据引用即拒绝） */
+  /** V5.0.6 停用/启用供应商：status 1=启用 2=停用；停用置 disabled_at，启用清空 */
+  @RequirePerms('purchase.po.approve')
+  @Post('suppliers/:id/toggle-status')
+  async toggleSupplierStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() b: { status: number },
+    @CurrentUser() user: AuthUser,
+  ) {
+    const row = await q1(`SELECT id, name, status FROM suppliers WHERE id=$1`, [id]);
+    if (!row) throw new BizException(40404, '供应商不存在', 404);
+    const target = Number(b.status);
+    if (target !== 1 && target !== 2) throw new BizException(40003, 'status 仅支持 1（启用）或 2（停用）');
+    if (Number(row.status) === target) return { id, status: target, unchanged: true };
+    if (target === 2) {
+      await q1(`UPDATE suppliers SET status=2, disabled_at=now(), updated_at=now() WHERE id=$1 RETURNING *`, [id]);
+      await audit(curStore(), user.sub, '基础档案', 'supplier.disable', 'supplier', id, { name: row.name });
+      return { id, status: 2 };
+    }
+    await q1(`UPDATE suppliers SET status=1, disabled_at=NULL, updated_at=now() WHERE id=$1 RETURNING *`, [id]);
+    await audit(curStore(), user.sub, '基础档案', 'supplier.enable', 'supplier', id, { name: row.name });
+    return { id, status: 1 };
+  }
+
+  /** V5.0.6 供应商删除：须先停用，且停用满 90 天方可删除（软删 status=0，保留业务单据外键引用） */
   @RequirePerms('purchase.po.approve')
   @Delete('suppliers/:id')
   async deleteSupplier(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
     return tx(async c => {
       const rows = await cx(c, `SELECT * FROM suppliers WHERE id=$1 FOR UPDATE`, [id]);
       if (!rows[0]) throw new BizException(40404, '供应商不存在', 404);
-      // V4.9.7 修复：有业务单据（含历史已作废/已取消留痕单）一律软删除（status=0 停用留痕），
-      // 避免硬删触碰 inbound_orders/purchase_orders/purchase_returns 外键约束报错
-      const biz = await cx(c,
-        `SELECT
-           (SELECT count(*) FROM purchase_orders o WHERE o.supplier_id=$1 AND o.status NOT IN ('草稿','待审批','已取消')) +
-           (SELECT count(*) FROM inbound_orders i WHERE i.supplier_id=$1 AND i.status <> '已作废') +
-           (SELECT count(*) FROM purchase_returns r WHERE r.supplier_id=$1 AND r.status NOT IN ('待审核','已取消','已作废'))
-         AS n`, [id]);
-      if (Number(biz[0].n) > 0) throw new BizException(50010, '该供应商已产生业务单据，不可删除（可停用）');
+      const st = Number(rows[0].status);
+      // V5.0.6：删除前置条件——已启用（status=1）须先停用；已停用（status=2）须满 90 天
+      if (st === 1) throw new BizException(50010, '该供应商仍在启用中，请先「停用」再删除');
+      if (st === 2) {
+        const da = rows[0].disabled_at ? new Date(rows[0].disabled_at) : null;
+        if (!da) throw new BizException(50010, '停用时间缺失，无法判定是否满足 90 天删除条件');
+        const days = (Date.now() - da.getTime()) / 86400000;
+        if (days < 90) {
+          const left = Math.max(0, Math.ceil(90 - days));
+          throw new BizException(50010, `供应商停用未满 90 天，暂不可删除（还需约 ${left} 天）`);
+        }
+      }
       await cx(c, `DELETE FROM supplier_product_prices WHERE supplier_id=$1`, [id]);
       await cx(c, `UPDATE products SET supplier_default_id = NULL WHERE supplier_default_id=$1`, [id]);
-      // 软删除：置 status=0（列表 status=1 过滤），历史单据外键引用保留
+      // 软删除：置 status=0（列表 status<>0 过滤），历史单据外键引用保留
       await cx(c, `UPDATE suppliers SET status = 0 WHERE id=$1`, [id]);
       await audit(curStore(), user.sub, '基础档案', 'supplier.delete', 'supplier', id, { name: rows[0].name, soft: true });
       return { id, deleted: true, soft: true };
@@ -1559,18 +1589,18 @@ class PurchaseController {
     const t = to || today().slice(0, 4) + '-' + today().slice(4, 6) + '-' + today().slice(6, 8);
     return tx(async c => {
       const inbounds = await cx(c,
-        `SELECT id, inbound_no AS doc_no, created_at::date AS doc_date, total_amount AS amount, status
+        `SELECT id, inbound_no AS doc_no, created_at::date AS doc_date, audited_at::date AS audit_date, total_amount AS amount, status
            FROM inbound_orders
           WHERE supplier_id=$1 AND status IN ('未审核','已审核') AND recon_id IS NULL
             AND created_at::date BETWEEN $2::date AND $3::date ORDER BY id`, [sid, f, t]);
       const returns = await cx(c,
-        `SELECT r.id, r.return_no AS doc_no, r.created_at::date AS doc_date, r.total_amount AS amount, r.status
+        `SELECT r.id, r.return_no AS doc_no, r.created_at::date AS doc_date, r.audited_at::date AS audit_date, r.total_amount AS amount, r.status
            FROM purchase_returns r
           WHERE r.supplier_id=$1 AND r.status IN ('待审核','待审核','已审核')
             AND NOT EXISTS (SELECT 1 FROM reconciliation_items ri WHERE ri.doc_type='return' AND ri.doc_id=r.id)
             AND r.created_at::date BETWEEN $2::date AND $3::date ORDER BY r.id`, [sid, f, t]);
       const fees = await cx(c,
-        `SELECT f.id, f.fee_no AS doc_no, f.created_at::date AS doc_date, f.amount,
+        `SELECT f.id, f.fee_no AS doc_no, f.created_at::date AS doc_date, f.created_at::date AS audit_date, f.amount,
                 COALESCE(f.direction, t.direction) AS direction, t.name AS fee_type
            FROM supplier_fees f JOIN supplier_fee_types t ON t.id = f.fee_type_id
           WHERE f.supplier_id=$1 AND f.status='已审核'
@@ -1583,7 +1613,7 @@ class PurchaseController {
       const feePay = fees.filter(x => x.direction === '付').reduce((s, x) => s + Number(x.amount), 0);
       return { from: f, to: t,
                inbounds, returns,
-               fees: fees.map((x: any) => ({ id: x.id, docNo: x.doc_no, amount: Number(x.amount), direction: x.direction, feeType: x.fee_type })),
+               fees: fees.map((x: any) => ({ id: x.id, docNo: x.doc_no, audit_date: x.audit_date, amount: Number(x.amount), direction: x.direction, feeType: x.fee_type })),
                goodsTotal: r2(goods), feeIncomeTotal: r2(feeIncome), feePayTotal: r2(feePay),
                payableTotal: r2(goods + feePay - feeIncome) };
     });

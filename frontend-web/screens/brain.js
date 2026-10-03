@@ -1,4 +1,4 @@
-import { get, post, put, del, must, esc, dt, toast, API } from '../api.js';
+import { get, post, put, del, must, esc, dt, toast, API, money } from '../api.js';
 import { openDetailModal } from '../common-ui.js';
 import { promptBox } from '../ui.js';
 

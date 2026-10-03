@@ -1,5 +1,6 @@
 import { Module, Controller, Get, Post, Put, Delete, Body, Param, Query, ParseIntPipe } from '@nestjs/common';
 import { q, q1, tx, cx, r2, r3, r4, audit, seqLock } from '../common/db';
+import { consumeBatches } from './sales.fifo';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { saveBase64Image } from './sign';
@@ -532,18 +533,10 @@ class BigCustomerController {
           [orderId, ln.prod.id, ln.qty, ln.unitPrice, ln.originPrice,
            ln.lineAmount, ln.lineCost, r2(ln.lineAmount - ln.lineCost),
            ln.unitPrice < ln.originPrice ? '团购专价' : '团购', ln.prod.supplier_default_id ?? null, ln.prod.biz_mode ?? '购销']);
-        for (const a of ln.allocs) {
-          await cx(c, `INSERT INTO sale_item_batches (sale_item_id, batch_id, qty, unit_cost) VALUES ($1,$2,$3,$4)`,
-            [item[0].id, a.batchId, a.qty, a.cost]);
-          await cx(c,
-            `UPDATE batches SET remain_qty = remain_qty - $2,
-                status = CASE WHEN remain_qty - $2 <= 0 THEN '售罄' ELSE status END
-              WHERE id=$1`, [a.batchId, a.qty]);
-          await cx(c,
-            `INSERT INTO stock_flows (store_id, product_id, batch_id, direction, qty, unit_cost, ref_type, ref_id, ref_item_id, employee_id)
-             VALUES ($1,$2,$3,'出库',$4,$5,'sale',$6,$7,$8)`,
-            [user.storeId, ln.prod.id, a.batchId, a.qty, a.cost, orderId, item[0].id, user.sub]);
-        }
+        await consumeBatches(c, {
+          storeId: user.storeId, productId: ln.prod.id, saleItemId: item[0].id,
+          orderId, allocs: ln.allocs, employeeId: user.sub,
+        });
         if (ln.prod.track_inventory) {
           await cx(c,
             `UPDATE inventory_current SET qty_total = qty_total - $2, updated_at=now()

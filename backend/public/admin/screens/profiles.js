@@ -11,13 +11,14 @@ export async function render(view) {
     const items = d.items || [];
     const pg = paginate(items, pfPage, 10);
     view.querySelector('#pfList').innerHTML = items.length ? `
-      <table><thead><tr><th>会员</th><th>等级</th><th>生命周期</th><th>贡献</th><th>频次</th><th>偏好品类</th><th class="num">总消费</th><th class="num">单量</th><th>最近消费</th></tr></thead>
-      <tbody>${pg.slice.map(m => {
+      <table><thead><tr><th class="seq">序号</th><th>会员</th><th>等级</th><th>生命周期</th><th>贡献</th><th>频次</th><th>偏好品类</th><th class="num">总消费</th><th class="num">单量</th><th>最近消费</th></tr></thead>
+      <tbody>${pg.slice.map((m, i) => {
         const tags = (m.tags || []).reduce((o, t) => (o[t.k] = t.v, o), {});
         const p = m.profile || {};
         const fav = (tags.fav1 ? [tags.fav1, tags.fav2, tags.fav3].filter(Boolean).join(' / ') : '—');
         const tier = { '高贡献': 'g', '中贡献': 'y', '低贡献': '' }[tags.tier] || '';
         return `<tr data-id="${m.member_id}" style="cursor:pointer">
+          <td class="seq">${(pfPage - 1) * 10 + i + 1}</td>
           <td><b>${esc(m.name)}</b><div class="muted">${esc(m.phone || '')}</div></td>
           <td class="muted">${esc(m.level_name || '—')}</td>
           <td><span class="tag ${tags.lifecycle === '活跃' || tags.lifecycle === '新客' ? 'g' : tags.lifecycle === '沉睡' ? 'y' : tags.lifecycle === '流失' ? 'r' : ''}">${esc(tags.lifecycle || '—')}</span></td>
@@ -55,8 +56,8 @@ export async function render(view) {
         <span class="muted">首购 ${p.firstBuyAt ? dt(p.firstBuyAt) : '—'} · 最近 ${p.lastBuyAt ? dt(p.lastBuyAt) : '—'} · 活跃 ${p.months ?? 0} 个月</span>
       </div>
       ${d.orders?.length ? `
-      <table class="mt8"><thead><tr><th>订单号</th><th>渠道</th><th class="num">金额</th><th>时间</th></tr></thead>
-      <tbody>${d.orders.map(o => `<tr><td>${esc(o.order_no)}</td><td class="muted">${esc(o.channel)}</td>
+      <table class="mt8"><thead><tr><th class="seq">序号</th><th>订单号</th><th>渠道</th><th class="num">金额</th><th>时间</th></tr></thead>
+      <tbody>${d.orders.map((o, i) => `<tr><td class="seq">${i + 1}</td><td>${esc(o.order_no)}</td><td class="muted">${esc(o.channel)}</td>
         <td class="num">${money(o.payable_amount)}</td><td class="muted">${dt(o.created_at)}</td></tr>`).join('')}</tbody></table>`
       : '<div class="empty">暂无订单</div>'}`, { width: 720 });
   };

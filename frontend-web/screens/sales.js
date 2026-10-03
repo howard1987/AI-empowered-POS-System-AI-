@@ -1,5 +1,5 @@
 import { get, post, must, money, esc, dt, toast, unwrap } from '../api.js';
-import { openDetailModal, exportRows, paginate, bindDblClick } from '../common-ui.js';
+import { openDetailModal, exportRows, paginate, bindDblClick, serverPagerBar, bindPager, docTable } from '../common-ui.js';
 
 /** 销售单据（原「销售流水」，V4.14.0 S / V4.22.0 更名）：
  *  1) 顶部「扫码购流水」：仅展示渠道=扫码购的单据（每页 10 条，双击行弹详情）；核销抽检在收银台前台进行，后台不再校验；
@@ -50,31 +50,7 @@ export async function render(view) {
     } catch { el.innerHTML = ''; }
   }
 
-  /* ── 服务端分页条（固定在容器底部；V4.14.9 统一样式：右对齐 + 手输页码跳页）── */
-  function serverBar(page, total, go) {
-    const pages = Math.max(Math.ceil(total / 10), 1);
-    const cur = Math.min(Math.max(page, 1), pages);
-    return `<div class="bar pg-bar-sticky" style="justify-content:flex-end;margin:8px 0 0;position:sticky;bottom:0;background:var(--bg,#faf9f5);padding:6px 8px;border-top:1px solid var(--line,#e8e4d8);z-index:2">
-      <span class="muted" style="font-size:12px">共 ${total} 条</span>
-      <button class="btn sm pg-prev" ${cur <= 1 ? 'disabled' : ''}>‹ 上一页</button>
-      <span class="muted" style="font-size:12px;display:flex;align-items:center;gap:4px">第
-        <input type="number" class="pg-jump" min="1" max="${pages}" value="${cur}" style="width:52px;text-align:center;padding:2px 4px"> / ${pages} 页</span>
-      <button class="btn sm pg-next" ${cur >= pages ? 'disabled' : ''}>下一页 ›</button></div>`;
-  }
-  /** V4.14.9 统一绑定分页条：prev/next/手输跳页（go 接收目标页码） */
-  function bindServerBar(box, cur, go) {
-    box.querySelector('.pg-prev')?.addEventListener('click', () => go(cur - 1));
-    box.querySelector('.pg-next')?.addEventListener('click', () => go(cur + 1));
-    const inp = box.querySelector('.pg-jump');
-    if (inp) {
-      const jump = () => {
-        const pages = Number(inp.max) || 1;
-        go(Math.min(Math.max(1, Number(inp.value) || 1), pages));
-      };
-      inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); jump(); } });
-      inp.addEventListener('change', jump);
-    }
-  }
+  /* ── 服务端分页条：统一走 common-ui.js serverPagerBar + bindPager（V5.0.6 收敛） ── */
 
   /* ── 扫码购流水（渠道=扫码购） ── */
   let spPage = 1;
@@ -83,18 +59,28 @@ export async function render(view) {
     const d = await must(get(`/sales?channel=${encodeURIComponent('扫码购')}&size=10&page=${spPage}`).catch(() => ({ items: [] })));
     const rows = d.items || [];
     box.innerHTML = rows.length ? `
-      <table><thead><tr><th class="seq">序号</th><th>单号</th><th>会员</th><th class="num">应收</th><th class="num">毛利</th><th>核销</th><th>时间</th></tr></thead>
-      <tbody>${rows.map((o, i) => `<tr data-sp="${o.id}" style="cursor:pointer" title="双击查看详情">
-        <td class="num seq">${(spPage - 1) * 10 + i + 1}</td><td style="font-family:var(--mono)">${esc(o.order_no)}</td>
-        <td>${esc(o.member_name || '—')}</td>
-        <td class="num"><b>${money(o.payable_amount)}</b></td>
-        <td class="num">${money(o.profit_amount)}</td>
-        <td>${o.code_verified_at ? '<span class="tag g">已核销</span>' : '<span class="tag y">未核销</span>'}</td>
-        <td class="muted">${dt(o.created_at)}</td></tr>`).join('')}</tbody></table>
-      ${serverBar(spPage, d.total ?? rows.length)}`
+      ${docTable({
+        cols: [
+          { h: '序号', cls: 'seq' }, { h: '单号' }, { h: '会员' },
+          { h: '应收', cls: 'num' }, { h: '毛利', cls: 'num' }, { h: '核销' }, { h: '时间' },
+        ],
+        rows: rows.map((o, i) => ({
+          attrs: `data-sp="${o.id}" style="cursor:pointer" title="双击查看详情"`,
+          cells: [
+            { h: (spPage - 1) * 10 + i + 1, cls: 'num seq' },
+            { h: esc(o.order_no), style: 'font-family:var(--mono)' },
+            esc(o.member_name || '—'),
+            { h: `<b>${money(o.payable_amount)}</b>`, cls: 'num' },
+            { h: money(o.profit_amount), cls: 'num' },
+            o.code_verified_at ? '<span class="tag g">已核销</span>' : '<span class="tag y">未核销</span>',
+            { h: dt(o.created_at), cls: 'muted' },
+          ],
+        })),
+      })}
+      ${serverPagerBar({ page: spPage, total: d.total ?? rows.length })}`
       : '<div class="empty">暂无扫码购流水（开启扫码购后，会员端自助结算的单据在此展示）</div>';
     bindDblClick(box, '[data-sp]', tr => detail(tr.dataset.sp));
-    bindServerBar(box, spPage, p => { spPage = Math.max(1, p); listScanpay(); });
+    bindPager(box, p => { spPage = Math.max(1, p); listScanpay(); });
   }
 
   /* ── 筛选项数据源 ── */
@@ -134,16 +120,31 @@ export async function render(view) {
     const sum = k => rows.reduce((a, o) => a + Number(o[k] || 0), 0);
     const S = d.sums || {};
     box.innerHTML = rows.length ? `
-      <table><thead><tr><th class="seq">序号</th><th>单号</th><th>渠道</th><th>会员</th><th>收银员</th>
-        <th class="num">货值</th><th class="num">促销</th><th class="num">券</th><th class="num">抹零</th><th class="num">应收</th><th class="num">毛利</th><th>时间</th><th></th></tr></thead>
-      <tbody>${rows.map((o, i) => `<tr data-id="${o.id}" style="cursor:pointer" title="双击查看详情">
-        <td class="num seq">${(fPage - 1) * 10 + i + 1}</td><td style="font-family:var(--mono)">${esc(o.order_no)}</td><td>${esc(o.channel)}</td><td>${esc(o.member_name || '—')}</td><td>${esc(o.cashier_name || '—')}</td>
-        <td class="num">${money(o.goods_amount)}</td><td class="num">${money(o.promo_amount)}</td>
-        <td class="num">${money(o.coupon_amount)}</td><td class="num">${Number(o.round_amount) ? money(o.round_amount) : '—'}</td>
-        <td class="num"><b>${money(o.payable_amount)}</b></td><td class="num">${money(o.profit_amount)}</td>
-        <td class="muted">${dt(o.created_at)}</td>
-        <td><button class="btn sm" data-id="${o.id}">详情</button></td></tr>`).join('')}</tbody>
-      <tfoot>
+      ${docTable({
+        cols: [
+          { h: '序号', cls: 'seq' }, { h: '单号' }, { h: '渠道' }, { h: '会员' }, { h: '收银员' },
+          { h: '货值', cls: 'num' }, { h: '促销', cls: 'num' }, { h: '券', cls: 'num' }, { h: '抹零', cls: 'num' },
+          { h: '应收', cls: 'num' }, { h: '毛利', cls: 'num' }, { h: '时间' }, { h: '' },
+        ],
+        rows: rows.map((o, i) => ({
+          attrs: `data-id="${o.id}" style="cursor:pointer" title="双击查看详情"`,
+          cells: [
+            { h: (fPage - 1) * 10 + i + 1, cls: 'num seq' },
+            { h: esc(o.order_no), style: 'font-family:var(--mono)' },
+            esc(o.channel),
+            esc(o.member_name || '—'),
+            esc(o.cashier_name || '—'),
+            { h: money(o.goods_amount), cls: 'num' },
+            { h: money(o.promo_amount), cls: 'num' },
+            { h: money(o.coupon_amount), cls: 'num' },
+            { h: Number(o.round_amount) ? money(o.round_amount) : '—', cls: 'num' },
+            { h: `<b>${money(o.payable_amount)}</b>`, cls: 'num' },
+            { h: money(o.profit_amount), cls: 'num' },
+            { h: dt(o.created_at), cls: 'muted' },
+            `<td><button class="btn sm" data-id="${o.id}">详情</button></td>`,
+          ],
+        })),
+        foot: `
         <tr style="font-weight:600;color:var(--ink-2)">
           <td colspan="4" style="text-align:left">本页小计（${rows.length} 单）</td>
           <td class="num">${money(sum('goods_amount'))}</td><td class="num">${money(sum('promo_amount'))}</td>
@@ -155,14 +156,14 @@ export async function render(view) {
           <td class="num">${money(S.goods ?? 0)}</td><td class="num">${money(S.promo ?? 0)}</td>
           <td class="num">${money(S.coupon ?? 0)}</td><td class="num">${Number(S.round) ? money(S.round) : '—'}</td>
           <td class="num">${money(S.payable ?? 0)}</td><td class="num">${money(S.profit ?? 0)}</td>
-          <td></td><td></td></tr>
-      </tfoot></table>
-      ${serverBar(fPage, d.total ?? rows.length)}`
+          <td></td><td></td></tr>`,
+      })}
+      ${serverPagerBar({ page: fPage, total: d.total ?? rows.length })}`
       : '<div class="empty">无订单</div>';
     bindDblClick(box, 'tr[data-id]', tr => detail(tr.dataset.id));
     // V5.0.2：onclick 只绑「详情」按钮，避免点击按钮时事件冒泡到 tr 再次触发 detail() 弹出第二个叠层弹窗（需关两遍）
     box.querySelectorAll('button[data-id]').forEach(b => b.onclick = e => { e.stopPropagation(); detail(b.dataset.id); });
-    bindServerBar(box, fPage, p => { fPage = Math.max(1, p); list(); });
+    bindPager(box, p => { fPage = Math.max(1, p); list(); });
   }
 
   /* ── 导出（CSV / Excel，泛化 exportRows） ── */

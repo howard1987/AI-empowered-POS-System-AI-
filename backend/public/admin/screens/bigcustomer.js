@@ -199,14 +199,14 @@ export async function render(view) {
     $('#bcCustBody').innerHTML = rows.length ? `
       <table class="tbl">
         <thead><tr>
-          <th>名称</th><th>联系人</th><th>电话</th><th>建档时间</th><th class="num">信用额度</th><th class="num">整单折扣</th>
+          <th class="seq">序号</th><th>名称</th><th>联系人</th><th>电话</th><th>建档时间</th><th class="num">信用额度</th><th class="num">整单折扣</th>
           <th class="num">订单数</th><th class="num">应收合计</th><th class="num">已收</th><th class="num">未收</th>
           <th>状态</th><th style="width:230px">操作</th>
         </tr></thead>
-        <tbody>${pg.slice.map(c => {
+        <tbody>${pg.slice.map((c, i) => {
           const unpaid = Math.max(0, Number(c.total_receivable) - Number(c.paid_cash) - Number(c.paid_collect));
           return `<tr data-cust="${c.id}" style="cursor:pointer" title="双击查看客户详情">
-            <td><b>${esc(c.name)}</b>${c.signature_path ? ' <span class="tag g" title="已采集电子签字">✍</span>' : ''}</td>
+            <td class="num seq">${(custPage - 1) * 10 + i + 1}</td><td><b>${esc(c.name)}</b>${c.signature_path ? ' <span class="tag g" title="已采集电子签字">✍</span>' : ''}</td>
             <td class="muted">${esc(c.contact || '—')}</td>
             <td class="muted">${esc(c.phone || '—')}</td>
             <td class="muted">${c.created_at ? dt(c.created_at) : '—'}</td>
@@ -356,9 +356,9 @@ export async function render(view) {
           <div style="flex:1;min-width:130px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;border-color:#c0392b"><div class="muted" style="font-size:12px">未收欠款</div><b style="color:#c0392b">${money(s.unpaid)}</b></div>
         </div>
         <b>未清赊账单（${(d.unpaidOrders || []).length} 单）</b>
-        <table style="margin:6px 0 12px"><thead><tr><th>单号</th><th>日期</th><th class="num">应付</th></tr></thead>
-          <tbody>${(d.unpaidOrders || []).map(o => `<tr>
-            <td style="font-family:var(--mono)">${esc(o.orderNo)}</td>
+        <table style="margin:6px 0 12px"><thead><tr><th class="seq">序号</th><th>单号</th><th>日期</th><th class="num">应付</th></tr></thead>
+          <tbody>${(d.unpaidOrders || []).map((o, i) => `<tr>
+            <td class="num seq">${i + 1}</td><td style="font-family:var(--mono)">${esc(o.orderNo)}</td>
             <td class="muted">${String(o.date).slice(0, 10)}</td>
             <td class="num">${money(o.amount)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">—</td></tr>'}</tbody></table>
         <b>应收账龄</b>
@@ -367,9 +367,9 @@ export async function render(view) {
             <div class="muted" style="font-size:11.5px">${esc(a.bucket)}</div><b>${money(a.amount)}</b></div>`).join('')}
         </div>
         <b>近期回款记录</b>
-        <table style="margin-top:6px"><thead><tr><th>时间</th><th class="num">金额</th><th>方式</th><th>备注</th><th>经办</th></tr></thead>
-          <tbody>${(d.payments || []).slice(0, 8).map(p => `<tr>
-            <td class="muted">${dt(p.created_at)}</td><td class="num">${money(p.amount)}</td>
+        <table style="margin-top:6px"><thead><tr><th class="seq">序号</th><th>时间</th><th class="num">金额</th><th>方式</th><th>备注</th><th>经办</th></tr></thead>
+          <tbody>${(d.payments || []).slice(0, 8).map((p, i) => `<tr>
+            <td class="num seq">${i + 1}</td><td class="muted">${dt(p.created_at)}</td><td class="num">${money(p.amount)}</td>
             <td>${esc(p.method)}</td><td class="muted">${esc(p.remark || '—')}</td><td class="muted">${esc(p.operator_name || '—')}</td>
           </tr>`).join('') || '<tr><td colspan="5" class="muted">暂无</td></tr>'}</tbody></table>
       </div>
@@ -420,8 +420,8 @@ export async function render(view) {
           <div class="kpi">回款登记<b>${money(s.paidCollect)}</b></div>
           <div class="kpi">未收欠款<b style="color:#c0392b">${money(s.unpaid)}</b></div>
         </div>
-        <table><thead><tr><th>单号</th><th>日期</th><th class="num">应付金额</th></tr></thead>
-        <tbody>${(d.unpaidOrders || []).map(o => `<tr><td>${esc(o.orderNo)}</td><td>${String(o.date).slice(0, 10)}</td><td class="num">${money(o.amount)}</td></tr>`).join('')}
+        <table><thead><tr><th class="seq">序号</th><th>单号</th><th>日期</th><th class="num">应付金额</th></tr></thead>
+        <tbody>${(d.unpaidOrders || []).map((o, i) => `<tr><td class="num seq">${i + 1}</td><td>${esc(o.orderNo)}</td><td>${String(o.date).slice(0, 10)}</td><td class="num">${money(o.amount)}</td></tr>`).join('')}
         <tr><td colspan="2"><b>未清合计</b></td><td class="num"><b>${money(s.unpaid)}</b></td></tr></tbody></table>
         <table><thead><tr><th>账龄段</th><th class="num">金额</th></tr></thead>
         <tbody>${(d.aging || []).map(a => `<tr><td>${esc(a.bucket)}</td><td class="num">${money(a.amount)}</td></tr>`).join('')}</tbody></table>
@@ -564,9 +564,9 @@ export async function render(view) {
     $('#bcPriceList').innerHTML = d.count ? `
       <div style="margin:6px 0 4px"><b>当前生效专价（${d.count} 条）</b></div>
       <table class="tbl">
-        <thead><tr><th>商品</th><th>条码</th><th class="num">零售价</th><th class="num">专价</th><th>有效期至</th><th style="width:90px">操作</th></tr></thead>
-        <tbody>${pg.slice.map(p => `<tr>
-          <td>${esc(p.name)}</td><td class="muted">${esc(p.barcode || '—')}</td>
+        <thead><tr><th class="seq">序号</th><th>商品</th><th>条码</th><th class="num">零售价</th><th class="num">专价</th><th>有效期至</th><th style="width:90px">操作</th></tr></thead>
+        <tbody>${pg.slice.map((p, i) => `<tr>
+          <td class="num seq">${(pricePage - 1) * 10 + i + 1}</td><td>${esc(p.name)}</td><td class="muted">${esc(p.barcode || '—')}</td>
           <td class="num">${money(p.sell_price)}</td>
           <td class="num"><b style="color:var(--pri)">${money(p.price)}</b></td>
           <td class="muted">${p.valid_to ? String(p.valid_to).slice(0, 10) : '长期'}</td>
@@ -652,9 +652,9 @@ export async function render(view) {
     $('#bcRcvOrders').innerHTML = d.unpaidOrders.length ? `
       <div style="margin:8px 0 4px"><b>未清赊账单（${d.unpaidOrders.length} 单，按账龄冲抵）</b></div>
       <table class="tbl">
-        <thead><tr><th>单号</th><th>日期</th><th class="num">应付</th><th class="num">本单未清</th></tr></thead>
-        <tbody>${pgO.slice.map(o => `<tr>
-          <td style="font-family:var(--mono);font-weight:600">${esc(o.orderNo)}</td>
+        <thead><tr><th class="seq">序号</th><th>单号</th><th>日期</th><th class="num">应付</th><th class="num">本单未清</th></tr></thead>
+        <tbody>${pgO.slice.map((o, i) => `<tr>
+          <td class="num seq">${(ordPage - 1) * 10 + i + 1}</td><td style="font-family:var(--mono);font-weight:600">${esc(o.orderNo)}</td>
           <td class="muted">${String(o.date).slice(0, 10)}</td>
           <td class="num">${money(o.amount)}</td>
           <td class="num"><b style="color:var(--warn)">${money(o.amount)}</b></td>
@@ -666,9 +666,9 @@ export async function render(view) {
     $('#bcRcvPay').innerHTML = d.payments.length ? `
       <div style="margin:8px 0 4px"><b>回款记录</b></div>
       <table class="tbl">
-        <thead><tr><th>时间</th><th class="num">金额</th><th>方式</th><th>备注</th><th>经办</th></tr></thead>
-        <tbody>${pgP.slice.map(p => `<tr>
-          <td class="muted">${dt(p.created_at)}</td>
+        <thead><tr><th class="seq">序号</th><th>时间</th><th class="num">金额</th><th>方式</th><th>备注</th><th>经办</th></tr></thead>
+        <tbody>${pgP.slice.map((p, i) => `<tr>
+          <td class="num seq">${(payPage - 1) * 10 + i + 1}</td><td class="muted">${dt(p.created_at)}</td>
           <td class="num"><b>${money(p.amount)}</b></td>
           <td>${esc(p.method)}</td>
           <td class="muted">${esc(p.remark || '—')}</td>
@@ -805,11 +805,11 @@ export async function render(view) {
       : s === 'approved' ? '<span class="tag g">已通过</span>' : '<span class="tag r">已驳回</span>';
     $('#bcReqList').innerHTML = items.length ? `
       <table class="tbl">
-        <thead><tr><th>单号</th><th>门店</th><th>客户</th><th>商品</th>
+        <thead><tr><th class="seq">序号</th><th>单号</th><th>门店</th><th>客户</th><th>商品</th>
           <th class="num">申请价</th><th class="num">零售参考</th><th>原因</th><th>状态</th>
           <th class="num">批准价</th><th>审批备注</th>${(chain.isHq || !chain.enabled) ? '<th style="width:150px">操作</th>' : ''}</tr></thead>
-        <tbody>${items.map(r => `<tr>
-          <td style="font-family:var(--mono)">${esc(r.req_no)}</td>
+        <tbody>${items.map((r, i) => `<tr>
+          <td class="num seq">${(reqPage - 1) * 15 + i + 1}</td><td style="font-family:var(--mono)">${esc(r.req_no)}</td>
           <td class="muted">${esc(r.store_name || '—')}</td>
           <td>${esc(r.customer_name || '—')}</td>
           <td>${esc(r.product_name || '—')}</td>
@@ -856,9 +856,9 @@ export async function render(view) {
     const box = $('#bcRchList');
     if (!id) { box.innerHTML = '<div class="empty">先选择客户</div>'; return; }
     const rows = await must(get(`/big-customers/${id}/recharges?keyword=${encodeURIComponent($('#bcRchKw').value.trim())}`)).catch(() => []);
-    box.innerHTML = rows.length ? `<table><thead><tr><th>充值时间</th><th class="num">金额</th><th>方式</th><th>备注</th><th>经办</th></tr></thead>
-      <tbody>${rows.map(p => `<tr>
-        <td class="muted">${dt(p.created_at)}</td>
+    box.innerHTML = rows.length ? `<table><thead><tr><th class="seq">序号</th><th>充值时间</th><th class="num">金额</th><th>方式</th><th>备注</th><th>经办</th></tr></thead>
+      <tbody>${rows.map((p, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td class="muted">${dt(p.created_at)}</td>
         <td class="num"><b style="color:var(--pri)">${money(p.amount)}</b></td>
         <td>${esc(p.method)}</td>
         <td class="muted">${esc(p.remark || '—')}</td>

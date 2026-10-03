@@ -161,18 +161,20 @@ export async function render(view) {
     const pendingAll = rows.reduce((n, r) => n + Number(r.pending_diffs || 0), 0);
     const missing = rows.filter(r => r.standard_cost === null || r.standard_cost === undefined).length;
     host.innerHTML = `<table><thead><tr>
-      <th style="width:36px"><input type="checkbox" id="hcAll"></th>
+      <th style="width:36px"><input type="checkbox" id="hcAll" ${rows.length && rows.every(r => sel.has(Number(r.id))) ? 'checked' : ''}></th>
+      <th style="width:36px">序号</th>
       <th style="width:88px">条码</th><th>商品名称</th><th style="width:52px">单位</th>
       <th style="width:72px">售价</th><th style="width:78px">最低卖价</th>
       <th style="width:86px">标准进价 L1</th><th style="width:80px">渠道最低</th>
       <th style="width:74px">报价数</th><th style="width:66px">待处置</th>
       <th style="width:150px">操作</th></tr></thead>
-    <tbody>${paginate(rows, 1, SIZE).slice.map(r => {
+    <tbody>${paginate(rows, 1, SIZE).slice.map((r, i) => {
       const l1 = r.standard_cost === null || r.standard_cost === undefined ? null : Number(r.standard_cost);
       const cmin = r.channel_min === null || r.channel_min === undefined ? null : Number(r.channel_min);
       const gap = l1 !== null && cmin !== null ? l1 - cmin : null;
       return `<tr data-id="${r.id}">
       <td><input type="checkbox" class="hc-ck" data-id="${r.id}"></td>
+      <td class="seq">${(page - 1) * SIZE + i + 1}</td>
       <td class="mono">${esc(r.barcode || '—')}</td>
       <td class="hc-l" style="font-weight:600">${esc(r.name || '')}
         ${r.spec ? `<span class="muted" style="font-size:11px">${esc(r.spec)}</span>` : ''}</td>
@@ -345,10 +347,12 @@ export async function render(view) {
       // 单个商品的各渠道明细
       const nm = chanRows[0];
       host.innerHTML = `<table><thead><tr>
+        <th class="seq">序号</th>
         <th style="width:150px">供应商</th><th style="width:120px">门店</th><th style="width:96px">报价</th>
         <th style="width:84px">来源</th><th style="width:118px">单据号</th>
         <th style="width:74px">采纳</th><th style="width:120px">时间</th></tr></thead>
-      <tbody>${chanRows.map(c => `<tr>
+      <tbody>${chanRows.map((c, i) => `<tr>
+        <td class="seq">${i + 1}</td>
         <td>${esc(c.supplier_name || '—')}</td>
         <td>${esc(c.store_name || '总部')}</td>
         <td class="num hc-l1">${money(c.price)}</td>
@@ -364,11 +368,13 @@ export async function render(view) {
     }
     // 总览：有压价空间的商品
     host.innerHTML = `<table><thead><tr>
+      <th class="seq">序号</th>
       <th style="width:88px">条码</th><th>商品名称</th><th style="width:52px">单位</th>
       <th style="width:92px">当前 L1</th><th style="width:92px">渠道最低</th>
       <th style="width:92px">渠道最高</th><th style="width:74px">供应商</th>
       <th style="width:96px">可谈空间</th><th style="width:96px">操作</th></tr></thead>
-    <tbody>${chanRows.map(c => `<tr>
+    <tbody>${chanRows.map((c, i) => `<tr>
+      <td class="seq">${i + 1}</td>
       <td class="mono">—</td>
       <td class="hc-l" style="font-weight:600">${esc(c.name || '')}</td>
       <td class="muted">${esc(c.base_unit || '')}</td>
@@ -400,14 +406,16 @@ export async function render(view) {
       return;
     }
     host.innerHTML = `<table><thead><tr>
+      <th class="seq">序号</th>
       <th style="width:120px">时间</th><th>商品</th>
       <th style="width:88px">原 L1</th><th style="width:88px">新 L1</th><th style="width:82px">变化</th>
       <th style="width:130px">来源</th><th style="width:130px">依据单据</th>
       <th style="width:100px">门店</th><th style="width:90px">操作人</th></tr></thead>
-    <tbody>${logRows.map(l => {
+    <tbody>${logRows.map((l, i) => {
       const d = l.delta === null || l.delta === undefined ? null : Number(l.delta);
       const [txt, color] = SRC_TXT[l.source] || [l.source || '—', '#8a8577'];
       return `<tr>
+      <td class="seq">${i + 1}</td>
       <td class="muted">${l.created_at ? dt(l.created_at).slice(5, 16) : '—'}</td>
       <td class="hc-l">${esc(l.product_name || '')}</td>
       <td class="num muted">${l.old_cost === null ? '<span class="hc-none">未维护</span>' : money(l.old_cost)}</td>
@@ -436,17 +444,19 @@ export async function render(view) {
       return;
     }
     host.innerHTML = `<table><thead><tr>
+      <th class="seq">序号</th>
       <th style="width:64px">类型</th><th style="width:110px">门店</th><th>商品</th>
       <th style="width:64px">数量</th><th style="width:88px">L1</th><th style="width:88px">实价</th>
       <th style="width:92px">差异/件</th><th style="width:96px">差异金额</th>
       <th style="width:118px">单据号</th><th style="width:120px">提交时间</th>
       <th style="width:190px">裁决</th></tr></thead>
-    <tbody>${diffs.map(d => {
+    <tbody>${diffs.map((d, i) => {
       const l1 = d.l1_at_request === null || d.l1_at_request === undefined ? null : Number(d.l1_at_request);
       const act = Number(d.actual_cost || 0);
       const per = l1 === null ? null : Number((act - l1).toFixed(4));
       const low = d.anomaly === 'low';
       return `<tr data-id="${d.id}">
+      <td class="seq">${i + 1}</td>
       <td><span class="${low ? 'hc-low' : 'hc-high'}">${low ? '低价' : '高价'}</span></td>
       <td>${esc(d.store_name || '—')}</td>
       <td class="hc-l">${esc(d.product_name || '')}

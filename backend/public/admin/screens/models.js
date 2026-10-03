@@ -67,9 +67,9 @@ export async function render(view) {
       : ` 未连接：${esc(r.err || '待探测')}`) + ` · 主模型：<b>${esc(r.selected)}</b>${r.selectedKnown ? '' : '（清单中不存在）'}`;
     const rows = r.models || [];
     $('#mList').innerHTML = rows.length ? `
-      <table><thead><tr><th>模型</th><th class="num">大小</th><th>族</th><th>量化</th><th>状态</th><th></th></tr></thead>
-      <tbody>${rows.map(m => `<tr>
-        <td style="font-family:Consolas,monospace">${esc(m.name)}</td>
+      <table><thead><tr><th class="seq">序号</th><th>模型</th><th class="num">大小</th><th>族</th><th>量化</th><th>状态</th><th></th></tr></thead>
+      <tbody>${rows.map((m, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td style="font-family:Consolas,monospace">${esc(m.name)}</td>
         <td class="num">${m.size ? (m.size / 1e9).toFixed(1) + ' GB' : '—'}</td>
         <td class="muted">${esc(m.family || '—')}</td>
         <td class="muted">${esc(m.quant || '—')}</td>

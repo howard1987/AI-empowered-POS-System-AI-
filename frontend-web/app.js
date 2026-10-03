@@ -32,7 +32,6 @@ import * as models from './screens/models.js';
 import * as pricing from './screens/pricing.js';
 import * as fraud from './screens/fraud.js';
 import * as profiles from './screens/profiles.js';
-import * as labelPrint from './screens/label-print.js';
 
 /** 菜单（三级树：分组 → 一级 → 二级 → 三级；叶子挂屏；title 为面包屑名） */
 const MENU = [
@@ -42,7 +41,6 @@ const MENU = [
   { key: 'report', title: '报表中心', icon: '📈', mod: report },
   { grp: '商品与库存' },
   { key: 'products', title: '商品档案', icon: '📦', mod: products },
-  { key: 'label-print', title: '价签打印', icon: '🏷️', mod: labelPrint },
   { key: 'suppliers', title: '供应商管理', icon: '🏭', mod: suppliers },
   {
     key: 'purchase', title: '采购管理', icon: '🚚', children: [
@@ -135,16 +133,20 @@ function menuVisible(m) { return !m.hqOnly || isHqUser(); }
 
 function buildNav() {
   const leaf = (m, depth) =>
-    `<a href="#/${m.key}" data-key="${m.key}" style="padding-left:${14 + depth * 15}px">${m.icon} ${m.title}</a>`;
-  const branch = (m, depth) => m.children
-    ? `<div class="nav-parent" data-parent="${m.key}" style="padding-left:${10 + depth * 15}px">
-         <span class="nav-arrow">▸</span><span>${m.icon} ${m.title}</span></div>
-       <div class="nav-children" data-children="${m.key}" style="display:none">
-         ${m.children.filter(menuVisible).map(c => branch(c, depth + 1)).join('')}
-       </div>`
-    : leaf(m, depth);
+    `<a class="nav-leaf" href="#/${m.key}" data-key="${m.key}" data-depth="${depth}"><span class="nav-ico">${m.icon}</span><span class="nav-txt">${m.title}</span></a>`;
+  const branch = (m, depth) => {
+    if (!m.children) return leaf(m, depth);
+    const kids = m.children.filter(menuVisible);
+    if (!kids.length) return '';          // 子项全部不可见（如 hqOnly 被裁）→ 整支收起
+    return `<div class="nav-parent" data-parent="${m.key}" data-depth="${depth}">
+        <span class="nav-arrow">▸</span><span class="nav-ico">${m.icon}</span><span class="nav-txt">${m.title}</span>
+      </div>
+      <div class="nav-children" data-children="${m.key}" style="display:none">
+        ${kids.map(c => branch(c, depth + 1)).join('')}
+      </div>`;
+  };
   nav.innerHTML = MENU.filter(menuVisible).map(m => m.grp
-    ? `<div class="grp${m.hqOnly ? ' grp-hq' : ''}">${m.grp}${m.hqOnly ? ' · 总部' : ''}</div>`
+    ? `<div class="grp${m.hqOnly ? ' grp-hq' : ''}"><span class="grp-bar"></span><span class="grp-txt">${m.grp}</span>${m.hqOnly ? '<span class="grp-tag">总部</span>' : ''}</div>`
     : branch(m, 0)).join('');
   // 父级点击：展开/收起
   nav.querySelectorAll('.nav-parent').forEach(p => p.onclick = () => {
@@ -420,6 +422,7 @@ async function route() { if (!API.token) { loginView(); sideShow.style.display =
     view.innerHTML = '';
     view.appendChild(cached);
     decorateDeep(cached);
+    autoFillTables(cached);   // V5.0.7：缓存页恢复时重算定高（窗口尺寸可能变过）
     // V5.0.3：缓存页重新可见时回调 __onShow——列表屏重拉数据，避免「商品档案改了、
     // 库存总览/单据列表还是旧数据」（页面缓存导致的无刷新问题）
     try { cached.__onShow && cached.__onShow(); } catch { /* 静默 */ }
@@ -432,6 +435,7 @@ async function route() { if (!API.token) { loginView(); sideShow.style.display =
     await hit.item.mod.render(host);
     viewCache.set(key, host);
     decorateDeep(host);
+    autoFillTables(host);   // V5.0.7：主表格铺满窗口接管（含 resize / DOM 变化自适应）
   } catch (e) {
     if (e && e.code !== undefined) return; // must() 已 toast
     view.innerHTML = `<div class="empty">屏幕渲染异常：${esc(String(e.message || e))}</div>`;
@@ -442,6 +446,7 @@ async function route() { if (!API.token) { loginView(); sideShow.style.display =
 import { decorateModal } from './ui.js';
 import { enhancePick } from './pick-panel.js';   // V4.9.14 全局自绘下拉
 import { enhanceColResize } from './col-resize.js';   // V4.26.2 Excel 式表格列宽拖拽
+import { autoFillTables } from './common-ui.js';   // V5.0.7 主表格铺满窗口
 import { installBackToTop, anchorNav, loadGlassSetting, applyGlass } from './ui-polish.js';   // V4.26.3 UI 精修层
 const viewCache = new Map();   // 路由 key → 已渲染 DOM 节点（页面自由切换不丢状态）
 // 1) 弹窗自动挂「最小化/最大化/关闭」窗口按钮（含后续动态创建的弹窗）

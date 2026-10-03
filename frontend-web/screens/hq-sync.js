@@ -9,7 +9,7 @@
  *
  * 权限：hq.sync.view（服务端校验）；门店节点配置用 settings.update。
  */
-import { get, post, must, esc, toast, dt } from '../api.js';
+import { get, post, must, esc, toast, dt, money } from '../api.js';
 import { segHtml, bindSeg, noResult } from '../ui-polish.js';
 
 export async function render(view) {

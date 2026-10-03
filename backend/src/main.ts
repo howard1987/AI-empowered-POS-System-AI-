@@ -69,6 +69,13 @@ async function bootstrap() {
     }
     next();
   });
+  // P4 HSTS（可选/默认关闭）：自签名证书 LAN 部署启用 HSTS 会锁死浏览器，故仅在生产可信证书 + ENABLE_HSTS=true 时发送
+  if (process.env.ENABLE_HSTS === 'true') {
+    app.use((_req: any, res: any, next: any) => {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+      next();
+    });
+  }
   // ── V4.28.5 F-09：/uploads 图片目录鉴权（P1）——登录前不可直接翻图 ──
   //  目录里有报损照片/电子签名/AI 识别帧/退款凭证等敏感图片，此前任何人不登录即可按路径直读。
   //  接受 ① Authorization: Bearer <jwt>（fetch/XHR）② ?token=<jwt>（<img src> 场景）。
@@ -100,9 +107,28 @@ async function bootstrap() {
   // V4.27.9：前端资源禁用启发式缓存——no-cache（每次带 ETag 协商，内容未变返回 304，不浪费流量）。
   //  根因：Express 静态默认不带 Cache-Control，浏览器按启发式策略把 cashier.js 等当"仍新鲜"，
   //  收银端重启 EXE 也读到旧文件（F1 键位说明不同步即此因）。no-cache = 永远校验、永远最新。
+  // ── PWA CSP（安全审计整改 P4）：阻断「XSS → Electron IPC」利用链 ──
+  //   严格策略（主 PWA）：script-src 仅 'self' + 'wasm-unsafe-eval'（zxing-wasm 用 WebAssembly.instantiate 必须），
+  //     无 'unsafe-inline'/'unsafe-eval' → 注入的内联脚本/处理器/ eval 一律拒绝。
+  //   放行项：拍照 data URL 转 blob(fetch data:) 与相机 blob 预览需 data:/blob:（connect-src/img-src/media-src）；
+  //     小票打印 iframe 走 blob: 需 frame-src blob:；同源 API 走 'self'。
+  //   放宽策略（ai-train-env.html / label-review.html）：这两页是首方可信内联脚本（已 esc 渲染、无 eval），
+  //     允许 'unsafe-inline' 但不放 'unsafe-eval'，仍禁外链/object/eval。
+  const PWA_CSP_STRICT = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' data: blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'; frame-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'";
+  const PWA_CSP_RELAXED = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'; frame-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'";
   app.useStaticAssets(join(__dirname, '..', 'public'), {
     setHeaders: (res: any, p: string) => {
-      if (/\.(js|mjs|html|webmanifest|css)$/i.test(p)) res.setHeader('Cache-Control', 'no-cache');
+      if (/\.(js|mjs|html|webmanifest|css)$/i.test(p)) {
+        // 管理端（/admin/）禁用缓存：浏览器若缓存 index.html 就会锁死 ?v= 版本号，
+        // 导致改版后 CSS/JS 永远命中旧缓存（Ctrl+F5 也可能无效），故用 no-store 强制回源。
+        // PWA 保持 no-cache，离线能力仍由其 Service Worker 负责。
+        res.setHeader('Cache-Control', /[\\/]admin[\\/]/.test(p) ? 'no-store' : 'no-cache');
+      }
+      // 仅对 /pwa/ 下文档与资源下发 CSP（管理页/display/上传目录不受影响，避免误伤）
+      if (/[\\/]pwa[\\/]/.test(p)) {
+        const relaxed = /(^|[\\/])(ai-train-env|label-review)\.html$/.test(p);
+        res.setHeader('Content-Security-Policy', relaxed ? PWA_CSP_RELAXED : PWA_CSP_STRICT);
+      }
     },
   }); // 极简管理页
   // 照片类接口（上传样本/凭证/AI 识别）走 base64 JSON，放宽到 15MB
@@ -110,7 +136,11 @@ async function bootstrap() {
   app.use(json({ limit: '15mb' }));
 
   const port = Number(process.env.PORT || 3000);
-  await app.listen(port);
+  const bindHost = process.env.BIND_HOST || undefined;   // P4：留空=监听全部网卡（LAN 收银兼容）；生产可设内网网卡/127.0.0.1
+  await app.listen(port, bindHost);
+  if (!bindHost) {
+    console.warn(`  [安全] BIND_HOST 未设置，服务监听全部网卡（0.0.0.0）。若服务器有公网可达 IP，请设 BIND_HOST 为内网网卡或在防火墙限制 ${port}/${Number(process.env.HTTPS_PORT || 3443)} 端口`);
+  }
   console.log(`[收银系统后端] 已启动 http://localhost:${port}（HTTP 就绪耗时 ${Date.now() - BOOT_START}ms）`);
   console.log(`  健康检查: http://localhost:${port}/health`);
   console.log(`  管理页:   http://localhost:${port}/index.html`);
@@ -129,7 +159,7 @@ async function bootstrap() {
       );
       server.on('error', (e: any) => console.warn(`[HTTPS] 服务器异常（已兜底，不退出）: ${e?.message}`));
       const httpsPort = Number(process.env.HTTPS_PORT || 3443);
-      await new Promise<void>(res => server.listen(httpsPort, () => res()));
+      await new Promise<void>(res => server.listen(httpsPort, bindHost, () => res()));
       console.log(`  HTTPS:    https://localhost:${httpsPort} （手机端 PWA 走此端口，首次访问需信任自签名证书）`);
       // mDNS 域名广播：设备用 https://pos-server.local:3443 访问，服务器 IP 变化无需改任何配置
       startMdns();

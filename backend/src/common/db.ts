@@ -9,8 +9,14 @@ export function currentTxCli(): PoolClient | undefined { return txStore.getStore
  * 数据库连接池（初版直用 pg + 参数化 SQL，与 db/001_init.sql 基线一一对应；
  * 后续如引入 TypeORM 需先评审执行文件第 5 节迁移规范）
  */
+// P4 安全：移除硬编码弱口令默认连接串。缺少 DATABASE_URL 时拒绝以弱口令默认值启动，强制运维显式配置。
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  console.error('[db] 致命：缺少 DATABASE_URL 环境变量，拒绝以弱口令默认值启动。请在 .env 配置 DATABASE_URL（如 postgres://user:pass@host:5432/db）');
+  process.exit(1);
+}
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgres://cashier:cashier123@localhost:5432/cashier',
+  connectionString: DATABASE_URL,
   max: 10,
   // 连接超时 5s：DB 未就绪时快速失败，避免业务请求/健康检查被挂死；pg-pool 会自动重建连接。
   connectionTimeoutMillis: 5000,

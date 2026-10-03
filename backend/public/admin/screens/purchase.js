@@ -1,9 +1,9 @@
-import { get, post, del, must, money, esc, dt, toast, imgUrl, API } from '../api.js';
+import { get, post, del, must, money, num2 as fmt, esc, dt, toast, imgUrl, API } from '../api.js';
 import { signCell, signBtn, handleSignInfo, mountSignActions } from './signpad.js';
 import { renderLines, makeLine, toBase, createUnitsCache, loadSupplierProducts, loadBatchesFor } from './docentry.js';
-import { confirmBox } from '../ui.js';
+import { confirmBox, bindPad, padDirty, clearPad, matchSupplierId } from '../ui.js';
 import { openA5Print, autoPrintA5AfterAudit, canPrintA5 } from '../docprint.js';
-import { pagerBar, bindPager } from '../common-ui.js';
+import { pagerBar, bindPager, docTable } from '../common-ui.js';
 
 /** 采购入库（V4.9.6：数量列整数 · 已作废可勾删 · 表头全选复选框 · 打印移明细弹窗（含操作员签字）
  *  · 双击行开明细 · 供应商输入匹配 · 新建页切换标签保留草稿） */
@@ -60,7 +60,7 @@ export async function render(view) {
     <div id="tab-list">
       <div class="card">
         <div class="doc-head" style="display:flex;flex-wrap:nowrap;align-items:end;gap:14px">
-          <div class="fld" style="flex:none"><label>单据日期</label><span style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap"><input id="qFrom" type="date" value="${monthStart}" style="flex:1;min-width:0"><span style="color:var(--ink-3)">~</span><input id="qTo" type="date" value="${today}" style="flex:1;min-width:0"></span></div>
+          <div class="fld" style="flex:none"><label>单据日期</label><span style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap"><input id="qFrom" type="date" style="flex:1;min-width:0"><span style="color:var(--ink-3)">~</span><input id="qTo" type="date" style="flex:1;min-width:0"></span></div>
           <div class="fld" style="flex:none"><label>供应商</label><input id="qSup" placeholder="输入名称快速匹配（留空=全部）" style="width:170px"></div>
           <div class="fld" style="flex:none"><label>审核状态</label><span class="seg" id="qStat" style="display:flex;gap:2px;flex-wrap:nowrap">
             <button class="btn sm segbtn" data-v="未审核">未审核</button>
@@ -76,7 +76,7 @@ export async function render(view) {
             <button class="btn pri" id="puNewDoc" style="white-space:nowrap">＋ 新增入库单</button>
           </span></div>
         </div>
-        <div style="padding:10px 18px 16px;height:calc(100dvh - 210px);min-height:420px;overflow:auto" id="iList"></div>
+        <div style="padding:10px 18px 16px;overflow:auto" id="iList"></div>
         <div class="doc-foot"><span class="muted" id="qCount"></span>
           <span class="sum">金额合计：<b id="qSum">0.00</b> 元</span></div>
       </div>
@@ -126,7 +126,6 @@ export async function render(view) {
   // V4.15.1 入库单列表每页 15 条分页
   const IB_SIZE = 15;
   let ibRows = [], ibPage = 1, ibPages = 1;
-  const fmt = n => (Number(n) || 0).toFixed(2);
   let detailId = 0;
 
   /* ── 分页式：列表页 ⇄ 新增页 ── */
@@ -138,14 +137,8 @@ export async function render(view) {
   view.querySelector('#puNewDoc').onclick = () => { showPage('new'); draftCache ? restoreDraft() : newDoc(); };
   view.querySelector('#puBackList').onclick = () => showPage('list');
 
-  /* V4.9.6 供应商输入匹配（datalist）→ 商品绑定过滤 */
-  const resolveSupId = () => {
-    const name = view.querySelector('#iSup').value.trim();
-    if (!name) return 0;
-    const s = supList.find(x => x.name === name) ||
-      supList.find(x => (x.name || '').includes(name) || name.includes(x.name || ''));
-    return s ? Number(s.id) : 0;
-  };
+  /* V4.9.6 供应商输入匹配（datalist）→ 商品绑定过滤；名称→id 匹配统一走 ui.js matchSupplierId */
+  const resolveSupId = () => matchSupplierId(view.querySelector('#iSup').value, supList);
   const bindSupplierProducts = async () => {
     const sid = resolveSupId();
     products = await loadSupplierProducts(sid, allProducts);
@@ -286,16 +279,8 @@ export async function render(view) {
     if (done >= 3) return;
     const modal = view.querySelector('#opSignModal');
     const pad = view.querySelector('#osPad');
-    const ctx = pad.getContext('2d');
-    ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.strokeStyle = '#111';
-    let draw = false, last = null;
-    const pos = e => { const r = pad.getBoundingClientRect();
-      return { x: (e.clientX - r.left) * pad.width / r.width, y: (e.clientY - r.top) * pad.height / r.height }; };
-    pad.onpointerdown = e => { draw = true; last = pos(e); pad.setPointerCapture(e.pointerId); };
-    pad.onpointermove = e => { if (!draw) return; const p = pos(e);
-      ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p; };
-    pad.onpointerup = pad.onpointercancel = () => { draw = false; };
-    const clear = () => ctx.clearRect(0, 0, pad.width, pad.height);
+    bindPad(pad);
+    const clear = () => clearPad(pad);
     view.querySelector('#osClear').onclick = clear;
     view.querySelector('#osLater').onclick = () => { modal.style.display = 'none'; toast('已稍后再签（下次保存入库单时会再次提醒）', false); };
     view.querySelector('#osDone').textContent = String(done);
@@ -304,7 +289,7 @@ export async function render(view) {
       if (done >= 3) { modal.style.display = 'none'; toast('操作员签字已采满 3 次，已存入电子签字库'); }
     };
     view.querySelector('#osGo').onclick = async () => {
-      if (!ctx.getImageData(0, 0, pad.width, pad.height).data.some(v => v !== 0)) return toast('请先在签字板上签名', false);
+      if (!padDirty(pad)) return toast('请先在签字板上签名', false);
       const uid = Number(API.user?.id ?? API.user?.sub ?? 0);
       await must(post('/purchase/signatures', {
         personName: API.user?.name || '操作员', roleTitle: '操作员',
@@ -372,10 +357,10 @@ export async function render(view) {
       关联采购订单：${o.po_no ? `<span class="mono">${esc(o.po_no)}</span>` : '无'}
       ${signImgHtml}`;
     view.querySelector('#inItems').innerHTML = its.length ? `
-      <table><thead><tr><th>序号</th><th>条码</th><th>商品</th><th>单位</th><th class="num">数量</th>
+      <table><thead><tr><th class="seq">序号</th><th>条码</th><th>商品</th><th>单位</th><th class="num">数量</th>
         <th class="num">进价</th><th class="num">售价</th><th>生产日期</th><th>批次</th><th class="num">进货金额</th></tr></thead>
       <tbody>${its.map((it, i) => `<tr>
-        <td class="num">${i + 1}</td>
+        <td class="num seq">${i + 1}</td>
         <td class="mono">${esc(it.barcode || '—')}</td>
         <td>${esc(it.product_name)}</td><td>${esc(it.base_unit || '')}</td>
         <td class="num">${it.qty}</td><td class="num">${Number(it.unit_cost).toFixed(2)}</td>
@@ -446,27 +431,39 @@ export async function render(view) {
     if (ibPage > ibPages) ibPage = ibPages;
     const pageRows = rows.slice((ibPage - 1) * IB_SIZE, ibPage * IB_SIZE);
     view.querySelector('#iList').innerHTML = rows.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="iChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}></th>
-        <th>入库单号</th><th>供应商</th><th class="num">数量</th><th class="num">金额</th>
-        <th>批次</th><th>状态</th><th>创建</th><th style="width:150px">操作</th></tr></thead>
-      <tbody>${pageRows.map(b => {
-        const deletable = b.status === '未审核' || b.status === '已作废';   // V4.9.6 已作废可勾删
-        return `<tr data-in="${b.id}" style="cursor:pointer" title="双击查看单据详情">
-        <td onclick="event.stopPropagation()"><input type="checkbox" data-chk="${b.id}" data-del="${b.id}" data-deletable="${deletable ? 1 : 0}" data-auditable="${b.status === '未审核' ? 1 : 0}"
+      ${docTable({
+        cols: [
+          { h: `<input type="checkbox" id="iChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}>`, w: 34 },
+          { h: '序号', cls: 'seq' },
+          { h: '入库单号' }, { h: '供应商' },
+          { h: '数量', cls: 'num' }, { h: '金额', cls: 'num' },
+          { h: '批次' }, { h: '状态' }, { h: '创建时间' },
+          { h: '操作', w: 150 },
+        ],
+        rows: pageRows.map((b, i) => {
+          const deletable = b.status === '未审核' || b.status === '已作废';   // V4.9.6 已作废可勾删
+          return {
+            attrs: `data-in="${b.id}" style="cursor:pointer" title="双击查看单据详情"`,
+            cells: [
+              `<td onclick="event.stopPropagation()"><input type="checkbox" data-chk="${b.id}" data-del="${b.id}" data-deletable="${deletable ? 1 : 0}" data-auditable="${b.status === '未审核' ? 1 : 0}"
           ${delSel.has(Number(b.id)) ? 'checked' : ''}
-          title="${deletable ? '勾选：批量打印 / 批量审核 / 批量删除' : '勾选：批量打印（已产生业务的单据不可删除）'}"></td>
-        <td style="font-family:var(--mono);font-weight:600">${esc(b.inbound_no || b.inboundNo)}</td>
-        <td>${esc(b.supplier_name || b.supplierName || '')}</td>
-        <td class="num">${Math.round(Number(b.total_qty ?? 0))}</td>
-        <td class="num">${money(b.total_amount ?? b.totalAmount)}</td>
-        <td class="mono" style="font-size:12px">${esc(b.inbound_no || b.inboundNo || '—')}</td>
-        <td><span class="tag ${b.status === '已审核' ? 'g' : b.status === '已作废' ? 'r' : 'y'}">${esc(b.status)}</span></td>
-        <td>${dt(b.created_at || b.createdAt)}</td>
-        <td style="white-space:nowrap">
+          title="${deletable ? '勾选：批量打印 / 批量审核 / 批量删除' : '勾选：批量打印（已产生业务的单据不可删除）'}"></td>`,
+              { h: (ibPage - 1) * IB_SIZE + i + 1, cls: 'num seq' },
+              { h: esc(b.inbound_no || b.inboundNo), style: 'font-family:var(--mono);font-weight:600' },
+              esc(b.supplier_name || b.supplierName || ''),
+              { h: Math.round(Number(b.total_qty ?? 0)), cls: 'num' },
+              { h: money(b.total_amount ?? b.totalAmount), cls: 'num' },
+              { h: esc(b.inbound_no || b.inboundNo || '—'), cls: 'mono', style: 'font-size:12px' },
+              `<span class="tag ${b.status === '已审核' ? 'g' : b.status === '已作废' ? 'r' : 'y'}">${esc(b.status)}</span>`,
+              dt(b.created_at || b.createdAt),
+              `<td style="white-space:nowrap">
           ${b.status === '未审核' ? `<button class="btn sm pri" data-audit="${b.id}">✓ 审核</button>` : ''}
           ${(b.status === '未审核' || b.status === '已审核') ? `<button class="btn sm warn" data-void="${b.id}">✖ 作废</button>` : ''}
-        </td>
-      </tr>`; }).join('')}</tbody></table>`
+        </td>`,
+            ],
+          };
+        }),
+      })}`
       + pagerBar({ page: ibPage, pages: ibPages, total: rows.length, size: IB_SIZE, unit: '张' })
       : '<div class="empty">无符合条件的入库单</div>';
     bindPager(view.querySelector('#iList'), p => { ibPage = p; loadList(); });

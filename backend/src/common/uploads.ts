@@ -30,6 +30,19 @@ export function uploadsFilePath(imagePath: string): string {
   return abs;
 }
 
+/** P4：解码后校验文件头 magic-byte，确认确为 PNG/JPEG/WebP（拒绝把任意内容伪装成图片上传） */
+export function isRealImage(buf: Buffer, ext: string): boolean {
+  if (!buf || buf.length < 12) return false;
+  const png = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+  const jpg = buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+  const webp = buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+    && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50;
+  if (ext === 'png') return png;
+  if (ext === 'jpg') return jpg;
+  if (ext === 'webp') return webp;
+  return png || jpg || webp;
+}
+
 /** 新图落盘：按月分目录 /uploads/YYYY-MM/<filename>，返回相对路径 */
 export function saveUploadImage(raw: Buffer, filename: string): string {
   const d = new Date();

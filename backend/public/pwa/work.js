@@ -667,10 +667,11 @@ View.work = function (v) {
   })();
   v.innerHTML = `
     <div class="work-hero" id="wCheckout">
-      <div class="wh-t">🛒 移动收银（应急模式）<span class="tag">⚡ 停电可用</span></div>
+      <div class="wh-t">🛒 移动收银（正式）<span class="tag">在线收银</span></div>
       <div class="wh-s" id="wPb">价格表同步中…</div>
     </div>
     <div class="grid">
+      <div class="entry" id="wCheckoutEmg"><div class="eic">⚡</div><div class="et">移动收银（应急）</div><div class="es">离线价目 · 停电可用</div></div>
       <div class="entry" id="wReceive"><div class="eic">📦</div><div class="et">移动收货</div><div class="es">扫码/送货单OCR · 生产日期</div></div>
       <div class="entry" id="wRet"><div class="eic">↩️</div><div class="et">采购退货</div><div class="es">批次归属 · 拍照</div></div>
       <div class="entry" id="wCount"><div class="eic">🧮</div><div class="et">移动盘点</div><div class="es">扫码录实盘数</div></div>
@@ -693,6 +694,7 @@ View.work = function (v) {
       <div class="wp-r"><span id="wNet">${navigator.onLine ? '🟢 网络在线' : '🔴 离线（恢复自动补传）'}</span><span>${esc(ME.name)} · ${esc(ME.empNo)}</span></div>
     </div>`;
   $('#wCheckout').onclick = () => push('移动收银', View.checkout);
+  $('#wCheckoutEmg').onclick = () => push('移动收银', View.checkout, { emergency: true });
   $('#wReceive').onclick = () => push('移动收货', View.receive);
   $('#wRet').onclick = () => push('采购退货', View.ret);
   $('#wCount').onclick = () => push('移动盘点', View.count);

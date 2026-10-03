@@ -421,9 +421,9 @@ export async function render(view) {
     const rows = d.items || [];
     const pg = paginate(rows, promoPage, 10);
     view.querySelector('#plist').innerHTML = rows.length ? `
-      <table><thead><tr><th>ID</th><th>名称</th><th>类型</th><th>规则</th><th>范围</th><th>起止</th><th>状态</th><th></th></tr></thead>
-      <tbody>${pg.slice.map(p => `<tr>
-        <td>${p.id}</td><td>${esc(p.name)}</td>
+      <table><thead><tr><th class="seq">序号</th><th>ID</th><th>名称</th><th>类型</th><th>规则</th><th>范围</th><th>起止</th><th>状态</th><th></th></tr></thead>
+      <tbody>${pg.slice.map((p, i) => `<tr>
+        <td class="num seq">${(promoPage - 1) * 10 + i + 1}</td><td>${p.id}</td><td>${esc(p.name)}</td>
         <td><span class="tag ${kindTag(p.kind)}">${esc(p.kind)}</span></td>
         <td class="muted" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(rulesSummaryWithMember(p.kind, p.rules ?? {}))}</td>
         <td>${scopeSummary(p.scope)}</td>

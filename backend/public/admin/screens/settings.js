@@ -117,9 +117,9 @@ export async function render(view) {
       }
       const stColor = s => s === '待授权' ? '#b5544a' : (s === '已授权' ? 'var(--pri,#20663f)' : '#8a8577');
       const seeAll = rows.some(d => d.storeName);   // V4.28.6：总部视图带门店列
-      body.innerHTML = `<table><thead><tr><th>设备码</th><th>名称</th>${seeAll ? '<th>所属门店</th>' : ''}<th>状态</th><th>最后活跃</th><th>操作</th></tr></thead>
-        <tbody>${rows.map(d => `<tr>
-          <td style="font-family:Consolas,monospace">${esc(d.deviceCode)}</td>
+      body.innerHTML = `<table><thead><tr><th class="seq">序号</th><th>设备码</th><th>名称</th>${seeAll ? '<th>所属门店</th>' : ''}<th>状态</th><th>最后活跃</th><th>操作</th></tr></thead>
+        <tbody>${rows.map((d, i) => `<tr>
+          <td class="num seq">${i + 1}</td><td style="font-family:Consolas,monospace">${esc(d.deviceCode)}</td>
           <td>${esc(d.deviceName || '—')}</td>
           ${seeAll ? `<td>${esc(d.storeName || '—')}</td>` : ''}
           <td><b style="color:${stColor(d.status)}">${esc(d.status)}</b></td>
@@ -1005,13 +1005,14 @@ export async function render(view) {
     chgPage = d.page; chgPages = d.pages ?? 1; chgTotal = d.total ?? d.rows.length;
     view.querySelector('#chg').innerHTML = d.rows.length ? `
       <table style="table-layout:fixed;width:100%"><thead><tr>
+        <th class="seq">序号</th>
         <th style="width:140px">时间</th>
         <th style="width:220px">设置项</th>
         <th>变更内容</th>
         <th style="width:110px">操作人</th>
       </tr></thead>
-      <tbody>${d.rows.map(c => `<tr>
-        <td>${dt(c.created_at)}</td>
+      <tbody>${d.rows.map((c, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td>${dt(c.created_at)}</td>
         <td>
           <div style="font-weight:600;font-size:12.5px;word-break:break-all">${esc(keyName(c.setting_key))}</div>
           <div class="set-key" style="margin-top:2px">${esc(c.setting_key)}</div>

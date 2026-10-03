@@ -1,4 +1,4 @@
-// 传秤下发核心（V4.26.5）：被「生鲜管理」「调价管理·一键传秤」复用，单一数据源
+// 传秤下发核心：被「生鲜管理」「调价管理·一键传秤」复用，单一数据源
 // 负责：中文化秤名(GBK/GB2312) → 组帧 → 串口 Web Serial / 网口 TCP 实际下发 → 写下发日志 → 进度回调
 import { post, must } from '../api.js';
 import { ScaleSerial } from './serial.js';

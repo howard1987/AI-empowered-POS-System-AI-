@@ -108,7 +108,17 @@ class AuthService {
     if (row.status === '已停用') {
       throw new BizException(40308, '本机授权已被停用，请联系管理员（设备码 ' + code + '）', 403);
     }
-    await q(`UPDATE pos_devices SET last_seen_at=now(), last_ip=$2 WHERE id=$1`, [row.id, ip]);
+    // P4 设备绑定强化：已授权设备的 UA 与登记时不一致 → 视为新设备，转待授权复审
+    // （UA 仅为辅助信号、可伪造，非唯一绑定；但可显著降低"仅知设备码即可任意终端登录"的风险）
+    const storedUa = String(row.ua || '').trim();
+    const curUa = String(ua || '').trim();
+    if (storedUa && curUa && storedUa !== curUa) {
+      await q(`UPDATE pos_devices SET status='待授权', ua=$2, last_seen_at=now(), last_ip=$3 WHERE id=$1`,
+        [row.id, curUa.slice(0, 400), ip]);
+      throw new BizException(40307, `设备 UA 与登记时不一致（设备码 ${code}），已转待授权复审，请联系管理员重新审批`, 403);
+    }
+    await q(`UPDATE pos_devices SET last_seen_at=now(), last_ip=$2, ua=COALESCE(NULLIF($3,''),ua) WHERE id=$1`,
+      [row.id, ip, curUa.slice(0, 400)]);
   }
 
   /** V4.24.0：签发 token（登录 / 扫码登录 / PIN 登录三路共用，权限点与安全标记口径一致） */
@@ -124,8 +134,10 @@ class AuthService {
     const permCodes = (await isSuperAdmin(emp.id)) ? ['*', ...perms.map(p => p.code)] : perms.map(p => p.code);
     // V5.0.0 连锁：登录时解析一次数据范围打入 JWT（与 perms 同策略，请求内零查库）
     const { ds, ss, hq } = await resolveScope(emp);
-    // P0-F3：仍在使用出厂默认密码 → token 打 pwd=default 标记，守卫端强制先改密
-    const usingDefault = bcrypt.compareSync('admin123', emp.password_hash || '');
+    // P4：遗留出厂默认口令检测——明文常量移出源码，仅由 env LEGACY_DEFAULT_PW 提供（空=不检测，新装安全）。
+    // 历史库恢复场景：运维在迁移期临时设 LEGACY_DEFAULT_PW=旧默认口令，触发强制改密闸门；平时留空。
+    const legacyDefaultPw = process.env.LEGACY_DEFAULT_PW || '';
+    const usingDefault = !!legacyDefaultPw && bcrypt.compareSync(legacyDefaultPw, emp.password_hash || '');
     const payload: AuthUser = {
       sub: Number(emp.id), storeId: Number(emp.store_id), empNo: emp.emp_no, name: emp.name, perms: permCodes,
       tv: Number(emp.token_version ?? 0),

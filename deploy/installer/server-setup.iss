@@ -8,7 +8,7 @@
 ; ============================================================================
 
 #define MyAppName "超市收银系统 服务端"
-#define MyAppVer "5.0.5"
+#define MyAppVer "5.0.8"
 #define SrcRoot "d:\Software\POS_system\超市收银系统-初版代码"
 
 [Languages]

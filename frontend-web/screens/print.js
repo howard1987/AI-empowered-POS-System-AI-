@@ -53,7 +53,8 @@ export async function render(view) {
     <div id="pBody"></div>`;
 
   let tab = 'printer';
-  const TABS = [['printer', '🖨️ 打印机'], ['device', '📟 设备管理'], ['template', '📄 打印模板']];
+  // V5.0.7：价签打印并入打印中心（原顶级「价签打印」菜单移除），现场专用页独立成标签
+  const TABS = [['printer', '🖨️ 打印机'], ['pricetag', '🏷️ 价签打印'], ['device', '📟 设备管理'], ['template', '📄 打印模板']];
 
   function tabBar() {
     view.querySelector('#pTabs').innerHTML = TABS.map(([k, t]) =>
@@ -67,7 +68,12 @@ export async function render(view) {
     body.innerHTML = '<div class="empty">加载中…</div>';
     if (tab === 'printer') await drawPrinters(body);
     else if (tab === 'device') await drawDevices(body);
-    else await drawTemplates(body);
+    else if (tab === 'pricetag') {
+      const lp = await import('./label-print.js');
+      await lp.render(body);
+    } else await drawTemplates(body);
+    const { fitFillPanes } = await import('../common-ui.js');
+    fitFillPanes(view);   // V5.0.7：Tab 切换后重算铺满高度（隐藏时量不到）
   }
 
   function modal(html, width = 520) {
@@ -116,7 +122,7 @@ export async function render(view) {
           <td class="muted">${esc(p.brand || '通用')}</td>
           <td>${p.printer_type === '激光' ? '🖨️ 激光' : (p.printer_type || '小票') === '标签' ? '🏷️ 标签机' : '🧾 小票机'}</td>
           <td class="muted">${esc(p.conn_type)}${p.conn_addr ? ' · ' + esc(p.conn_addr) : ''}</td>
-          <td class="num">${(p.printer_type || '小票') === '标签' ? esc(p.label_size || '40x30') : p.width_mm + 'mm'}</td>
+          <td class="num">${(p.printer_type || '小票') === '标签' ? '模板决定' : p.width_mm + 'mm'}</td>
           <td>${p.auto_reconnect ? '✅' : '—'}</td>
           <td>${st(p.status)}</td>
           <td class="muted">${p.last_test_at ? dt(p.last_test_at) : '—'}</td>
@@ -215,18 +221,20 @@ export async function render(view) {
       <div class="fld"><label>连接方式</label>
         <select id="pfConn">${['USB', '网口', '蓝牙', '串口'].map(c =>
           `<option ${cur.conn_type === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
-      <div class="fld" style="flex-direction:column;align-items:flex-start;gap:3px"><label style="min-width:0;text-align:left">连接地址</label>
-        <input id="pfAddr" value="${esc(cur.conn_addr || '')}" placeholder="如：192.168.1.50:9100" style="width:100%">
-        <div class="muted" style="font-size:11px">网口填 IP:port（如 192.168.1.50:9100）；串口/USB 可留空</div></div>
+      <div class="fld" style="flex-direction:column;align-items:flex-start;gap:3px"><label style="min-width:0;text-align:left">连接地址 / 本机打印机</label>
+        <div style="display:flex;gap:6px;width:100%">
+          <select id="pfOs" style="flex:1 1 45%"><option value="">— 从本机已安装打印机选择 —</option></select>
+          <input id="pfAddr" value="${esc(cur.conn_addr || '')}" placeholder="如：192.168.1.50:9100 或 打印机名" style="flex:1 1 55%">
+        </div>
+        <div class="muted" style="font-size:11px">网口填 IP:port；选「本机打印机」会自动填入名称并切换连接方式为 USB 系统驱动直发（免 IP，由服务端电脑直驱）</div></div>
       <div class="fld" style="flex-direction:column;align-items:flex-start;gap:3px"><label style="min-width:0;text-align:left">品牌</label>
         <select id="pfBrand" style="width:100%">${['芯烨', '佳博', '得力', '爱普生', '汉印', 'TSC', '斑马', '通用'].map(b =>
           `<option ${(cur.brand || '通用') === b ? 'selected' : ''}>${b}</option>`).join('')}</select>
         <div class="muted" style="font-size:11px">通用适配：芯烨/佳博/得力/爱普生=ESC/POS；汉印/佳博/TSC=TSPL、斑马=ZPL</div></div>
       <div class="fld" id="pfWidthRow"><label>纸宽</label>
         <select id="pfWidth">${[58, 80].map(w => `<option value="${w}" ${Number(cur.width_mm || 80) === w ? 'selected' : ''}>${w}mm</option>`).join('')}</select></div>
-      <div class="fld" id="pfLabelRow" style="display:none"><label>标签纸型（价签/秤贴）</label>
-        <select id="pfLabel">${['40x30', '50x30', '60x40', '70x38', '90x50'].map(s =>
-          `<option ${(cur.label_size || '40x30') === s ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
+      <div class="fld" id="pfLabelRow" style="display:none;flex-direction:column;align-items:flex-start;gap:3px"><label style="min-width:0;text-align:left">标签纸型（价签/秤贴）</label>
+        <div class="muted" style="font-size:13px">由所选打印模板决定，无需在设备中指定</div></div>
       <div class="fld"><label>自动重连</label>
         <select id="pfReconn"><option value="1" ${cur.auto_reconnect !== false ? 'selected' : ''}>开（断电恢复自动连）</option>
         <option value="0" ${cur.auto_reconnect === false ? 'selected' : ''}>关</option></select></div>
@@ -246,6 +254,19 @@ export async function render(view) {
     };
     m.querySelector('#pfType').onchange = syncType;
     syncType();
+    // V5.0.5：本机已安装打印机下拉（服务端电脑直驱，小票/标签/激光均适用）
+    const pfOs = m.querySelector('#pfOs');
+    const fillOs = (items) => {
+      pfOs.innerHTML = '<option value="">— 从本机已安装打印机选择 —</option>' + items.map(it =>
+        `<option value="${esc(it.name)}" ${it.online ? '' : 'data-off="1"'}>${esc(it.name)}${it.port ? '（' + esc(it.port) + '）' : ''}${it.online ? '' : ' · 离线'}</option>`).join('');
+      if (cur.conn_addr && items.some(it => it.name === cur.conn_addr)) pfOs.value = cur.conn_addr;
+    };
+    get('/printers/os-list').then(r => fillOs((r && r.items) || [])).catch(() => { /* 枚举失败则保持手动输入 */ });
+    pfOs.onchange = () => {
+      if (!pfOs.value) return;
+      m.querySelector('#pfAddr').value = pfOs.value;
+      m.querySelector('#pfConn').value = 'USB';
+    };
     m.querySelector('#pfCancel').onclick = () => m.remove();
     m.querySelector('#pfSave').onclick = async () => {
       const isLabel = m.querySelector('#pfType').value === '标签';
@@ -256,7 +277,6 @@ export async function render(view) {
         connAddr: m.querySelector('#pfAddr').value.trim(),
         brand: m.querySelector('#pfBrand').value,
         widthMm: isLabel ? undefined : Number(m.querySelector('#pfWidth').value),
-        labelSize: isLabel ? m.querySelector('#pfLabel').value : undefined,
         autoReconnect: m.querySelector('#pfReconn').value === '1',
       };
       if (!dto.name) { toast('请填写打印机名称', false); return; }
@@ -373,13 +393,13 @@ export async function render(view) {
       ? state.selTplId : (tpls.find(t => t.is_default) || tpls[0])?.id;
 
     body.innerHTML = `
-      <div class="grid" style="grid-template-columns:280px 1fr;align-items:start">
-        <div class="card" style="min-height:380px">
+      <div class="grid" style="grid-template-columns:280px 1fr;align-items:stretch;max-height:calc(100vh - 120px);overflow:hidden">
+        <div class="card" style="overflow:hidden">
           <h3>模板列表 </h3>
           <div style="text-align:right;margin:0 0 8px">
             ${canTpl() ? `<button class="btn sm" id="tRestore" title="缺失的预置模板（标准小票/价签/秤贴等）自动补回，已改过的不动">恢复预置</button>
               <button class="btn pri sm" id="tNew">＋ 新建</button>` : ''}</div>
-          <div class="plist" id="tList"></div>
+          <div class="plist" id="tList" style="overflow-y:auto;max-height:calc(100vh - 250px)"></div>
         </div>
         <div class="card"><div id="tEdit"></div></div>
       </div>`;

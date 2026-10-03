@@ -59,6 +59,30 @@ export function exportRows({ filename, columns, rows, format = 'csv' }) {
   return true;
 }
 
+/** 统一「导出」入口：弹窗选择 Excel / CSV 格式后调用 exportRows。
+ *  所有需要导出的表格统一使用：按钮文案「导出」→ onclick 调 openExportPicker({ filename, columns, rows }) */
+export function openExportPicker({ filename, columns, rows }) {
+  if (!rows?.length) { toast?.('当前条件下无数据可导出'); return; }
+  const m = document.createElement('div');
+  m.className = 'modal-mask';
+  m.style.cssText = 'display:flex;align-items:center;justify-content:center;z-index:9999';
+  m.innerHTML = `<div class="modal" style="width:min(360px,92vw);padding:20px 22px">
+    <h3 style="margin:0 0 12px">导出「${esc(filename)}」</h3>
+    <p class="muted" style="font-size:13px;margin:0 0 14px">请选择导出格式</p>
+    <div style="display:flex;gap:10px">
+      <button class="btn pri" id="epXls" style="flex:1">📊 Excel (.xls)</button>
+      <button class="btn" id="epCsv" style="flex:1">📄 CSV (.csv)</button>
+    </div>
+    <div style="text-align:right;margin-top:14px"><button class="btn" id="epClose">取消</button></div>
+  </div>`;
+  document.body.appendChild(m);
+  const close = () => m.remove();
+  m.querySelector('#epClose').onclick = close;
+  m.onclick = e => { if (e.target === m) close(); };
+  m.querySelector('#epXls').onclick = () => { exportRows({ filename, columns, rows, format: 'xls' }); close(); };
+  m.querySelector('#epCsv').onclick = () => { exportRows({ filename, columns, rows, format: 'csv' }); close(); };
+}
+
 /** 统一分页条：上一页/下一页右对齐 + 页码 + 手输页码跳转。
  *  所有含翻页展示的模块统一使用：pagerBar(...) 出 HTML → bindPager(...) 绑事件
  *
@@ -85,7 +109,9 @@ export function pagerBar({ page, pages, total, size, unit = '条', hint = '', st
 /** 绑定分页条事件：go(targetPage) 由调用方重渲染。上一页/下一页/手输页码（Enter 或失焦生效） */
 export function bindPager(root, go) {
   // root 既可以是「包含分页条的容器」，也可以直接就是分页条本身（原先两种写法下后者静默失效）
-  const bar = root?.classList?.contains('pg-bar') ? root : root?.querySelector?.('.pg-bar');
+  // V5.0.6：同时认 .pg-bar-sticky（serverPagerBar 出的是吸底条，不含 .pg-bar 类）
+  const isBar = el => !!el?.classList?.contains?.('pg-bar') || !!el?.classList?.contains?.('pg-bar-sticky');
+  const bar = isBar(root) ? root : root?.querySelector?.('.pg-bar, .pg-bar-sticky');
   if (!bar) return;
   const jump = () => {
     const inp = bar.querySelector('.pg-jump');
@@ -126,4 +152,163 @@ export function bindDblClick(container, selector, handler) {
   container.querySelectorAll(selector).forEach(tr => {
     tr.addEventListener('dblclick', () => handler(tr));
   });
+}
+
+/** 服务端分页条（数据由后端分页、前端只渲染当前页时用）。
+ *  与 pagerBar 的差别：不显示「每页 N 条」，保留原 .pg-bar-sticky 吸底样式。
+ *  出 HTML → bindPager(容器, go) 绑事件。原 sales.js / salesitems.js 各写一份的收敛点。
+ *  V5.0.7：去掉内联 position:sticky；V5.0.7b：分页条由 autoFillTables 挪到滚动宿主正下方
+ *  固定显示（不再 sticky 吸底——sticky 会盖住最下面一行数据，见 scanFillCards 注释）。 */
+export function serverPagerBar({ page, total, size = 10, unit = '条' }) {
+  const pages = Math.max(Math.ceil(total / size), 1);
+  const cur = Math.min(Math.max(page, 1), pages);
+  return `<div class="bar pg-bar-sticky" style="justify-content:flex-end;margin:8px 0 0;background:var(--bg,#faf9f5);padding:6px 8px;border-top:1px solid var(--line,#e8e4d8);z-index:2">
+    <span class="muted" style="font-size:12px">共 ${total} ${unit}</span>
+    <button class="btn sm pg-prev" ${cur <= 1 ? 'disabled' : ''}>‹ 上一页</button>
+    <span class="muted" style="font-size:12px;display:flex;align-items:center;gap:4px">第
+      <input type="number" class="pg-jump" min="1" max="${pages}" value="${cur}" style="width:52px;text-align:center;padding:2px 4px"> / ${pages} 页</span>
+    <button class="btn sm pg-next" ${cur >= pages ? 'disabled' : ''}>下一页 ›</button></div>`;
+}
+
+/**
+ * 单据表格统一构建器（V5.0.6）——全站单据/列表表格只用这一个入口拼装：
+ *   docTable({
+ *     cols:  [ { h:'单号' }, { h:'数量', cls:'num' }, { h:'操作', w:190 }, ... ]    // 表头列：h=内容(可含控件HTML)；w=列宽px；cls=num/seq 等
+ *     rows:  [ { attrs:'data-po="12" style="cursor:pointer"', cells:[ ... ] }, ... ] // 行：attrs=tr 属性串；cells=单元格
+ *     empty: '无符合条件的采购订单',   // 空态文案（自动跨全列表宽）
+ *     foot:  '<tr>…</tr>',            // 可选：tfoot 内层（合计行）
+ *     cls:   '', style: ''            // 可选：table 附加 class / style（如 'margin-top:10px'）
+ *   })
+ * 单元格写法三选一：
+ *   '纯文本/HTML'                                  → <td>…</td>
+ *   { h:内容, cls:'num', style:'…', colspan:2 }     → 带对齐/样式/跨列的 <td>
+ *   '<td …>…</td>' 原生串                           → 原样透传（含控件/按钮的复杂格）
+ * 展示内容、列、文案一律由调用方给出——本函数只统一 thead/tbody/空态/tfoot 的构建与写法。 */
+export function docTable({ cols, rows, empty = '暂无数据', foot = '', cls = '', style = '' }) {
+  const th = cols.map(c => `<th${c.w ? ` style="width:${c.w}px"` : ''}${c.cls ? ` class="${c.cls}"` : ''}>${c.h}</th>`).join('');
+  const td = c => (typeof c === 'object' && c !== null)
+    ? `<td${c.cls ? ` class="${c.cls}"` : ''}${c.style ? ` style="${c.style}"` : ''}${c.colspan ? ` colspan="${c.colspan}"` : ''}>${c.h}</td>`
+    : (typeof c === 'string' && /^<td[\s>]/i.test(c) ? c : `<td>${c}</td>`);
+  const body = rows.length
+    ? rows.map(r => `<tr${r.attrs || ''}>${r.cells.map(td).join('')}</tr>`).join('')
+    : `<tr><td colspan="${cols.length}" class="empty">${empty}</td></tr>`;
+  return `<table${cls ? ` class="${cls}"` : ''}${style ? ` style="${style}"` : ''}><thead><tr>${th}</tr></thead><tbody>${body}</tbody>${foot ? `<tfoot>${foot}</tfoot>` : ''}</table>`;
+}
+
+/* ═══ V5.0.7 主表格铺满窗口（不溢出）· 统一布局机制 ═══ */
+
+const __fitViews = new Set();   // 已注册自适应的宿主（resize 时统一重算）
+let __fitBound = false;
+
+/** 让 .fill-pane / .split-rows / 顶层 .fill-card 的高度 = 「视口剩余高度」（精确测量，不溢出屏幕）。
+ *  display:none 的元素（隐藏 Tab）自动跳过；切到该 Tab 后再调一次即可。
+ *  window resize 全局监听一次，所有注册过的宿主一起重算（模块级单例）。 */
+export function fitFillPanes(view) {
+  __fitViews.add(view);
+  const adjust = () => {
+    __fitViews.forEach(v => (v.querySelectorAll?.('.fill-pane, .split-rows, .fill-card') || []).forEach(el => {
+      // 只量「顶层」元素：嵌在其它定高面板里的交给 flex 分配
+      if (el.parentElement?.closest?.('.fill-pane, .split-rows')) return;
+      const r = el.getBoundingClientRect();
+      if (!r.height && !r.width) return;   // display:none
+      // 46 ≈ #view 底部留白 40 + 呼吸；量不到（异常）就不动
+      const h = Math.max(320, window.innerHeight - r.top - 46);
+      el.style.height = h + 'px';
+    }));
+  };
+  adjust();
+  if (!__fitBound) {
+    __fitBound = true;
+    window.addEventListener('resize', adjust);
+  }
+}
+
+/** 扫描「含 <table> 且含分页条」的卡片并改造为 fill 布局（幂等，可重复调用）。
+ *  V5.0.7 修复：卡片扫描时列表可能尚未渲染出表格（异步 loadList）——找不到宿主就**不标记**
+ *  已扫描，等 MutationObserver 触发后再扫，保证晚到的列表也能被 fill 接管。
+ *  V5.0.7b 翻页条出滚动区：sticky 翻页条虽然吸在滚动宿主底部，但会**盖住最下面一行数据**，
+ *  且容器 padding-bottom 会把下一行顶出一截残影在翻页条下方（采购入库列表老板复核复现）。
+ *  改为把分页条挪出滚动宿主、作为其兄弟节点固定在卡片底部——永不盖行、下方永无数据。
+ *  loadList 重渲染会在宿主内重新生成分页条 → 每次扫描都重做「清理旧条 + 挪出新条」，幂等。
+ *  V5.0.7c 分级接管：翻页页脚统一所有屏生效；「视口定高铺满」只给**独立主表格屏**（顶层
+ *  表格卡 ≤2 张）——对账结算/库存作业等多卡工作流屏保持自然高度（表格由 .pg-host 48vh
+ *  兜底内滚），否则每张卡都被撑满一屏、页面变成 N 屏长。 */
+function scanFillCards(view) {
+  const entries = [];                    // { card, hosts }
+  view.querySelectorAll?.('.card').forEach(card => {
+    // 宿主候选：card 自身 + 所有后代中「直接子元素同时含 table 和分页条」的元素
+    const hosts = [];
+    const scan = el => {
+      if (el.querySelector(':scope > table') &&
+          el.querySelector(':scope > .pg-bar, :scope > .pg-bar-sticky')) hosts.push(el);
+    };
+    scan(card);
+    card.querySelectorAll('*').forEach(scan);
+    if (!hosts.length) return;          // 还没渲染出表格：不标记，等下次 DOM 变化重扫
+    entries.push({ card, hosts });
+  });
+  entries.forEach(({ card, hosts }) => {
+    card.classList.add('fill-card');
+    hosts.forEach(h => {
+      h.classList.add('tbl-host');
+      if (h === card) return;            // 宿主即卡片本身（表+条直接挂在卡片下）：退回 sticky 兜底
+      // ① 清理上一轮挪出来的旧分页条（重渲染后残留在宿主后面的兄弟位置）
+      let sib = h.nextElementSibling;
+      while (sib && (sib.classList.contains('pg-bar') || sib.classList.contains('pg-bar-sticky'))) {
+        const next = sib.nextElementSibling;
+        sib.remove();
+        sib = next;
+      }
+      // ② 把本轮新生成的分页条挪到宿主正下方（元素整体搬移，bindPager 绑的事件不丢），
+      //    并统一刷成「商品档案式」通栏页脚：贴底全宽、虚线上边、18px 内边距、控件右对齐。
+      //    同时把宿主/页脚的 CSS 默认外边距（.card > div 的 14px 18px）归零，做到无缝通栏
+      h.style.margin = '0';
+      if (!h.style.padding) h.style.padding = '0 18px';
+      const bar = h.querySelector(':scope > .pg-bar, :scope > .pg-bar-sticky');
+      if (bar) {
+        h.parentElement.insertBefore(bar, h.nextSibling);
+        bar.style.margin = '0';
+        bar.style.padding = '9px 18px';
+        bar.style.background = 'transparent';
+        bar.style.borderTop = '1px dashed var(--line)';
+        bar.style.width = '100%';
+      }
+      const foot = card.querySelector(':scope > .doc-foot');
+      if (foot) foot.style.margin = '0';
+    });
+  });
+  // 视口定高（fill-pane）：仅独立主表格屏启用
+  const topCards = entries
+    .filter(({ card }) => !card.closest('.fill-pane, .split-rows') || card.closest('.fill-pane, .split-rows') === card);
+  if (topCards.length > 0 && topCards.length <= 2) {
+    topCards.forEach(({ card }) => card.classList.add('fill-pane'));   // 顶层卡片自行定高
+  }
+}
+
+/** 全站主表格自动接管：把「含 <table> 且含分页条」的卡片改造为 fill 布局——
+ *  卡片设 .fill-card；最深一层同时直接包含 table 与 (.pg-bar|.pg-bar-sticky) 的元素设 .tbl-host
+ *  （内部滚动、表头吸顶）；分页条挪出滚动宿主、固定在卡片底部（V5.0.7b，不盖行无残影）。
+ *  已在 .fill-pane / .split-rows 里的卡片不再追加顶层定高（高度由面板分配）。
+ *  幂等：每次调用都重扫重整（重渲染后新分页条会被再次挪出）；app.js 在每次渲染后调用。 */
+export function autoFillTables(view) {
+  scanFillCards(view);
+  fitFillPanes(view);
+  // 页面内后续 DOM 变化（Tab 切换 / 局部重绘 / 异步列表加载）自动重扫+重算——
+  // 只观察子树结构，忽略样式属性，避免自触发死循环
+  if (!view.__fillObs) {
+    view.__fillObs = true;
+    let t = 0;
+    new MutationObserver(() => {
+      clearTimeout(t);
+      t = setTimeout(() => {
+        scanFillCards(view);
+        view.querySelectorAll?.('.fill-pane, .split-rows, .fill-card').forEach(el => {
+          if (el.parentElement?.closest?.('.fill-pane, .split-rows')) return;
+          const r = el.getBoundingClientRect();
+          if (!r.height && !r.width) return;
+          el.style.height = Math.max(320, window.innerHeight - r.top - 46) + 'px';
+        });
+      }, 120);
+    }).observe(view, { childList: true, subtree: true });
+  }
 }

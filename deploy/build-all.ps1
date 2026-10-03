@@ -195,6 +195,8 @@ Ok '生产依赖就绪'
 
 # ── 4. 静态站 ──
 Step 4 '装配静态站：admin（24 屏完整后台）· pwa（收银端）· boss/member/display'
+# 4.0 先把 frontend-web 镜像同步进 backend/public/admin（admin 为 GitHub 部署目录，须随源码同步）
+RC @($WEB, (Join-Path $PUB 'admin'), '/MIR', '/XD', 'node_modules', '.playwright-cli', '/XF', 'server.mjs', 'package.json')
 RC @($PUB, (Join-Path $SRV 'public'), '/E', '/XD', 'uploads', '.playwright-cli')
 New-Item -ItemType Directory -Force -Path (Join-Path $SRV 'public\uploads') | Out-Null
 RC @($WEB, (Join-Path $SRV 'public\admin'), '/E', '/XD', 'node_modules', '.playwright-cli', '/XF', 'server.mjs')

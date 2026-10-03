@@ -8,7 +8,7 @@
  *
  * 颜色口径（红涨绿跌）：会员资产「入」= 红（涨），「出」= 绿（跌）。
  */
-import { get, must, esc, toast, dt } from '../api.js';
+import { get, must, esc, toast, dt, money } from '../api.js';
 import { segHtml, bindSeg, noResult } from '../ui-polish.js';
 
 export async function render(view) {
@@ -60,9 +60,9 @@ export async function render(view) {
   function drawKpi() {
     const s = data?.sum ?? {};
     $('#hmKpi').innerHTML = `
-      <div class="kpi"><b class="hm-in">¥${Number(s.balanceIn ?? 0).toFixed(2)}</b><span>余额回补（入）</span></div>
-      <div class="kpi"><b class="hm-out">¥${Number(s.balanceOut ?? 0).toFixed(2)}</b><span>余额跨店消费（出）</span></div>
-      <div class="kpi"><b>¥${(Number(s.balanceIn ?? 0) - Number(s.balanceOut ?? 0)).toFixed(2)}</b><span>净流出</span></div>
+      <div class="kpi"><b class="hm-in">${money(Number(s.balanceIn ?? 0))}</b><span>余额回补（入）</span></div>
+      <div class="kpi"><b class="hm-out">${money(Number(s.balanceOut ?? 0))}</b><span>余额跨店消费（出）</span></div>
+      <div class="kpi"><b>${money(Number(s.balanceIn ?? 0) - Number(s.balanceOut ?? 0))}</b><span>净流出</span></div>
       <div class="kpi"><b class="${Number(s.pending ?? 0) > 0 ? 'hm-pend' : ''}">${Number(s.pending ?? 0)}</b><span>待处理（有扣款无订单）</span></div>`;
   }
 
@@ -72,7 +72,7 @@ export async function render(view) {
       return `<td class="${cls}">${r.direction === '入' ? '+' : '−'}${Math.abs(Number(r.points ?? 0))} 分</td>`;
     }
     const cls = r.direction === '入' ? 'hm-in' : 'hm-out';
-    return `<td class="${cls}">${r.direction === '入' ? '+' : '−'}¥${Math.abs(Number(r.amount ?? 0)).toFixed(2)}</td>`;
+    return `<td class="${cls}">${r.direction === '入' ? '+' : '−'}${money(Math.abs(r.amount ?? 0))}</td>`;
   }
 
   function draw() {
@@ -86,11 +86,12 @@ export async function render(view) {
     $('#hmHost').innerHTML = `
       <table class="table">
         <thead><tr>
+          <th class="seq">序号</th>
           <th>时间</th><th>凭证号</th><th>门店</th><th class="hm-l">会员</th><th>资产</th><th>方向</th><th>变动</th>
           <th>本金/赠送</th><th>动作后</th><th class="hm-l">关联单号</th><th>业务</th><th>状态</th>
         </tr></thead>
         <tbody>
-          ${items.map(r => {
+          ${items.map((r, i) => {
             const snap = r.asset === 'points' ? `${Number(r.balance_after ?? 0)} 分`
               : `¥${Number(r.balance_after ?? 0).toFixed(2)}`;
             const split = r.asset === 'balance' && Number(r.amount ?? 0) > 0
@@ -98,6 +99,7 @@ export async function render(view) {
             const st = r.status === 'done' ? '<span class="sy-ok" style="color:#1e8e4e">已完成</span>'
               : `<span class="hm-pend">${esc(r.status === 'pending_order' ? '待处理' : r.status)}</span>`;
             return `<tr>
+              <td class="seq">${i + 1}</td>
               <td>${dt(r.biz_ts)}</td>
               <td><code>${esc(r.txn_no)}</code></td>
               <td>${esc(r.store_name ?? r.store_id)}</td>

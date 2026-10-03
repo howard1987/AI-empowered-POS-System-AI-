@@ -28,6 +28,25 @@ import { scheduleFrameCleanup } from './ai.housekeeping';
 
 const cx = (c: any, sql: string, params: any[] = []) => c.query(sql, params).then((r: any) => r.rows);
 
+/** dHash 样本库比对（识别链路两条分支共用：mock/sample 引擎分支 + VL 失败降级分支）。
+ *  V5.0.6 收敛：原两处 10 行 SQL + 映射完全重复。 */
+async function matchBySamples(imageBase64: string, storeId: any) {
+  const srows = await q(
+    `SELECT s.product_id, p.name AS product_name, s.image_path
+       FROM ai_samples s LEFT JOIN products p ON p.id = s.product_id
+      WHERE s.store_id=$1 AND s.image_path LIKE '/uploads/%'
+      ORDER BY s.id DESC LIMIT 300`, [storeId]);
+  const m = matchSamples(imageBase64, srows as any[]);
+  return {
+    items: m.items.map(it => ({
+      productId: it.productId, name: it.name, count: 1, conf: it.conf,
+      samplePath: it.samplePath, matched: true,
+    })),
+    framePath: m.framePath,
+    sampleTotal: m.sampleTotal,
+  };
+}
+
 /** CLIP 三门槛判定（单件/多件逐件共用，V4.10.2 + V4.11 rerank 规则）：
  *  ① rawImgSim ≥ strict_conf：近乎样本复拍，直接命中；
  *  ② min_conf ≤ rawImgSim < strict 且 Top1−Top2 ≥ margin（或 rerank 文本信号同向）：命中；
@@ -285,21 +304,13 @@ export class AiController {
       //   识别帧 ↔ 样本库 dHash 感知哈希比对，距离 ≤ 阈值才算命中同一商品。
       //   没上传过样本的商品绝不可能出现在结果里；无匹配 → 空结果 + 明确提示，绝不编造。
       if (!b.imageBase64) throw new BizException(40003, '真实识别必须传 imageBase64（摄像头帧）。模拟联调模式已按真实使用要求关闭。');
-      const srows = await q(
-        `SELECT s.product_id, p.name AS product_name, s.image_path
-           FROM ai_samples s LEFT JOIN products p ON p.id = s.product_id
-          WHERE s.store_id=$1 AND s.image_path LIKE '/uploads/%'
-          ORDER BY s.id DESC LIMIT 300`, [user.storeId]);
-      const m = matchSamples(b.imageBase64, srows as any[]);
-      result = m.items.map(it => ({
-        productId: it.productId, name: it.name, count: 1, conf: it.conf,
-        samplePath: it.samplePath, matched: true,
-      }));
-      imagePath = m.framePath;
+      const { items: dhItems, framePath, sampleTotal } = await matchBySamples(b.imageBase64, user.storeId);
+      result = dhItems;
+      imagePath = framePath;
       layer = 'dhash';
       notice = result.length
-        ? `真实识别：识别帧与样本库 ${m.sampleTotal} 张样本逐一比对，命中 ${result.length} 种商品（相似度 ${Math.round(Math.max(...result.map(x => x.conf)) * 100)}%）`
-        : `未识别出商品：识别帧与样本库 ${m.sampleTotal} 张样本比对均不匹配。请对准商品正面、保证光线充足、减少背景干扰；若该商品还没上传过样本，请先在「AI 训练采集」拍 6 角度样本——识别只认真实上传过的商品，已不再模拟。`;
+        ? `真实识别：识别帧与样本库 ${sampleTotal} 张样本逐一比对，命中 ${result.length} 种商品（相似度 ${Math.round(Math.max(...result.map(x => x.conf)) * 100)}%）`
+        : `未识别出商品：识别帧与样本库 ${sampleTotal} 张样本比对均不匹配。请对准商品正面、保证光线充足、减少背景干扰；若该商品还没上传过样本，请先在「AI 训练采集」拍 6 角度样本——识别只认真实上传过的商品，已不再模拟。`;
     } else if (engine === 'vl' && !result) {
       /* 真模型识别（本地 Qwen2.5 VL，Ollama 部署）：实时帧与门店视觉知识库（已审核样本图）做少样本视觉定位。
        * 不是哈希对比，而是多模态大模型推理。模型不可达 / 知识库为空 → 降级 dHash 样本匹配，识别链路不空转。
@@ -319,17 +330,9 @@ export class AiController {
       } catch (e: any) {
         usedFallback = true; fallbackModel = 'dhash';
         layer = 'dhash';
-        const srows = await q(
-          `SELECT s.product_id, p.name AS product_name, s.image_path
-             FROM ai_samples s LEFT JOIN products p ON p.id = s.product_id
-            WHERE s.store_id=$1 AND s.image_path LIKE '/uploads/%'
-            ORDER BY s.id DESC LIMIT 300`, [user.storeId]);
-        const m = matchSamples(b.imageBase64, srows as any[]);
-        result = m.items.map(it => ({
-          productId: it.productId, name: it.name, count: 1, conf: it.conf,
-          samplePath: it.samplePath, matched: true,
-        }));
-        imagePath = m.framePath;
+        const dh = await matchBySamples(b.imageBase64, user.storeId);
+        result = dh.items;
+        imagePath = dh.framePath;
         notice = `视觉模型不可用，已降级 dHash 样本匹配${result.length ? `：命中 ${result.length} 种` : '：样本库无匹配'}`;
       }
       }

@@ -175,9 +175,9 @@ function scaleParseLocal(code) {
 window.QWScaleParseLocal = scaleParseLocal;
 
 // ── 移动收银主屏 ──
-View.checkout = function (v) {
+View.checkout = function (v, opt) {
   const cart = [];   // {p, qty, manualPrice?, manualBarcode?}
-  let emergency = false;
+  let emergency = !!(opt && opt.emergency);
   let member = null;      // {id, name, phone, balance}
   let payChannel = '现金';
   let scanRefNo = '';    // 扫码记账收款：顾客付款流水号后几位（二次确认弹窗采集，入 sale_payments.external_no）
@@ -188,6 +188,77 @@ View.checkout = function (v) {
   let mpAmount = 0;          // P2-3：本次通道扣款金额（余额组合时=剩余部分）
   let ckInFlight = false; // 结账请求进行中（防双击重复下单）
   let heldId = null;      // V4.13.9 取单带入的挂单 id（结账成功后置已取单）
+  let ckCloseDrawer = () => {};   // V5.0.7 购物车抽屉关闭（bind 时赋值；结账后收起抽屉露出结果条）
+
+  // ── V5.0.5 手机正式收银：分类浏览 + 商品网格选品（数据来自 Pricebook 全量缓存） ──
+  let curCat = '全部';
+  const categories = {};   // id -> name
+  function catName(id) { return categories[id] || '未分类'; }
+  async function ensureCategories() {
+    try {
+      const d = await call('GET', '/products/categories');
+      const arr = Array.isArray(d) ? d : (d.items || []);
+      arr.forEach(c => { if (c && c.id != null) categories[c.id] = c.name; });
+    } catch { /* 离线时按 id 显示，网格仍可用 */ }
+  }
+  function renderCats() {
+    const box = $('#ckCats'); if (!box) return;
+    const ids = [...new Set(Pricebook.items.map(it => it.categoryId ?? 0))];
+    const cats = [{ id: '全部', name: '全部' }, ...ids.map(id => ({ id, name: catName(id) }))];
+    box.innerHTML = cats.map(c => `<div class="ck-cat ${String(c.id) === String(curCat) ? 'on' : ''}" data-cat="${c.id}">${esc(c.name)}</div>`).join('');
+    box.querySelectorAll('.ck-cat').forEach(el => el.onclick = () => { curCat = el.dataset.cat; renderCats(); renderGrid(); });
+  }
+  function renderGrid() {
+    const box = $('#ckGrid'); if (!box) return;
+    const list = Pricebook.items.filter(it => String(curCat) === '全部' || String(it.categoryId ?? 0) === String(curCat));
+    if (!list.length) { box.innerHTML = '<div class="hint" style="grid-column:1/-1;text-align:center;padding:40px 0">该分类未添加商品!</div>'; return; }
+    box.innerHTML = list.map(p => `
+      <div class="ck-card" data-add="${p.id}">
+        <div class="n">${esc(p.name)}</div>
+        <div class="p">¥${money(p.sellPrice ?? p.sell_price ?? 0)}</div>
+        ${p.memberPrice ? `<div class="m">会员 ¥${money(p.memberPrice)}</div>` : ''}
+        ${p.spec ? `<div class="barcode">${esc(p.spec)}</div>` : ''}
+      </div>`).join('');
+    box.querySelectorAll('[data-add]').forEach(el => el.onclick = () => {
+      const p = Pricebook.items.find(x => Number(x.id) === Number(el.dataset.add));
+      if (p) { addCart(p); renderCart(); toast('已加入：' + p.name); }
+    });
+  }
+  function ensureStyle() {
+    if (document.getElementById('ckSilverStyle')) return;
+    const st = document.createElement('style'); st.id = 'ckSilverStyle';
+    st.textContent = `
+      /* V5.0.7 银豹式手机正式收银：顶部搜索 + 左分类栏/右商品网格 + 底部结算条 + 购物车抽屉 */
+      .ck-main{flex:1;display:flex;min-height:0;margin-bottom:64px;background:var(--paper);}
+      .ck-cats{width:96px;flex:none;overflow-y:auto;background:#fff;border-right:1px solid var(--line);-webkit-overflow-scrolling:touch;}
+      .ck-cat{padding:13px 6px;text-align:center;font-size:12.5px;color:var(--ink-2);cursor:pointer;border-bottom:1px solid var(--paper-2);word-break:break-all;line-height:1.35;}
+      .ck-cat.on{background:var(--paper);color:var(--pri);font-weight:800;box-shadow:inset 3px 0 0 var(--pri);}
+      .ck-right{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;}
+      .ck-grid{flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(2,1fr);grid-auto-rows:min-content;gap:8px;padding:8px;align-content:start;-webkit-overflow-scrolling:touch;-webkit-text-size-adjust:100%;text-size-adjust:100%;}
+      .ck-card{position:relative;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 9px;cursor:pointer;}
+      .ck-card:active{background:var(--green-soft);transform:scale(.98);}
+      .ck-card .n{font-size:13.5px;font-weight:700;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+      .ck-card .p{font-size:15px;font-weight:800;color:var(--pri);margin-top:4px;}
+      .ck-card .m{font-size:11px;color:var(--ink-3);}
+      .ck-card .barcode{font-size:10px;color:var(--ink-3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .ck-topbar{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+      .ck-topbar span{font-weight:800;color:var(--pri);font-size:15px;}
+      .ck-pbstate{font-size:12px;color:var(--ink-3);margin-left:auto;}
+      #ckTools{display:flex;gap:6px;padding:6px 0;}
+      #ckTools .mini-btn{flex:1;text-align:center;padding:8px 0;}
+      /* 底部结算条（银豹式一行）：取单 | 购物车金额 | 结账 */
+      .ck-bottom{padding:8px 12px;}
+      .ck-bottom .ck-actions{display:flex;gap:8px;align-items:stretch;}
+      .ck-bottom .ck-actions .btn{padding:12px 0;font-size:15px;border-radius:10px;}
+      .ck-cart-info{flex:1.7;display:flex;align-items:center;justify-content:center;gap:6px;background:#ececec;border:none;border-radius:10px;color:#333;cursor:pointer;white-space:nowrap;}
+      .ck-cart-info .money{font-size:17px;font-weight:800;color:#111;}
+      .ck-cart-info small{font-size:11px;color:#888;margin-left:2px;}
+      /* 购物车抽屉（点购物车金额 / 结账弹出）：明细 + 支付方式 + 合计 + 挂单/清空/结账 */
+      #ckDrawer .sheet{max-height:88dvh;display:flex;flex-direction:column;overflow:hidden;}
+      #ckDrawer .ck-body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+      #ckNotice .ok-bar,#ckNotice .warn-bar{margin:0 0 6px;}`;
+    document.head.appendChild(st);
+  }
 
   const render = () => {
     const info = Pricebook.info();
@@ -196,38 +267,57 @@ View.checkout = function (v) {
       : `${info.count} 条 · ${info.ageHours}h 前` + (info.stale ? ' · ⚠️ 已过 24h' : '') + (info.fresh ? '' : ' · 🚫 超 72h 禁应急');
     const freshOk = info.fresh;
     v.innerHTML = `
-      <div class="warn-bar" style="margin:0 0 10px">💳 移动收银：服务端计价 · FIFO 扣库存${emergency ? ' · <b>⚡ 应急模式</b>' : ''}<br>
-        价格表：${esc(pbState)}</div>
-      <label style="display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:7px 12px;margin-bottom:8px">
-        <input type="checkbox" id="ckEmg" ${emergency ? 'checked' : ''} ${freshOk ? '' : 'disabled'}>
-        <span style="font-size:13px">⚡ 应急收银模式${freshOk ? '' : '（价格表过期，不可用）'}</span>
-      </label>
-      <input id="ckScan" class="search ck-scan" placeholder="🔍 扫码 / 搜索商品（扫码枪对准直接扫）" autocomplete="off">
-      <div id="ckResults" class="hidden"></div>
-      <div style="display:flex;gap:8px;margin-top:6px" id="ckTools">
-        <button class="btn ghost" id="ckAi" style="flex:1;padding:9px 0;font-size:13.5px;border-radius:10px">🤖 AI智拍</button>
-        <button class="btn ghost" id="ckSp" style="flex:1;padding:9px 0;font-size:13.5px;border-color:var(--pri);color:var(--pri);border-radius:10px">🛒 核销</button>
+      <div class="ck-topbar">
+        <span>💳 移动收银${emergency ? '<small style="color:var(--orange);margin-left:6px">⚡ 应急</small>' : ''}</span>
+        <span class="ck-pbstate">${esc(pbState)}</span>
       </div>
-      ${hasPerm('pos.emergency.manual') ? '<button class="mini-btn" id="ckManual" style="margin-top:6px">✍️ 手输商品（应急，店长权限）</button>' : ''}
-      <div class="sec">购物车 <span id="ckCnt"></span></div>
-      <div id="ckCartWrap"><div id="ckCart"></div></div>
-      <div id="ckMember"></div>
-      <div class="ck-spacer"></div>
-      <div class="ck-sticky">
-        <div class="seg" id="ckPay" style="margin:0 0 8px">
-          <button data-ch="现金" class="on">现金</button>
-          <button data-ch="扫码">扫码</button>
-          <button data-ch="余额">余额</button>
-        </div>
-        <div class="total-bar">
-          <span>合计</span><span class="money" id="ckTotal">¥0.00</span>
-        </div>
-        <div class="ck-actions" id="ckHoldbar">
+      <input id="ckScan" class="search ck-scan" placeholder="🔍 扫码 / 搜索商品" autocomplete="off">
+      <div id="ckResults" class="hidden"></div>
+      <div id="ckTools">
+        <button class="mini-btn" id="ckAi">🤖 AI智拍</button>
+        <button class="mini-btn" id="ckSp">🛒 核销</button>
+        <button class="mini-btn" id="ckVoice">🎤 语音</button>
+        ${hasPerm('pos.emergency.manual') ? '<button class="mini-btn" id="ckManual">✍️ 手输</button>' : ''}
+      </div>
+      <div class="ck-main">
+        <div class="ck-cats" id="ckCats"></div>
+        <div class="ck-right"><div class="ck-grid" id="ckGrid"></div></div>
+      </div>
+      <div id="ckNotice"></div>
+      <div class="ck-sticky ck-bottom">
+        <div class="ck-actions">
           <button class="btn" id="ckTake" style="flex:1">📥 取单</button>
-          <button class="btn" id="ckHold" style="flex:1">📤 挂单</button>
-          <button class="btn ok" id="ckGo" style="flex:1.6;font-size:16px">结 账</button>
+          <div class="ck-cart-info" id="ckCartOpen"><span>🛒</span><span class="money" id="ckInfoTotal">¥0.00</span><small id="ckInfoCnt">0 件</small></div>
+          <button class="btn ok" id="ckCheckout" style="flex:1.4">结 账</button>
+        </div>
+      </div>
+      <div class="modal" id="ckDrawer" style="display:none">
+        <div class="sheet">
+          <h3>🛒 购物车 <span id="ckCnt" style="font-size:12px;color:var(--ink-3);font-weight:400"></span>
+            <button class="mini-btn" id="ckDrawerClose" style="float:right">收起</button></h3>
+          <div class="ck-body">
+            <div id="ckCart"></div>
+            <div id="ckMember"></div>
+          </div>
+          <div class="seg" id="ckPay" style="margin:8px 0 0">
+            <button data-ch="现金" class="on">现金</button>
+            <button data-ch="扫码">扫码</button>
+            <button data-ch="余额">余额</button>
+          </div>
+          <div class="total-bar" style="margin:8px 0">
+            <span>合计</span><span class="money" id="ckTotal">¥0.00</span>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn" id="ckHold" style="flex:1;font-size:14px">📥 挂单</button>
+            <button class="btn ghost" id="ckClear" style="flex:1;font-size:14px">🗑 清空</button>
+            <button class="btn ok" id="ckGo" style="flex:2;font-size:16px;font-weight:700">结 账</button>
+          </div>
         </div>
       </div>`;
+    v.style.display = 'flex';
+    v.style.flexDirection = 'column';
+    v.style.height = '100%';
+    v.style.overflow = 'hidden';
     bind();
     renderCart();
     applyHand();   // V4.13.9 左右手习惯：按后台设置镜像按钮排布
@@ -244,7 +334,7 @@ View.checkout = function (v) {
   }
 
   function bind() {
-    $('#ckEmg').onchange = () => { emergency = $('#ckEmg').checked; render(); };
+    const ckEmg = $('#ckEmg'); if (ckEmg) ckEmg.onchange = () => { emergency = ckEmg.checked; render(); };
     Scanner.attach($('#ckScan'), async key => {
       // V4.16.5 条码秤码：纯数字且未在价目表直命中时，按后台「条码秤格式」解析（重量+金额 → 按重量入车）
       if (/^\d{10,18}$/.test(key) && !Pricebook.find(key)) {
@@ -320,6 +410,22 @@ View.checkout = function (v) {
     // V4.15.3：电子秤/钱箱/小票机连接移至「我的-设备管理」（收银页只留业务按钮）
     $('#ckTake').onclick = () => takeOrder();
     $('#ckHold').onclick = () => holdOrder();
+    // V5.0.7 银豹式：底部「购物车金额/结账」弹出购物车抽屉（明细+支付方式都在抽屉里）
+    const drawer = $('#ckDrawer');
+    const openDrawer = () => { drawer.style.display = 'flex'; };
+    ckCloseDrawer = () => { drawer.style.display = 'none'; };
+    $('#ckCartOpen').onclick = openDrawer;
+    $('#ckCheckout').onclick = openDrawer;
+    $('#ckDrawerClose').onclick = ckCloseDrawer;
+    drawer.addEventListener('click', e => { if (e.target === drawer) ckCloseDrawer(); });
+    $('#ckClear').onclick = () => {
+      if (!cart.length) { toast('购物车已是空的'); return; }
+      pwaConfirm('清空购物车', '确认清空当前购物车的全部商品？').then(ok => {
+        if (!ok) return;
+        cart.length = 0; member = null;
+        renderCart(); renderMember();
+      });
+    };
     $('#ckAi').onclick = () => AiScan.open({      scene: 'checkout',
       title: 'AI 多商品识别收银',
       onConfirm: chosen => {
@@ -414,6 +520,8 @@ View.checkout = function (v) {
       }
       checkout();
     };
+    renderCats();
+    renderGrid();
   }
 
   /** P2-3 余额组合支付弹窗（2026-09-18 口径）：余额抵一部分，剩余当场收现金/扫付款码，不产生欠款 */
@@ -780,6 +888,8 @@ View.checkout = function (v) {
     const totalQty = cart.reduce((s, l) => s + l.qty, 0);
     $('#ckCnt').textContent = `${cart.length} 种 · 共 ${Number.isInteger(totalQty) ? totalQty : totalQty.toFixed(3)} 件`;
     $('#ckTotal').textContent = '¥' + money(total);
+    const ckInfoTotal = $('#ckInfoTotal'); if (ckInfoTotal) ckInfoTotal.textContent = '¥' + money(total);
+    const ckInfoCnt = $('#ckInfoCnt'); if (ckInfoCnt) ckInfoCnt.textContent = (Number.isInteger(totalQty) ? totalQty : totalQty.toFixed(3)) + ' 件';
   }
 
   function renderMember() {
@@ -827,7 +937,7 @@ View.checkout = function (v) {
       <div class="field"><label>生日（生日权益/触达用）</label><input id="mrBirth" type="date"></div>
       <label style="display:flex;align-items:center;gap:8px;margin:6px 0">
         <input type="checkbox" id="mrPrivacy" checked>
-        <span style="font-size:13px">已阅读并同意 <a href="javascript:void 0" id="mrPvView" style="text-decoration:underline;color:var(--pri)">《隐私协议》</a></span>
+        <span style="font-size:13px">已阅读并同意 <a href="#" id="mrPvView" style="text-decoration:underline;color:var(--pri)">《隐私协议》</a></span>
       </label>
       <div id="mrPv" class="hint" style="display:none;max-height:120px;overflow:auto;border:1px dashed var(--line);border-radius:8px;padding:8px"></div>
       <button class="btn ok" id="mrGo" style="width:100%;margin-top:10px">建档</button>
@@ -944,11 +1054,11 @@ View.checkout = function (v) {
         time: new Date() };
       const doneMsg = emergency ? '⚡ 应急单据已留痕，恢复后自动并入日报/进销存'
         : '小票打印中，见收银台';   // V4.15.6 打印通道由 PwaPrinters 决定（直驱/网口/浏览器兜底）
-      v.querySelector('.ck-spacer').insertAdjacentHTML('beforebegin', `
+      const nz = $('#ckNotice'); nz && nz.insertAdjacentHTML('beforeend', `
         <div class="ok-bar" id="ckDone">
           ✅ 结账成功 <b>${esc(d.orderNo)}</b> 应收 <b>¥${money(d.payable)}</b><br>
           <span style="font-size:12.5px">${doneMsg}
-            <a href="javascript:void(0)" id="ckReprint" style="text-decoration:underline">补打小票</a></span>
+            <a href="#" id="ckReprint" style="text-decoration:underline">补打小票</a></span>
         </div>`);
       try {
         if (!emergency) {
@@ -968,6 +1078,7 @@ View.checkout = function (v) {
         call('POST', `/pos/held/${hid}/pick`).catch(() => {});
       }
       cart.length = 0; member = null; renderCart();
+      ckCloseDrawer();   // V5.0.7：结账成功收起抽屉，露出「结账成功」结果条
       gatewayNo = gatewayTxnId = gatewayChannel = null; // V4.13.2：通道流水一次性，落单成功即清
       mpPreset = null; mpAmount = 0;                     // P2-3：组合支付前置行一次性，落单成功即清
       setTimeout(() => { const el = $('#ckDone'); el && el.remove(); }, 12000);
@@ -975,7 +1086,7 @@ View.checkout = function (v) {
       if (e.message.includes('网络异常')) {
         if (gatewayNo) {
           // V4.13.2：通道已真实扣款，绝不能离线暂存重发（可能重复入账）——保留购物车与通道流水，联网后重试结账
-          v.querySelector('.ck-spacer').insertAdjacentHTML('beforebegin', `
+          const nz2 = $('#ckNotice'); nz2 && nz2.insertAdjacentHTML('beforeend', `
             <div class="warn-bar">⚠️ 通道已扣款 <b>¥${money(total)}</b> 但单据未生成（网络异常）：<br>
             请恢复联网后<b>再次点「结 账」重试</b>（同通道流水幂等，不会重复扣款）；顾客当面确认勿让离场。</div>`);
         } else {
@@ -984,10 +1095,11 @@ View.checkout = function (v) {
             isEmergency: payload.isEmergency, memberId: payload.memberId, remark: payload.remark,
             clientRef: payload.clientRef,
           });
-          v.querySelector('.ck-spacer').insertAdjacentHTML('beforebegin', `
+          const nz3 = $('#ckNotice'); nz3 && nz3.insertAdjacentHTML('beforeend', `
             <div class="warn-bar">📴 网络不可用：本单已<b>离线暂存</b>，恢复联网后自动补传并入账<br>
             请保留购物小票/记录，避免漏单。</div>`);
           cart.length = 0; renderCart();
+          ckCloseDrawer();   // 抽屉收起，露出离线暂存提示
         }
       } else {
         toast(e.message);
@@ -997,8 +1109,10 @@ View.checkout = function (v) {
     }
   }
 
+  ensureStyle();
+  ensureCategories();
   render();
-  ensurePricebook().then(() => { if (document.body.contains(v)) render(); }).catch(() => {});
+  ensurePricebook().then(() => { if (document.body.contains(v)) { ensureCategories(); render(); } }).catch(() => {});
 };
 
 // ── 小工具 ──

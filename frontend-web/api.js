@@ -102,6 +102,8 @@ export function unwrapList(r, key = 'items') {
 
 // ─── 展示工具 ───
 export const money = n => '¥' + Number(n ?? 0).toFixed(2);
+/** 两位小数（不带 ¥）：金额/数量列统一口径（原各屏各自 `fmt` 的收敛点） */
+export const num2 = n => (Number(n) || 0).toFixed(2);
 /** 图片地址补全：/uploads/... 相对路径 → 拼后端 base（Web 后台在 :8088，图片文件在后端 :3100）
  *  V4.28.5 F-09：/uploads 已挂登录鉴权，<img src> 无法带 Authorization 头 → 自动拼 ?token=；
  *  非 /uploads 图片（data:/blob: 等）不受影响。 */

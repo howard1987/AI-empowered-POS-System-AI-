@@ -1,4 +1,4 @@
-import { get, post, del, must, esc, dt, toast, imgUrl } from '../api.js';
+import { get, post, del, must, esc, dt, toast, imgUrl, money } from '../api.js';
 import { openDetailModal, pagerBar, bindPager } from '../common-ui.js';
 import { attachProductSearch } from '../product-search.js';
 
@@ -102,7 +102,7 @@ export async function render(view) {
     const rows = await must(get('/ai/orders'));
     const arr = rows.items || rows || [];
     view.querySelector('#tList').innerHTML = arr.length ? `
-      <table><thead><tr><th class="seq">序号</th><th>工单号</th><th>类型</th><th>状态</th><th>预检</th><th class="num">样本(总/待审/入库/不合格)</th><th class="num">目标</th><th>创建人</th><th>创建</th><th>操作</th></tr></thead>
+      <table><thead><tr><th class="seq">序号</th><th>工单号</th><th>类型</th><th>状态</th><th>预检</th><th class="num">样本(总/待审/入库/不合格)</th><th class="num">目标</th><th>创建人</th><th>创建时间</th><th>操作</th></tr></thead>
       <tbody>${arr.map((t, i) => `<tr>
         <td class="num seq">${i + 1}</td><td><a data-wo="${t.id}" href="javascript:void 0" style="font-family:var(--mono);font-weight:700;text-decoration:underline">${esc(t.task_no || '#' + t.id)}</a></td>
         <td>${esc(t.task_type || t.taskType)}</td>

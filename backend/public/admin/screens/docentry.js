@@ -1,4 +1,4 @@
-import { get, esc, toast } from '../api.js';
+import { get, num2 as fmt, esc, toast } from '../api.js';
 
 /**
  * 单据录入表格通用组件—— 采购订单 / 采购入库 / 采购退货共用
@@ -100,7 +100,6 @@ export function renderLines(tb, lines, opts = {}) {
   const { products, unitsCache = {}, price = true, sell = false, prodDate = false, stock = true,
           batch = false, orderQty = false, headLabel = '＋/−', today = '', qtyLabel = '数量',
           lowProtect = false, supCol = false, onUnknown, onSum } = opts;
-  const fmt = n => (Number(n) || 0).toFixed(2);
   const colN = 7 + (price ? 2 : 0) + (sell ? 1 : 0) + (prodDate ? 1 : 0) + (stock ? 1 : 0) + (batch ? 2 : 0) + (supCol ? 1 : 0) + 1;
   const emptyHtml = `<tr><td colspan="${colN}" class="empty">空单：在首行「条码」列扫码 / 输入定位商品</td></tr>`;
 
@@ -119,7 +118,7 @@ export function renderLines(tb, lines, opts = {}) {
         <button class="btn sm" data-plus="${i}" title="在下方插入一行" style="padding:2px 7px">＋</button>
         <button class="btn sm warn" data-minus="${i}" title="${i === 0 ? '首行不可删除（可清空本行数据）' : '删除本行'}" style="padding:2px 7px" ${i === 0 ? 'disabled' : ''}>−</button>
       </td>
-      <td class="num" style="width:36px">${i + 1}</td>
+      <td class="num seq" style="width:36px">${i + 1}</td>
       <td><input data-f="bc" data-i="${i}" data-nav="1" value="${esc(l._q || '')}" placeholder="扫码/条码/名称" autocomplete="off"
            style="width:128px;font-family:var(--mono,monospace)"></td>
       <td style="min-width:130px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p ? p.name : '')}">${p ? `<b>${esc(p.name)}</b>${l._aiCreate ? ' <span class="tag y" style="font-size:10px;padding:1px 6px">AI建品</span>' : ''}` : '<span class="muted">—</span>'}</td>

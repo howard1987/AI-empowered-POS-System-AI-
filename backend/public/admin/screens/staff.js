@@ -194,10 +194,10 @@ export async function render(view) {
         <span class="muted" style="font-size:12px" id="eSelN"></span>
       </div>
       ${arr.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="eChkAll" title="全选/取消全选（ADMIN 除外）"></th><th>工号</th><th>账户名</th><th>姓名</th><th>手机</th><th>角色</th><th>状态</th><th>授权码</th><th>创建日期</th><th>最近登录</th><th>签名</th><th></th></tr></thead>
-      <tbody>${arr.map(e => `<tr>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="eChkAll" title="全选/取消全选（ADMIN 除外）" ${arr.length && arr.every(e => empSel.has(Number(e.id))) ? 'checked' : ''}></th><th class="seq">序号</th><th>工号</th><th>账户名</th><th>姓名</th><th>手机</th><th>角色</th><th>状态</th><th>授权码</th><th>创建日期</th><th>最近登录</th><th>签名</th><th></th></tr></thead>
+      <tbody>${arr.map((e, i) => `<tr>
         <td onclick="event.stopPropagation()"><input type="checkbox" data-echk="${e.id}" ${empSel.has(Number(e.id)) ? 'checked' : ''}></td>
-        <td><b>${esc(e.empNoOfficial || e.empNo)}</b></td><td class="muted" style="font-family:var(--mono)">${esc(e.empNo)}</td><td>${esc(e.name)}</td><td>${esc(e.phone || '—')}</td>
+        <td class="num seq">${i + 1}</td><td><b>${esc(e.empNoOfficial || e.empNo)}</b></td><td class="muted" style="font-family:var(--mono)">${esc(e.empNo)}</td><td>${esc(e.name)}</td><td>${esc(e.phone || '—')}</td>
         <td>${(e.roles || []).map(r => `<span class="tag b">${esc(r.name)}</span>`).join(' ') || '<span class="muted">无</span>'}</td>
         <td><span class="tag ${e.status === '在职' ? 'g' : 'r'}">${esc(e.status)}</span></td>
         <td>${e.authCodeSet ? '<span class="tag g" title="收银员改价/打折时，该工号可现场授权">已设置</span>' : '<span class="muted" title="未设置：该工号无法在收银台审批改价/打折">未设置</span>'}</td>
@@ -369,9 +369,9 @@ export async function render(view) {
     roleSel.innerHTML = '<option value="">不绑角色（EM 前缀）</option>' +
       roles.map(r => `<option value="${r.id}">${esc(r.name)}${r.is_system ? '（内置）' : ''}</option>`).join('');
     view.querySelector('#rList').innerHTML = roles.length ? `
-      <table><thead><tr><th>角色</th><th>系统内置</th><th class="num">权限点数</th><th>权限点</th></tr></thead>
-      <tbody>${roles.map(r => `<tr>
-        <td><b>${esc(r.name)}</b></td><td>${r.is_system ? '是' : '否'}</td>
+      <table><thead><tr><th class="seq">序号</th><th>角色</th><th>系统内置</th><th class="num">权限点数</th><th>权限点</th></tr></thead>
+      <tbody>${roles.map((r, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td><b>${esc(r.name)}</b></td><td>${r.is_system ? '是' : '否'}</td>
         <td class="num">${(r.perms || []).length}</td>
         <td class="muted" data-role-perms="${esc((r.perms || []).join(','))}">…</td>
       </tr>`).join('')}</tbody></table>` : '<div class="empty">暂无角色</div>';
@@ -399,7 +399,7 @@ export async function render(view) {
     // 展示区（V4.14.9 版式统一：表格式两列布局——模块名固定列宽 + 权限点统一标签规格，附颜色图例）
     view.querySelector('#pList').innerHTML = `
       <table style="width:100%;font-size:12.5px">
-        <thead><tr><th style="width:110px;text-align:left">模块</th><th style="text-align:left">权限点（<span class="tag g" style="font-size:10px;padding:1px 8px">常规</span> <span class="tag y" style="font-size:10px;padding:1px 8px">敏感</span> <span class="tag r" style="font-size:10px;padding:1px 8px">高危</span>，悬停看风险等级）</th></tr></thead>
+        <thead><tr><th style="width:110px;text-align:center">模块</th><th style="text-align:center">权限点（<span class="tag g" style="font-size:10px;padding:1px 8px">常规</span> <span class="tag y" style="font-size:10px;padding:1px 8px">敏感</span> <span class="tag r" style="font-size:10px;padding:1px 8px">高危</span>，悬停看风险等级）</th></tr></thead>
         <tbody>${Object.entries(byMod).map(([mod, ps]) => `
           <tr><td><b>${esc(mod)}</b> <span class="muted" style="font-size:11px">${ps.length}</span></td>
           <td>${ps.map(p =>

@@ -480,8 +480,15 @@ class ProductsController {
     } else {
       visSql = PRODUCT_VISIBLE(String(viewStore));
     }
+    // V5.0.7 分类管理：点一级/二级分类 → 展示该分类「及所有子孙分类」的商品（递归 CTE；
+    // 与分类树上的深度商品数统计口径一致）。未传 categoryId 时 CTE 为空，走 IS NULL 全量分支。
     const rows = await q(
-      `SELECT p.id, p.goods_no, p.barcode, p.name, p.pinyin_code, p.spec, p.base_unit, p.is_weighted,
+      `WITH RECURSIVE cat_tree AS (
+         SELECT id FROM categories WHERE id = $2::bigint AND status = 1
+         UNION ALL
+         SELECT c.id FROM categories c JOIN cat_tree t ON c.parent_id = t.id WHERE c.status = 1
+       )
+       SELECT p.id, p.goods_no, p.barcode, p.name, p.pinyin_code, p.spec, p.base_unit, p.is_weighted,
               p.sell_price, p.member_price, p.member_discount, p.wholesale_price, p.keep_days, p.status, p.abc_class,
               p.min_price, p.min_discount_rate,   -- V4.25.3 价格红线（列表回显最低卖价/最低折扣）
               p.category_id, c.name AS category_name,
@@ -509,18 +516,23 @@ class ProductsController {
           AND (${visSql})
           AND ($1 = '' OR p.name ILIKE '%'||$1||'%' OR p.pinyin_code ILIKE '%'||$1||'%'
                OR p.barcode = $1 OR p.barcode ILIKE '%'||$1||'%' OR p.goods_no = $1 OR pbk.barcode = $1)
-          AND ($2::bigint IS NULL OR p.category_id = $2::bigint)
+          AND ($2::bigint IS NULL OR p.category_id IN (SELECT id FROM cat_tree))
           AND ($3::int IS NULL OR p.status = $3::int)
         ORDER BY price_warn, p.id DESC
         LIMIT $4 OFFSET $5`,
       [kw, categoryId ? Number(categoryId) : null, status !== undefined && status !== '' ? Number(status) : null, sz, (pn - 1) * sz],
     );
     const cnt = await q1<{ n: string }>(
-      `SELECT count(*) AS n FROM products p
+      `WITH RECURSIVE cat_tree AS (
+         SELECT id FROM categories WHERE id = $2::bigint AND status = 1
+         UNION ALL
+         SELECT c.id FROM categories c JOIN cat_tree t ON c.parent_id = t.id WHERE c.status = 1
+       )
+       SELECT count(*) AS n FROM products p
         WHERE p.deleted_at IS NULL
           AND (${visSql})
           AND ($1 = '' OR p.name ILIKE '%'||$1||'%' OR p.pinyin_code ILIKE '%'||$1||'%' OR p.barcode=$1 OR p.barcode ILIKE '%'||$1||'%' OR p.goods_no=$1)
-          AND ($2::bigint IS NULL OR p.category_id = $2::bigint)
+          AND ($2::bigint IS NULL OR p.category_id IN (SELECT id FROM cat_tree))
           AND ($3::int IS NULL OR p.status = $3::int)`,
       [kw, categoryId ? Number(categoryId) : null, status !== undefined && status !== '' ? Number(status) : null],
     );

@@ -1,4 +1,6 @@
-import { API, get, post, must, money, esc, dt, toast } from '../api.js';
+import { API, get, post, must, money, num2 as fmt, esc, dt, toast } from '../api.js';
+import { docTable } from '../common-ui.js';
+import { bindPad, padDirty, clearPad } from '../ui.js';
 
 /** 联营对账（设计方案 5.7 / P2-3a）：已合并进「对账与结算」屏（recon.js 供应商判别联营后调用）
  *  看板（销售/环比/达标进度/TOP 商品/未结） → 预览（销售汇总+扣点保底+联营费用，可下钻小票） →
@@ -76,7 +78,6 @@ export async function renderConsign(host, opts = {}) {
       </div>
     </div>`;
 
-  const fmt = n => (Number(n) || 0).toFixed(2);
   let curSup = Number(opts.supplierId) || 0;
   const supNow = (opts.suppliers || []).find(s => Number(s.id) === curSup);
   const tag = host.querySelector('#ccSupTag');
@@ -84,23 +85,7 @@ export async function renderConsign(host, opts = {}) {
     ? `${supNow.name}（扣点 ${supNow.deduction_rate ?? 0} · 保底 ${supNow.guarantee_min ?? '—'}）`
     : '—');
 
-  /* ── 签字板通用 ── */
-  function bindPad(pad) {
-    const ctx = pad.getContext('2d');
-    ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.strokeStyle = '#111';
-    let drawing = false, last = null;
-    const pos = e => { const r = pad.getBoundingClientRect();
-      return { x: (e.clientX - r.left) * pad.width / r.width, y: (e.clientY - r.top) * pad.height / r.height }; };
-    pad.onpointerdown = e => { drawing = true; last = pos(e); pad.setPointerCapture(e.pointerId); };
-    pad.onpointermove = e => { if (!drawing) return; const p = pos(e);
-      ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p; };
-    pad.onpointerup = pad.onpointercancel = () => { drawing = false; };
-  }
-  function padDirty(pad) {
-    const d = pad.getContext('2d').getImageData(0, 0, pad.width, pad.height).data;
-    return d.some(v => v !== 0);
-  }
-  function clearPad(pad) { pad.getContext('2d').clearRect(0, 0, pad.width, pad.height); }
+  /* ── 签字板（统一走 ui.js，V5.0.6 收敛） ── */
   bindPad(host.querySelector('#ccFirmPad'));
   host.querySelector('#ccFirmClear').onclick = () => clearPad(host.querySelector('#ccFirmPad'));
 
@@ -146,14 +131,33 @@ export async function renderConsign(host, opts = {}) {
         <span class="pill">联营费用 ${money(d.feeTotal)}</span>
       </div>
       ${rows.length ? `<div style="margin-top:10px"><b>销售小票（${rows.length} 单，可下钻）</b>
-        <table><thead><tr><th>单号</th><th>渠道</th><th>日期</th><th class="num">数量</th><th class="num">金额</th></tr></thead>
-        <tbody>${rows.map(r => `<tr><td style="font-family:var(--mono)">${esc(r.order_no)}</td><td class="muted">${esc(r.channel)}</td>
-          <td>${String(r.order_date).slice(0, 10)}</td><td class="num">${Number(r.qty)}</td><td class="num">${money(r.amount)}</td></tr>`).join('')}</tbody></table>
+        ${docTable({
+          cols: [{ h: '序号', cls: 'seq' }, { h: '单号' }, { h: '渠道' }, { h: '日期' }, { h: '数量', cls: 'num' }, { h: '金额', cls: 'num' }],
+          rows: rows.map((r, i) => ({
+            cells: [
+              { h: i + 1, cls: 'seq' },
+              { h: esc(r.order_no), style: 'font-family:var(--mono)' },
+              { h: esc(r.channel), cls: 'muted' },
+              String(r.order_date).slice(0, 10),
+              { h: Number(r.qty), cls: 'num' },
+              { h: money(r.amount), cls: 'num' },
+            ],
+          })),
+        })}
       </div>` : '<div class="empty" style="margin-top:8px">该区间无联营销售（或已被对账单吸收）</div>'}
       ${d.fees.length ? `<div style="margin-top:10px"><b>联营费用（收方向 · 未入购销对账）</b>
-        <table><thead><tr><th>费用单号</th><th>类型</th><th>日期</th><th class="num">金额</th></tr></thead>
-        <tbody>${d.fees.map(f => `<tr><td style="font-family:var(--mono)">${esc(f.feeNo)}</td><td>${esc(f.feeType)}</td>
-          <td>${String(f.feeDate).slice(0, 10)}</td><td class="num">${money(f.amount)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+        ${docTable({
+          cols: [{ h: '序号', cls: 'seq' }, { h: '费用单号' }, { h: '类型' }, { h: '日期' }, { h: '金额', cls: 'num' }],
+          rows: d.fees.map((f, i) => ({
+            cells: [
+              { h: i + 1, cls: 'seq' },
+              { h: esc(f.feeNo), style: 'font-family:var(--mono)' },
+              esc(f.feeType),
+              String(f.feeDate).slice(0, 10),
+              { h: money(f.amount), cls: 'num' },
+            ],
+          })),
+        })}</div>` : ''}
       <div class="doc-foot" style="margin-top:12px">
         <span class="muted">应结 = 净销售额 − 扣点 − 保底补差 − 联营费用</span>
         <span class="sum">应结金额：<b style="color:var(--pri)">${money(d.payable)}</b> 元
@@ -171,10 +175,11 @@ export async function renderConsign(host, opts = {}) {
     const d = await must(get('/purchase/consign-recons'));
     const rows = (d.items || []).filter(r => !curSup || Number(r.supplier_id) === curSup);
     host.querySelector('#ccList').innerHTML = rows.length ? `
-      <table><thead><tr><th>对账单号</th><th>供应商</th><th>区间</th>
+      <table><thead><tr><th class="seq">序号</th><th>对账单号</th><th>供应商</th><th>区间</th>
         <th class="num">销售额</th><th class="num">净额</th><th class="num">扣点</th><th class="num">保底补差</th><th class="num">费用</th><th class="num">应结</th><th>状态</th><th></th></tr></thead>
-      <tbody>${rows.map(r => `
+      <tbody>${rows.map((r, i) => `
         <tr>
+          <td class="seq">${i + 1}</td>
           <td style="font-family:var(--mono);font-weight:600">${esc(r.recon_no)}</td>
           <td>${esc(r.supplier_name || '')}</td>
           <td class="muted">${String(r.period_start).slice(0, 10)} ~ ${String(r.period_end).slice(0, 10)}</td>
@@ -216,9 +221,19 @@ export async function renderConsign(host, opts = {}) {
         <div class="fld"><label>扣点率</label><b>${(Number(r.deduction_rate) * 100).toFixed(1)}%</b></div>
         <div class="fld"><label>保底销售额</label><b>${r.guarantee_sales ? money(r.guarantee_sales) : '未设'}</b></div>
       </div>
-      <table style="margin-top:10px"><thead><tr><th>单号</th><th>日期</th><th class="num">数量</th><th class="num">金额</th></tr></thead>
-      <tbody>${d.items.map(i => `<tr><td style="font-family:var(--mono)">${esc(i.order_no)}</td>
-        <td>${String(i.order_date).slice(0, 10)}</td><td class="num">${Number(i.qty)}</td><td class="num">${money(i.amount)}</td></tr>`).join('')}</tbody></table>
+      ${docTable({
+        style: 'margin-top:10px',
+        cols: [{ h: '序号', cls: 'seq' }, { h: '单号' }, { h: '日期' }, { h: '数量', cls: 'num' }, { h: '金额', cls: 'num' }],
+        rows: d.items.map((i, idx) => ({
+          cells: [
+            { h: idx + 1, cls: 'seq' },
+            { h: esc(i.order_no), style: 'font-family:var(--mono)' },
+            String(i.order_date).slice(0, 10),
+            { h: Number(i.qty), cls: 'num' },
+            { h: money(i.amount), cls: 'num' },
+          ],
+        })),
+      })}
       <div class="doc-foot">
         <span class="muted">销售额 ${money(r.sales_total)} − 退货 ${money(r.return_total)} = 净 ${money(r.net_sales)}</span>
         <span class="sum">应结 <b style="color:var(--pri)">${money(r.payable_amount)}</b> 元

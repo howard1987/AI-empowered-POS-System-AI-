@@ -1,11 +1,16 @@
-/* V4.9.14 全局自绘下拉增强器：
-   统一全站下拉为自绘面板范本（同建档单位面板样式）：
+/* V5.0.6 全局自绘下拉增强器（唯一源：后台 admin 与收银 PWA 共用本文件）：
    · <select>     → 只读展示框 + 芯片面板；真实 select 保留在 DOM（display:none），
                     .value / change 事件全兼容，业务代码零改动
    · input[list]  → 摘除 list 属性，面板候选从关联 datalist 惰性读取（弹面板时才取最新）
-   幂等（dataset.pickEnhanced 防重），由 app.js 的 MutationObserver 对动态节点自动调用。 */
+   · 面板定位：offsetLeft/offsetTop 相对父级精确对齐（修复「下拉贴容器最左侧」通病）
+   · 触屏：touchstart 打开（部分安卓 WebView 对 preventDefault 后的 mousedown 不触发 click）
+   · 幂等（dataset.pickEnhanced 防重）
+   两种加载方式皆可：
+   · ESM 导入：`import { enhancePick } from './pick-panel.js'`（app.js 在 decorateDeep / Observer / 首屏中显式调用）
+   · 独立模块：`<script type="module" src="./pick-panel.js">` —— 文件底部自初始化（Observer + 首屏扫描），
+     自初始化带 window.__pickPanelInited__ 防重；与显式调用共存无害（增强幂等）。 */
 
-import { esc } from './api.js';
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function buildPickPanel(anchor, { getList, emptyHint = '暂无选项' }) {
   const panel = document.createElement('div');
@@ -36,6 +41,8 @@ function buildPickPanel(anchor, { getList, emptyHint = '暂无选项' }) {
     e.preventDefault();
     panel.style.display === 'flex' ? close() : open();
   });
+  // 手机端 touch 也走 click 语义：preventDefault 的 mousedown 在部分安卓 WebView 不触发 click，这里统一用 mousedown/touchstart
+  anchor.addEventListener('touchstart', e => { if (panel.style.display !== 'flex') { e.preventDefault(); open(); } }, { passive: false });
   return { panel, close };
 }
 
@@ -62,6 +69,7 @@ function enhanceSelect(sel) {
   panel.panel.addEventListener('mousedown', e => {
     const b = e.target.closest('[data-pick-val]');
     if (!b) return;
+    e.preventDefault();
     if (sel.value !== b.dataset.pickVal) {
       sel.value = b.dataset.pickVal;
       sel.dispatchEvent(new Event('change', { bubbles: true }));
@@ -113,3 +121,14 @@ document.addEventListener('change', e => {
 setInterval(() => {
   document.querySelectorAll('select[data-pick-enhanced="1"]').forEach(s => s.__pickDisp?.__pickSync?.());
 }, 600);
+
+// 自初始化（独立加载时生效；被 ESM 导入时与调用方的显式调用幂等共存）
+if (!window.__pickPanelInited__) {
+  window.__pickPanelInited__ = true;
+  new MutationObserver(muts => {
+    for (const m of muts) for (const n of m.addedNodes) {
+      if (n.nodeType === 1) enhancePick(n);
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+  enhancePick(document);
+}

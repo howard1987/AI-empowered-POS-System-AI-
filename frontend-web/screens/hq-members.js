@@ -8,7 +8,7 @@
  *
  * 颜色口径（红涨绿跌）：会员资产「入」= 红（涨），「出」= 绿（跌）。
  */
-import { get, must, esc, toast, dt } from '../api.js';
+import { get, must, esc, toast, dt, money } from '../api.js';
 import { segHtml, bindSeg, noResult } from '../ui-polish.js';
 
 export async function render(view) {

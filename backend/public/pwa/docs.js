@@ -8,6 +8,13 @@ const DOC_TYPES = ['all', 'in', 'ret', 'count', 'loss'];
 const DOC_NAMES = { all: '全部', in: '入库', ret: '退货', count: '盘点', loss: '报损' };
 const DOC_ICONS = { in: '📦', ret: '↩️', count: '🧮', loss: '📷' };
 
+/* PWA CSP 整改 P4：原 <img onclick> 内联处理器改为文档级委托（严格 CSP 下内联处理器被拒）。
+   单据明细里的商品缩略图点一下在 52px↔140px 间切换。 */
+document.addEventListener('click', e => {
+  const t = e.target && e.target.closest && e.target.closest('img[data-toggle-img]');
+  if (t) t.style.height = (t.style.height === '52px') ? '140px' : '52px';
+});
+
 /* 单据类型元数据（详情接口 / 通过 / 驳回 / 所需权限点），与 boss 端同口径 */
 const DOC_META = {
   in: { icon: '📦', name: '采购入库', perm: 'stock.inbound.audit', biz: 'inbound',
@@ -206,7 +213,7 @@ View.docDetail = async function (v, arg) {
         <div class="row">
           <div class="grow"><div class="t">✍️ ${esc(s.person_name || '—')} <span class="pill ${roleOf(s) === '操作员' ? 'blue' : 'green'}">${roleOf(s) === '操作员' ? '操作员（登录账号）' : '业务员'}</span></div>
             <div class="s">${esc(s.scene || '')} · ${esc(dt2(s.used_at || s.created_at))}</div></div>
-          <img src="${esc(s.image_path)}" style="height:52px;border-radius:6px;background:#fff;border:1px solid var(--line)" onclick="this.style.height=this.style.height==='52px'?'140px':'52px'">
+          <img src="${esc(s.image_path)}" style="height:52px;border-radius:6px;background:#fff;border:1px solid var(--line)" data-toggle-img>
         </div>`).join('');
     } catch { box.innerHTML = '<div class="empty">签名加载失败</div>'; }
   })();

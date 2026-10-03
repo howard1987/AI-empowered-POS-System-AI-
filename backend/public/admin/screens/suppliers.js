@@ -34,7 +34,7 @@ export async function render(view) {
           <button class="btn pri" id="sNew">➕ 新增供应商</button>
         </span></div>
       </div>
-      <div class="muted" style="padding:4px 18px 0;font-size:11.5px">双击行可直接编辑；未产生业务的供应商可勾选删除（联系人=常驻业务员，对账电子签字预采集对象）</div>
+      <div class="muted" style="padding:4px 18px 0;font-size:11.5px">双击行可直接编辑；仅「已停用且满 90 天」的供应商可勾选删除——停用请点编辑弹窗内的「停用」按钮（联系人=常驻业务员，对账电子签字预采集对象）</div>
       <div style="padding:10px 18px 4px;flex:1;min-height:0;overflow:auto" id="sList" class="tbl-min"></div>
       <div class="doc-foot">
         <span class="muted" id="sCount"></span>
@@ -70,6 +70,7 @@ export async function render(view) {
         </div>
         <div class="doc-tip">💡 联营扣点 = 联营供应商销售商品毛利的百分比（整数，如 15 = 15%），仅「联营」可填；购销供应商该行锁定。费用（陈列/返利等）默认不计入分红池基数。</div>
         <div class="doc-foot">
+          <button class="btn" id="nToggle" style="display:none">停用</button>
           <button class="btn" id="nDelete" style="display:none;color:#c0392b;border-color:#e6b0aa">🗑 删除该供应商</button>
           <button class="btn" id="nCancel">取消</button>
           <button class="btn" id="nSign" title="采集该供应商业务员电子签字（保存前可先采集）">🖋 签字</button>
@@ -80,6 +81,23 @@ export async function render(view) {
     </div>`;
 
   function gysCode(id) { return 'GYS' + String(id).padStart(4, '0'); }
+
+  // V5.0.6：停用/启用 & 90 天删除判定
+  function daysSince(iso) {
+    if (!iso) return Infinity;
+    const t = new Date(String(iso).replace(' ', 'T'));
+    return (Date.now() - t.getTime()) / 86400000;
+  }
+  function isDisabled(s) { return Number(s.status) === 2; }
+  function canDeleteSupplier(s) { return Number(s.status) === 2 && !!s.disabled_at && daysSince(s.disabled_at) >= 90; }
+  function statusTag(s) {
+    if (Number(s.status) === 2) {
+      const d = daysSince(s.disabled_at);
+      const txt = d >= 90 ? '已停用 · 可删除' : `已停用 · ${Math.ceil(90 - d)}天可删`;
+      return `<span class="tag r">${txt}</span>`;
+    }
+    return '<span class="tag g">启用</span>';
+  }
 
   function apply() {
     const kw = view.querySelector('#sKw').value.trim();
@@ -97,15 +115,15 @@ export async function render(view) {
     view.querySelector('#sCount').textContent = `共 ${list.length} 家供应商`;
     const allChecked = pageRows.length > 0 && pageRows.every(s => sel.has(Number(s.id)));
     view.querySelector('#sList').innerHTML = pageRows.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="sChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}></th>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="sChkAll" title="全选/取消全选" ${allChecked ? 'checked' : ''}></th><th class="seq">序号</th>
         <th>编号</th><th>供应商名称</th><th>业务员</th><th>电话</th>
-        <th>经营方式</th><th class="num">扣点</th><th>结算方式</th><th>地址</th><th>备注</th><th style="width:96px">签字预览</th><th style="width:70px">操作</th></tr></thead>
-      <tbody>${pageRows.map(s => {
+        <th>经营方式</th><th class="num">扣点</th><th>结算方式</th><th>状态</th><th>地址</th><th>备注</th><th style="width:96px">签字预览</th><th style="width:70px">操作</th></tr></thead>
+      <tbody>${pageRows.map((s, i) => {
         const rate = s.deduction_rate ?? s.deductionRate;
-        const hasBiz = !!(s.has_business ?? s.hasBusiness);
+        const delOK = canDeleteSupplier(s);
         return `<tr data-edit="${s.id}" style="cursor:pointer" title="双击编辑">
         <td onclick="event.stopPropagation()"><input type="checkbox" data-schk="${s.id}" ${sel.has(Number(s.id)) ? 'checked' : ''}
-          ${hasBiz ? 'disabled title="已产生业务的供应商不可删除"' : 'title="未产生业务，可勾选删除"'}></td>
+          ${delOK ? 'title="停用满 90 天，可勾选删除"' : 'disabled title="启用中或停用未满 90 天，不可删除（请先停用并等待满 90 天）"'}></td><td class="num seq">${(page - 1) * PAGE_SIZE + i + 1}</td>
         <td class="num muted mono">${gysCode(s.id)}</td>
         <td><b>${esc(s.name)}</b></td>
         <td>${esc(s.contact_person || s.contactPerson || '—')}</td>
@@ -113,6 +131,7 @@ export async function render(view) {
         <td><span class="tag ${(s.biz_mode || s.bizMode) === '联营' ? 'b' : 'g'}">${esc(s.biz_mode || s.bizMode || '购销')}</span></td>
         <td class="num">${rate != null ? (Number(rate) * 100).toFixed(0) + '%' : '—'}</td>
         <td>${esc(s.settle_period || s.settlePeriod || '—')}</td>
+        <td>${statusTag(s)}</td>
         <td class="muted" style="max-width:140px;overflow:hidden;text-overflow:ellipsis">${esc(s.address || '—')}</td>
         <td class="muted" style="max-width:130px;overflow:hidden;text-overflow:ellipsis">${esc(s.remark || '')}</td>
         ${(() => {
@@ -139,7 +158,7 @@ export async function render(view) {
     });
     const chkAll = view.querySelector('#sChkAll');
     if (chkAll) chkAll.onchange = () => {
-      pageRows.forEach(s => { if (!Number(s.has_business ?? s.hasBusiness)) { if (chkAll.checked) sel.add(Number(s.id)); else sel.delete(Number(s.id)); } });
+      pageRows.forEach(s => { if (canDeleteSupplier(s)) { if (chkAll.checked) sel.add(Number(s.id)); else sel.delete(Number(s.id)); } });
       apply();
       syncDelBtn();
     };
@@ -169,7 +188,7 @@ export async function render(view) {
   }
 
   async function load() {
-    const d = await must(get('/purchase/suppliers'));
+    const d = await must(get('/purchase/suppliers?includeDisabled=1'));
     rows = d.items || d || [];
     // 构建 供应商→电子签名 映射（取每个供应商首张签名图，用于主表「预览」列与「变更/签字」判定）
     try {
@@ -217,21 +236,56 @@ export async function render(view) {
     view.querySelector('#nSettle').value = s.settle_period || s.settlePeriod || '月结';
     view.querySelector('#nAddr').value = s.address || '';
     view.querySelector('#nRemark').value = s.remark || '';
-    // V4.9.6 未产生业务供应商可在编辑弹窗删除
-    view.querySelector('#nDelete').style.display = editId && !hasBiz ? '' : 'none';
+    // V5.0.6 停用/启用按钮：编辑模式才显示；按当前状态显示「停用」或「启用」
+    const toggleBtn = view.querySelector('#nToggle');
+    toggleBtn.style.display = editId ? '' : 'none';
+    if (editId) {
+      if (isDisabled(s)) {
+        toggleBtn.textContent = '启用';
+        toggleBtn.classList.remove('pri');
+        toggleBtn.style.color = '';
+        toggleBtn.title = '恢复该供应商为启用状态';
+      } else {
+        toggleBtn.textContent = '停用';
+        toggleBtn.classList.remove('pri');
+        toggleBtn.style.color = '#c0392b';
+        toggleBtn.style.borderColor = '#e6b0aa';
+        toggleBtn.title = '停用该供应商（停用满 90 天方可删除）';
+      }
+    }
+    // V5.0.6 删除：仅停用且满 90 天可删
+    view.querySelector('#nDelete').style.display = editId && canDeleteSupplier(s) ? '' : 'none';
     syncRateLock();
     modal.style.display = 'flex';
     view.querySelector('#nName').focus();
   }
   view.querySelector('#sNew').onclick = () => open(0);
   view.querySelector('#nCancel').onclick = () => { modal.style.display = 'none'; };
+  // V5.0.6 停用/启用
+  view.querySelector('#nToggle').onclick = async () => {
+    if (!editId) return;
+    const s = rows.find(x => Number(x.id) === editId) || {};
+    const target = isDisabled(s) ? 1 : 2;
+    const verb = target === 2 ? '停用' : '启用';
+    if (!await confirmBox({
+      title: `${verb}供应商`,
+      html: `确认${verb}供应商「${gysCode(s.id)} ${s.name || ''}」？` +
+        (target === 2 ? '<br>停用后满 90 天方可删除（业务单据仍可查到该供应商）。' : '<br>恢复后该供应商重新可用。'),
+    })) return;
+    try {
+      await must(post(`/purchase/suppliers/${editId}/toggle-status`, { status: target }), target === 2 ? '已停用' : '已启用');
+      modal.style.display = 'none';
+      editId = 0;
+      await load();
+    } catch (e) { toast(e.msg || e.message, false); }
+  };
   view.querySelector('#nDelete').onclick = async () => {
     if (!editId) return;
     const s = rows.find(x => Number(x.id) === editId) || {};
-    // V4.9.7 样式化删除确认（替代原生 confirm）
+    // V5.0.6 样式化删除确认（替代原生 confirm）
     if (!await confirmBox({
       title: '🗑 删除供应商',
-      html: `确认删除供应商「${gysCode(s.id)} ${s.name || ''}」？\n删除后不可恢复（审计留痕）；已产生业务的供应商不可删除。`,
+      html: `确认删除供应商「${gysCode(s.id)} ${s.name || ''}」？\n该供应商须已停用且停用满 90 天；删除后不可恢复（审计留痕），业务单据仍保留其引用。`,
     })) return;
     try {
       await must(del(`/purchase/suppliers/${editId}`), '供应商已删除');
@@ -297,7 +351,7 @@ export async function render(view) {
     if (!ids.length) return;
     if (!await confirmBox({
       title: '🗑 批量删除供应商',
-      html: `确认删除 ${ids.length} 家未产生业务的供应商？\n删除后不可恢复（审计留痕）。`,
+      html: `确认删除 ${ids.length} 家「已停用且满 90 天」的供应商？\n删除后不可恢复（审计留痕），其业务单据仍保留引用。`,
     })) return;
     let ok = 0; const errs = [];
     for (const id of ids) {
@@ -344,11 +398,11 @@ export async function render(view) {
     // 商品行
     const drawRows = () => {
       mask.querySelector('#chgRows').innerHTML = chgRows.length ? `
-        <table><thead><tr><th>商品</th><th style="width:120px">新进价（元）</th><th style="width:120px">新售价（元）</th><th style="width:150px">供应关系</th><th style="width:60px">操作</th></tr></thead>
+        <table><thead><tr><th class="seq">序号</th><th>商品</th><th style="width:120px">新进价（元）</th><th style="width:120px">新售价（元）</th><th style="width:150px">供应关系</th><th style="width:60px">操作</th></tr></thead>
         <tbody>${chgRows.map((r, i) => {
           const cur = r.independent ? 'independent' : r.isPrimary ? 'primary' : '';
           const sameSup = Number(r.p.supplier_default_id) === Number(mask.querySelector('#chgSup').value);
-          return `<tr>
+          return `<tr><td class="num seq">${i + 1}</td>
           <td><b>${esc(r.p.name)}</b>${r.p.barcode ? `<div class="muted mono" style="font-size:11px">${esc(r.p.barcode)}</div>` : ''}
             <div class="muted" style="font-size:11px">现售价 ¥${Number(r.p.sell_price ?? 0).toFixed(2)}${r.p.supplier_name ? ` · 主供 ${esc(r.p.supplier_name)}` : ' · 无主供应商'}</div></td>
           <td><input type="number" step="0.01" min="0" placeholder="不调" data-cost="${i}" value="${r.newCost ?? ''}" style="width:100px"></td>
@@ -410,8 +464,8 @@ export async function render(view) {
         const d = await must(get('/purchase/supplier-changes'));
         const arr = d.items || [];
         mask.querySelector('#chgLog').innerHTML = arr.length ? `
-          <table><thead><tr><th>变更单号</th><th>商品行数</th><th>原供应商→新供应商</th><th>原因</th><th>操作人</th><th>时间</th><th></th></tr></thead>
-          <tbody>${arr.map(c2 => `<tr>
+          <table><thead><tr><th class="seq">序号</th><th>变更单号</th><th>商品行数</th><th>原供应商→新供应商</th><th>原因</th><th>操作人</th><th>时间</th><th></th></tr></thead>
+          <tbody>${arr.map((c2, i) => `<tr><td class="num seq">${i + 1}</td>
             <td class="mono">${esc(c2.change_no)}</td>
             <td class="num">${Array.isArray(c2.items) ? c2.items.length : 0}</td>
             <td>${esc(c2.old_supplier_name || '（未切换）')} → <b>${esc(c2.new_supplier_name || '—')}</b></td>
@@ -439,8 +493,8 @@ export async function render(view) {
         <span>操作人：${esc(h.creator_name || '—')}</span>
         <span>时间：${dt(h.created_at)}</span>
       </div>
-      ${items.length ? `<table><thead><tr><th>商品</th><th class="num">原进价</th><th class="num">新进价</th><th class="num">原售价</th><th class="num">新售价</th><th>主供应商</th></tr></thead>
-      <tbody>${items.map(it => `<tr>
+      ${items.length ? `<table><thead><tr><th class="seq">序号</th><th>商品</th><th class="num">原进价</th><th class="num">新进价</th><th class="num">原售价</th><th class="num">新售价</th><th>主供应商</th></tr></thead>
+      <tbody>${items.map((it, i) => `<tr><td class="num seq">${i + 1}</td>
         <td><b>${esc(it.productName || '')}</b>${it.barcode ? `<div class="muted mono" style="font-size:11px">${esc(it.barcode)}</div>` : ''}</td>
         <td class="num muted">${it.oldCost != null ? '¥' + Number(it.oldCost).toFixed(2) : '—'}</td>
         <td class="num">${it.newCost != null ? '¥' + Number(it.newCost).toFixed(2) : '<span class="muted">不调</span>'}</td>
@@ -470,8 +524,8 @@ export async function render(view) {
       const all = d.items || [];
       const pg = paginate(all, page, CHG_SIZE);
       box.innerHTML = all.length ? `
-        <table><thead><tr><th>变更单号</th><th class="num">行数</th><th>原供应商 → 新供应商</th><th>原因</th><th>操作人</th><th>时间</th><th></th></tr></thead>
-        <tbody>${pg.slice.map(c2 => `<tr>
+        <table><thead><tr><th class="seq">序号</th><th>变更单号</th><th class="num">行数</th><th>原供应商 → 新供应商</th><th>原因</th><th>操作人</th><th>时间</th><th></th></tr></thead>
+        <tbody>${pg.slice.map((c2, i) => `<tr><td class="num seq">${(pg.page - 1) * CHG_SIZE + i + 1}</td>
           <td class="mono">${esc(c2.change_no)}</td>
           <td class="num">${Array.isArray(c2.items) ? c2.items.length : 0}</td>
           <td>${esc(c2.old_supplier_name || '（未切换）')} → <b>${esc(c2.new_supplier_name || '—')}</b></td>

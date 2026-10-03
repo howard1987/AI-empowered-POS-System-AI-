@@ -85,19 +85,19 @@ export async function showProductDetail(pid) {
         <div style="padding-top:12px;border-top:1px dashed var(--line);margin-top:10px">
           <div class="muted" style="font-size:12px;margin-bottom:6px">🔄 多单位换算</div>
           <table class="tb" style="width:100%;font-size:12px;text-align:left;table-layout:auto"><thead><tr>
-            <th style="white-space:nowrap">包装单位</th><th style="white-space:nowrap">换算到基本单位</th><th style="white-space:nowrap;min-width:150px">该包装条码</th></tr></thead>
+            <th class="seq">序号</th><th style="white-space:nowrap">包装单位</th><th style="white-space:nowrap">换算到基本单位</th><th style="white-space:nowrap;min-width:150px">该包装条码</th></tr></thead>
           <tbody>
-            <tr><td style="white-space:normal"><b>${esc(p.base_unit || '')}</b>（基本）</td><td style="white-space:normal">1 ${esc(p.base_unit || '')}</td><td class="mono" style="white-space:normal;word-break:break-all;min-width:150px">${esc(p.barcode || '—')}</td></tr>
-            ${units.map(u => `<tr><td style="white-space:normal"><b>${esc(u.unit_name)}</b></td><td style="white-space:normal">1 ${esc(u.unit_name)} = ${Number(u.rate)} ${esc(p.base_unit || '')}</td>
+            <tr><td class="num">—</td><td style="white-space:normal"><b>${esc(p.base_unit || '')}</b>（基本）</td><td style="white-space:normal">1 ${esc(p.base_unit || '')}</td><td class="mono" style="white-space:normal;word-break:break-all;min-width:150px">${esc(p.barcode || '—')}</td></tr>
+            ${units.map((u, i) => `<tr><td class="num seq">${i + 1}</td><td style="white-space:normal"><b>${esc(u.unit_name)}</b></td><td style="white-space:normal">1 ${esc(u.unit_name)} = ${Number(u.rate)} ${esc(p.base_unit || '')}</td>
               <td class="mono" style="white-space:normal;word-break:break-all;min-width:150px">${esc(u.barcode || '—')}</td></tr>`).join('')}
           </tbody></table>
         </div>` : ''}
       ${(d.supplierPrices || []).length ? `
         <div style="padding-top:12px">
           <div class="muted" style="font-size:12px;margin-bottom:6px">🚚 供应商进价历史（最近 ${Math.min(5, d.supplierPrices.length)} 次）</div>
-          <table class="tb" style="width:100%;font-size:12px"><thead><tr><th>供应商</th><th class="num">进价</th><th class="num">历史最低</th><th>来源单据</th><th>时间</th></tr></thead>
-          <tbody>${d.supplierPrices.slice(0, 5).map(s => `<tr>
-            <td>${esc(s.supplier_name || '供应商' + s.supplier_id)}</td>
+          <table class="tb" style="width:100%;font-size:12px"><thead><tr><th class="seq">序号</th><th>供应商</th><th class="num">进价</th><th class="num">历史最低</th><th>来源单据</th><th>时间</th></tr></thead>
+          <tbody>${d.supplierPrices.slice(0, 5).map((s, i) => `<tr>
+            <td class="num seq">${i + 1}</td><td>${esc(s.supplier_name || '供应商' + s.supplier_id)}</td>
             <td class="num">${money(s.price)}</td>
             <td class="num muted">${money(s.min_price)}</td>
             <td class="muted mono">${esc(s.source_doc || '—')}</td>

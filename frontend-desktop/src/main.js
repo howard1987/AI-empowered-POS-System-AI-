@@ -15,7 +15,10 @@ const { app, BrowserWindow, ipcMain, screen, session } = require('electron');
 // 店内收银机兼容加固（V4.8.18）：低端显卡/驱动旧时 GPU 进程易崩 → 软件渲染；
 // P1-H9：渲染进程沙箱默认开启；仅老驱动兼容机经 POS_LEGACY_GPU=1 显式回退 no-sandbox
 app.disableHardwareAcceleration();
-if (process.env.POS_LEGACY_GPU === '1') app.commandLine.appendSwitch('no-sandbox');
+if (process.env.POS_LEGACY_GPU === '1') {
+  app.commandLine.appendSwitch('no-sandbox');
+  console.warn('[安全] POS_LEGACY_GPU=1：已关闭渲染进程沙箱（仅老 GPU 驱动兼容；建议改软件渲染而非关沙箱，并确认本机不加载不可信页面）');
+}
 app.commandLine.appendSwitch('disable-gpu-compositing');
 // V4.24.1：收款/告警播报无需用户手势（收银场景扫码后无人点击也要出声；服务端 WAV 与本机 TTS 同受益）
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -61,13 +64,30 @@ function normalizeServer(u) {
   if (s && !/^https?:\/\//i.test(s)) s = 'http://' + s;
   return s;
 }
-/** 主进程探活（绕开渲染层 CORS）：GET {server}/health，3s 超时 */
+// P4 出站地址安全校验（防 SSRF 纵深）：仅 http/https、无内嵌凭据、拒绝链路本地/云元数据地址。
+// 注：localhost/127.0.0.1/192.168/10.x 等合法 LAN 地址放行（收银端本就需要指向本机或内网后端）。
+const BLOCKED_HOST_PREFIX = ['169.254.', '100.100.', '0.', '224.', '239.', '255.'];
+const BLOCKED_HOSTS = new Set(['metadata', 'metadata.google.internal', 'metadata.internal', 'instance-data']);
+function safeOutboundUrl(u) {
+  let s;
+  try { s = new URL(normalizeServer(u)); } catch { return { ok: false, error: '地址不合法' }; }
+  if (s.protocol !== 'http:' && s.protocol !== 'https:') return { ok: false, error: '仅支持 http/https' };
+  if (s.username || s.password) return { ok: false, error: '地址不允许包含账号密码' };
+  const h = s.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (BLOCKED_HOSTS.has(h) || h.endsWith('.internal')) return { ok: false, error: '目标地址被禁止（链路本地/云元数据）' };
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h) && BLOCKED_HOST_PREFIX.some(p => h.startsWith(p))) return { ok: false, error: '目标地址被禁止（链路本地/云元数据）' };
+  if (/^f[cd][0-9a-f]{2}:/i.test(h) || h.startsWith('fe80:')) return { ok: false, error: '目标地址被禁止（链路本地）' };
+  return { ok: true, url: s.href.replace(/\/+$/, '') };
+}
+/** 主进程探活（绕开渲染层 CORS）：GET {server}/health，3s 超时；P4 出站地址先做 SSRF 校验 */
 function probeServer(server) {
+  const chk = safeOutboundUrl(server);
+  if (!chk.ok) return Promise.resolve({ ok: false, error: chk.error });
   return new Promise(resolve => {
     let done = false;
     const fin = r => { if (!done) { done = true; resolve(r); } };
     try {
-      const url = normalizeServer(server) + '/health';
+      const url = chk.url + '/health';
       const mod = url.startsWith('https') ? require('https') : require('http');
       const req = mod.get(url, { timeout: 3000 }, res => { res.resume(); fin({ ok: res.statusCode > 0 && res.statusCode < 500, status: res.statusCode }); });
       req.on('timeout', () => { req.destroy(); fin({ ok: false, error: '连接超时（3 秒无响应）' }); });
@@ -341,10 +361,10 @@ ipcMain.handle('pos:desktop-info', () => ({
 }));
 ipcMain.handle('pos:desktop-test-server', (_e, url) => probeServer(url));
 ipcMain.handle('pos:desktop-save-server', (_e, url) => {
-  const srv = normalizeServer(url);
-  if (!/^https?:\/\/[^\s/:]+(:\d+)?$/.test(srv)) return { ok: false, error: '地址格式不对：应形如 http://192.168.0.6:3100' };
-  saveConfigFile(srv);
-  return { ok: true, server: srv };
+  const chk = safeOutboundUrl(url);
+  if (!chk.ok) return { ok: false, error: '地址不安全：' + chk.error };
+  saveConfigFile(chk.url);
+  return { ok: true, server: chk.url };
 });
 ipcMain.on('pos:desktop-apply', () => {   // 配置页「保存并启动」
   if (setupWindow && !setupWindow.isDestroyed()) setupWindow.close();
@@ -444,9 +464,16 @@ ipcMain.handle('pos:print-receipt', async (_e, { order, widthMm }) => {
   return printer.print(text);
 });
 
-// ─── IPC：小票机连接（三种方式） ───
+// ─── IPC：小票机连接（三种方式）；P4：net 模式拒绝链路本地/云元数据地址，端口限合法范围 ───
 ipcMain.handle('pos:printer-connect', async (_e, { mode, host, port, path, baudRate }) => {
-  if (mode === 'net') return printer.connectNet(host, port || 9100);
+  if (mode === 'net') {
+    const h = String(host || '').trim().toLowerCase();
+    if (!h || BLOCKED_HOST_PREFIX.some(p => h.startsWith(p)) || BLOCKED_HOSTS.has(h) || h.endsWith('.internal'))
+      return { ok: false, reason: '打印机地址被禁止（不允许链路本地/云元数据地址）' };
+    const p = Number(port) || 9100;
+    if (!(p >= 1 && p <= 65535)) return { ok: false, reason: '端口超出合法范围（1-65535）' };
+    return printer.connectNet(h, p);
+  }
   if (mode === 'usb' || mode === 'bluetooth') return printer.connectSerial(path, baudRate || 9600);
   return { ok: false, reason: '未知连接方式' };
 });

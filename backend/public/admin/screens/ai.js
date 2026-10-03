@@ -1,4 +1,4 @@
-import { get, post, del, must, esc, dt, toast, imgUrl } from '../api.js';
+import { get, post, del, must, esc, dt, toast, imgUrl, money } from '../api.js';
 import { openDetailModal, pagerBar, bindPager } from '../common-ui.js';
 import { attachProductSearch } from '../product-search.js';
 
@@ -102,9 +102,9 @@ export async function render(view) {
     const rows = await must(get('/ai/orders'));
     const arr = rows.items || rows || [];
     view.querySelector('#tList').innerHTML = arr.length ? `
-      <table><thead><tr><th>工单号</th><th>类型</th><th>状态</th><th>预检</th><th class="num">样本(总/待审/入库/不合格)</th><th class="num">目标</th><th>创建人</th><th>创建</th><th>操作</th></tr></thead>
-      <tbody>${arr.map(t => `<tr>
-        <td><a data-wo="${t.id}" href="javascript:void 0" style="font-family:var(--mono);font-weight:700;text-decoration:underline">${esc(t.task_no || '#' + t.id)}</a></td>
+      <table><thead><tr><th class="seq">序号</th><th>工单号</th><th>类型</th><th>状态</th><th>预检</th><th class="num">样本(总/待审/入库/不合格)</th><th class="num">目标</th><th>创建人</th><th>创建时间</th><th>操作</th></tr></thead>
+      <tbody>${arr.map((t, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td><a data-wo="${t.id}" href="javascript:void 0" style="font-family:var(--mono);font-weight:700;text-decoration:underline">${esc(t.task_no || '#' + t.id)}</a></td>
         <td>${esc(t.task_type || t.taskType)}</td>
         <td><span class="tag ${String(t.status).includes('完成') ? 'g' : String(t.status).includes('进行') ? 'b' : 'r'}">${esc(t.status)}</span></td>
         <td>${t.review_result ? `<span class="tag ${t.review_result === '合格' ? 'b' : 'y'}">${esc(t.review_result)}</span>` : '<span class="tag r">未审核</span>'}</td>
@@ -233,9 +233,9 @@ export async function render(view) {
         <button class="btn sm" id="sBatDel" style="display:none;color:#c0392b;border-color:#e6b0aa">🗑 批量删除</button>
         <span class="muted" style="font-size:12px" id="sSelN"></span>
       </div>
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="sChkAll" title="全选/取消全选本页" ${sAllChecked ? 'checked' : ''}></th><th>样本图</th><th>商品</th><th>工单号</th><th>来源</th><th>状态</th><th>采集时间</th><th style="width:190px">操作</th></tr></thead>
-      <tbody>${arr.map(s => `<tr>
-        <td onclick="event.stopPropagation()"><input type="checkbox" data-schk="${s.id}" ${sSel.has(Number(s.id)) ? 'checked' : ''}></td>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="sChkAll" title="全选/取消全选本页" ${sAllChecked ? 'checked' : ''}></th><th class="seq">序号</th><th>样本图</th><th>商品</th><th>工单号</th><th>来源</th><th>状态</th><th>采集时间</th><th style="width:190px">操作</th></tr></thead>
+      <tbody>${arr.map((s, i) => `<tr>
+        <td onclick="event.stopPropagation()"><input type="checkbox" data-schk="${s.id}" ${sSel.has(Number(s.id)) ? 'checked' : ''}></td><td class="num seq">${i + 1}</td>
         <td>${!s.image_path ? '<span class="muted">—</span>'
           : s.image_path.startsWith('/uploads/')
           ? `<img data-img="${esc(imgUrl(s.image_path))}" src="${esc(imgUrl(s.image_path))}" loading="lazy" style="width:48px;height:48px;border-radius:6px;object-fit:cover;cursor:zoom-in;border:1px solid var(--line)" onerror="this.style.opacity=.25">`
@@ -381,13 +381,13 @@ export async function render(view) {
         } catch { /* 过滤失败则显示全部 */ }
       }
       mask.querySelector('#bpList').innerHTML = items.length ? `
-        <table><thead><tr><th style="width:34px"></th><th>商品</th><th>条码</th><th class="num">90天销量</th><th class="num">售价</th><th>主供应商</th></tr></thead>
-        <tbody>${items.map(p => `<tr>
-          <td><input type="checkbox" data-pk="${p.id}" ${picked.has(Number(p.id)) ? 'checked' : ''}></td>
+        <table><thead><tr><th style="width:34px"></th><th class="seq">序号</th><th>商品</th><th>条码</th><th class="num">90天销量</th><th class="num">售价</th><th>主供应商</th></tr></thead>
+        <tbody>${items.map((p, i) => `<tr>
+          <td><input type="checkbox" data-pk="${p.id}" ${picked.has(Number(p.id)) ? 'checked' : ''}></td><td class="num seq">${i + 1}</td>
           <td>${esc(p.name)}</td>
           <td class="muted mono">${esc(p.barcode || '—')}</td>
           <td class="num" style="font-weight:700;color:${(Number(freqMap[p.id]) || 0) > 0 ? 'var(--pri)' : 'var(--ink-3,#8a8577)'}">${Number(freqMap[p.id]) || 0}</td>
-          <td class="num">${Number(p.sell_price ?? 0).toFixed(2)}</td>
+          <td class="num">${money(p.sell_price ?? 0)}</td>
           <td class="muted">${esc(p.supplier_name || '—')}</td>
         </tr>`).join('')}</tbody></table>
         ${items.length >= 100 ? '<div class="muted" style="padding:4px 0">仅显示前 100 条，请用关键字/分类缩小范围</div>' : ''}`
@@ -417,9 +417,9 @@ export async function render(view) {
     const rows = await must(get('/ai/models'));
     const arr = rows.items || rows || [];
     view.querySelector('#mList').innerHTML = arr.length ? `
-      <table><thead><tr><th>版本</th><th class="num">mAP</th><th>状态</th><th>训练任务</th><th>部署时间</th></tr></thead>
-      <tbody>${arr.map(m => `<tr>
-        <td>${esc(m.version)}</td><td class="num">${m.map ?? m.mAP ?? '—'}</td>
+      <table><thead><tr><th class="seq">序号</th><th>版本</th><th class="num">mAP</th><th>状态</th><th>训练任务</th><th>部署时间</th></tr></thead>
+      <tbody>${arr.map((m, i) => `<tr>
+        <td class="num seq">${i + 1}</td><td>${esc(m.version)}</td><td class="num">${m.map ?? m.mAP ?? '—'}</td>
         <td><span class="tag ${m.status === '已部署' ? 'g' : 'y'}">${esc(m.status)}</span></td>
         <td>${m.task_id ?? m.taskId ?? '—'}</td><td>${dt(m.deployed_at || m.deployedAt)}</td>
       </tr>`).join('')}</tbody></table>` : '<div class="empty">暂无模型版本（完成训练任务后生成）</div>';
@@ -478,8 +478,8 @@ export async function render(view) {
       view.querySelector('#rOut').innerHTML = `
         <div class="${items.length ? 'ok' : 'muted'}" style="margin-bottom:6px">${items.length ? '✅' : '⚠️'} ${esc(d?.notice || '未识别出商品')}</div>
         <div class="muted" style="font-size:12px;margin-bottom:6px">识别层：${esc(layerName)} · 全程 ${d?.latencyMs ?? '-'}ms</div>
-        ${items.length ? `<table><thead><tr><th>识别商品</th><th class="num">数量</th><th class="num">相似度</th></tr></thead>
-        <tbody>${items.map(x => `<tr><td>${esc(x.name || '')}</td>
+        ${items.length ? `<table><thead><tr><th class="seq">序号</th><th>识别商品</th><th class="num">数量</th><th class="num">相似度</th></tr></thead>
+        <tbody>${items.map((x, i) => `<tr><td class="num seq">${i + 1}</td><td>${esc(x.name || '')}</td>
           <td class="num">${x.count ?? 1}</td><td class="num">${Math.round((x.conf || 0) * 100)}%</td></tr>`).join('')}</tbody></table>` : ''}
         ${candRows ? `<div class="muted" style="font-size:12px;margin:8px 0 4px">候选卡片（Top-${(d?.candidates || []).length}，未自动命中时移动端会弹出供店员点选确认）</div>
         <table><thead><tr><th>候选商品</th><th class="num">相似度</th></tr></thead><tbody>${candRows}</tbody></table>` : ''}`;
@@ -525,14 +525,14 @@ export async function render(view) {
     invRows = (d.rows || []).map(r => ({ ...r, qty: Number(r.qty) || 1, price: Number(r.price) || 0 }));
     const ok = invRows.filter(r => r.ok && r.matched);
     view.querySelector('#invOut').innerHTML = invRows.length ? `
-      <table><thead><tr><th>票据行</th><th>商品</th><th>匹配</th><th class="num">数量</th><th class="num">单价</th><th>状态</th></tr></thead>
+      <table><thead><tr><th class="seq">序号</th><th>票据行</th><th>商品</th><th>匹配</th><th class="num">数量</th><th class="num">单价</th><th>状态</th></tr></thead>
       <tbody>${invRows.map((r, i) => `<tr>
-        <td class="muted">${r.line}</td>
+        <td class="num seq">${i + 1}</td><td class="muted">${r.line}</td>
         <td>${esc(r.name)}${r.matchedName && r.matchedName !== r.name ? `<div class="muted">→ ${esc(r.matchedName)}</div>` : ''}</td>
         <td>${r.matched ? `<span class="tag g">已匹配</span>` : r.unmatched ? '<span class="tag y">未建档</span>' : '<span class="tag r">缺字段</span>'}</td>
         <td class="num"><input data-i="${i}" data-f="qty" type="number" min="1" step="1" value="${r.qty}" style="width:64px"></td>
         <td class="num"><input data-i="${i}" data-f="price" type="number" min="0.01" step="0.01" value="${r.price}" style="width:80px"></td>
-        <td>${r.blocked ? '<span class="tag r">⛔ 低价拦截</span>' : r.lowPrice ? `<span class="tag y">⚠ 低于历史最低 ¥${Number(r.minPrice).toFixed(2)}</span>` : !r.ok ? `<span class="muted">${esc(r.err.join('；'))}</span>` : '<span class="tag g">✓</span>'}</td>
+        <td>${r.blocked ? '<span class="tag r">⛔ 低价拦截</span>' : r.lowPrice ? `<span class="tag y">⚠ 低于历史最低 ${money(r.minPrice)}</span>` : !r.ok ? `<span class="muted">${esc(r.err.join('；'))}</span>` : '<span class="tag g">✓</span>'}</td>
       </tr>`).join('')}</tbody></table>
       <div class="muted mt8">可入库 ${ok.length} 条 · 低价 ${invRows.filter(x => x.lowPrice).length} · 拦截 ${invRows.filter(x => x.blocked).length} · 未建档 ${invRows.filter(x => x.unmatched).length}</div>`
       : '<div class="empty">未识别到明细（检查票据文本格式或本地 OCR 服务）</div>';

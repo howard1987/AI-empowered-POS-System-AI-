@@ -1,7 +1,8 @@
-import { get, post, must, money, esc, dt, toast, API, unwrap, imgUrl } from '../api.js';
+import { get, post, must, money, num2 as fmt, esc, dt, toast, API, unwrap, imgUrl } from '../api.js';
+import { capturePhoto } from '../ui.js';
 import { signCell, signBtn, handleSignInfo, mountSignActions, openSignPad } from './signpad.js';
 import { openA5Print, autoPrintA5AfterAudit, canPrintA5 } from '../docprint.js';
-import { paginate, bindPager } from '../common-ui.js';
+import { paginate, bindPager, docTable } from '../common-ui.js';
 import { anchorNav } from '../ui-polish.js';   // V4.26.4 长页面锚点导航
 import { renderLines, makeLine } from './docentry.js';   // V5.0.3：报损/调拨明细改用与采购订单同款「扫码定位 + 默认一行」模式
 
@@ -76,7 +77,7 @@ export async function render(view, opts = {}) {
           <button class="btn" id="ctRefresh">刷新</button>
           <button class="btn" id="ctPrints" style="display:none">🖨 打印所选(<b id="ctPrN">0</b>)</button>
           <span style="margin-left:auto">
-            <input id="ctFrom" type="date" value="${today.slice(0, 8)}01"><span style="color:var(--ink-3)">~</span><input id="ctTo" type="date" value="${today}">
+            <input id="ctFrom" type="date"><span style="color:var(--ink-3)">~</span><input id="ctTo" type="date">
             <select id="ctQStatus"><option value="">全部状态</option><option>进行中</option><option>已审核</option></select>
           </span>
         </div>
@@ -129,7 +130,7 @@ export async function render(view, opts = {}) {
           <button class="btn" id="lsPrints" style="display:none">🖨 打印所选(<b id="lsPrN">0</b>)</button>
           <button class="btn pri" data-newdoc="loss">＋ 新增报损单</button>
           <span style="margin-left:auto">
-            <input id="lsFrom" type="date" value="${today.slice(0, 8)}01"><span style="color:var(--ink-3)">~</span><input id="lsTo" type="date" value="${today}">
+            <input id="lsFrom" type="date"><span style="color:var(--ink-3)">~</span><input id="lsTo" type="date">
             <select id="lsQStatus"><option value="">全部状态</option><option>待审核</option><option>已审核</option></select>
           </span>
         </div>
@@ -173,7 +174,7 @@ export async function render(view, opts = {}) {
           <button class="btn" id="trPrints" style="display:none">🖨 打印所选(<b id="trPrN">0</b>)</button>
           <button class="btn pri" data-newdoc="transfer">＋ 新增调拨单</button>
           <span style="margin-left:auto">
-            <input id="trFrom" type="date" value="${today.slice(0, 8)}01"><span style="color:var(--ink-3)">~</span><input id="trTo" type="date" value="${today}">
+            <input id="trFrom" type="date"><span style="color:var(--ink-3)">~</span><input id="trTo" type="date">
             <select id="trQStatus"><option value="">全部状态</option><option>待确认</option><option>待审核</option><option>待发货</option><option>在途</option><option>驳回</option><option>已入库</option><option>已取消</option></select>
           </span>
         </div>
@@ -348,7 +349,7 @@ export async function render(view, opts = {}) {
     const pg = paginate(rows, skPage, 10);
     view.querySelector('#skList').innerHTML = rows.length ? `
       <table><thead><tr><th class="seq">序号</th><th>任务号</th><th>名称</th><th>范围</th><th class="num">进度</th>
-        <th>状态</th><th>指派给</th><th>创建</th><th style="width:220px">操作</th></tr></thead>
+        <th>状态</th><th>指派给</th><th>创建时间</th><th style="width:220px">操作</th></tr></thead>
       <tbody>${pg.slice.map((o, i) => `<tr data-taskrow="${o.id}" style="cursor:pointer" title="双击查看任务明细">
         <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td style="font-family:var(--mono);font-weight:600">${esc(o.task_no)}</td>
         <td>${esc(o.name)}</td>
@@ -396,7 +397,6 @@ export async function render(view, opts = {}) {
   }
 
   /* ═══════════ 盘点单据列表 ═══════════ */
-  const fmt = n => (Number(n) || 0).toFixed(2);
   let ctStatus = '', ctPage = 1;
   view.querySelector('#ctGo').onclick = loadCounts;
   view.querySelector('#ctRefresh').onclick = loadCounts;
@@ -415,19 +415,32 @@ export async function render(view, opts = {}) {
     // V4.9.7 列重排：明细行→总数量 · 创建→制单时间 · 签字移制单时间后 · 状态移签字后 · 数据靠左
     const pg = paginate(rows, ctPage, 10);
     view.querySelector('#ctList').innerHTML = rows.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="ctPrAll" title="全选打印" ${pg.slice.length && pg.slice.every(o => ctPrSel.has(Number(o.id))) ? 'checked' : ''}></th><th class="seq">序号</th><th>单号</th><th>范围</th><th>总数量</th><th>差异合计</th>
-        <th>盘点人</th><th>制单时间</th><th>签字</th><th>状态</th><th style="width:180px">操作</th></tr></thead>
-      <tbody>${pg.slice.map((o, i) => `<tr data-cntrow="${o.id}" style="cursor:pointer" title="双击查看明细">
-        <td onclick="event.stopPropagation()"><input type="checkbox" data-ctpr="${o.id}" ${ctPrSel.has(Number(o.id)) ? 'checked' : ''} title="勾选批量打印 A5"></td>
-        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td style="font-family:var(--mono);font-weight:600">${esc(o.count_no)}</td>
-        <td>${esc(o.scope)}</td><td>${Number(o.total_qty ?? 0)}</td>
-        <td style="color:${Number(o.diff_sum) < 0 ? 'var(--warn)' : 'inherit'}">${fmt(o.diff_sum)}</td>
-        <td>${esc(o.employee_name || '')}</td><td>${dt(o.created_at)}</td>
-        <td>${signCell(o)}${(o.status === '进行中' && !Number(o.sign_record_id)) ? ' ' + signBtn(o.id) : ''}</td>
-        <td><span class="tag ${TAG[o.status] || 'y'}">${esc(o.status)}</span></td>
-        <td style="white-space:nowrap">
+      ${docTable({
+        cols: [
+          { h: `<input type="checkbox" id="ctPrAll" title="全选打印" ${pg.slice.length && pg.slice.every(o => ctPrSel.has(Number(o.id))) ? 'checked' : ''}>`, w: 34 },
+          { h: '序号', cls: 'seq' }, { h: '单号' }, { h: '范围' }, { h: '总数量' }, { h: '差异合计' },
+          { h: '盘点人' }, { h: '制单时间' }, { h: '签字' }, { h: '状态' },
+          { h: '操作', w: 180 },
+        ],
+        rows: pg.slice.map((o, i) => ({
+          attrs: `data-cntrow="${o.id}" style="cursor:pointer" title="双击查看明细"`,
+          cells: [
+            `<td onclick="event.stopPropagation()"><input type="checkbox" data-ctpr="${o.id}" ${ctPrSel.has(Number(o.id)) ? 'checked' : ''} title="勾选批量打印 A5"></td>`,
+            { h: (pg.page - 1) * 10 + i + 1, cls: 'num seq' },
+            { h: esc(o.count_no), style: 'font-family:var(--mono);font-weight:600' },
+            esc(o.scope),
+            Number(o.total_qty ?? 0),
+            { h: fmt(o.diff_sum), style: `color:${Number(o.diff_sum) < 0 ? 'var(--warn)' : 'inherit'}` },
+            esc(o.employee_name || ''),
+            dt(o.created_at),
+            `${signCell(o)}${(o.status === '进行中' && !Number(o.sign_record_id)) ? ' ' + signBtn(o.id) : ''}`,
+            `<span class="tag ${TAG[o.status] || 'y'}">${esc(o.status)}</span>`,
+            `<td style="white-space:nowrap">
           ${o.status === '进行中' && canCountAudit ? `<button class="btn sm pri" data-audit="${o.id}" data-kind="count">✓ 审核</button>` : ''}
-        </td></tr>`).join('')}</tbody></table>${pg.bar}`
+        </td>`,
+          ],
+        })),
+      })}${pg.bar}`
       : '<div class="empty">无盘点单</div>';
     bindPager(view.querySelector('#ctList'), p => { ctPage = p; loadCounts(); });
     view.querySelectorAll('[data-cntrow]').forEach(tr => tr.ondblclick = () => openCountDetail(Number(tr.dataset.cntrow)));
@@ -467,39 +480,20 @@ export async function render(view, opts = {}) {
 
   let lsPhotoPath = '';
   view.querySelector('#lsPhotoPick').onclick = () => view.querySelector('#lsPhotoFile').click();
-  // V5.0.3：弹窗选择本机摄像头 / 手机拍摄
-  const openCamera = async () => {
-    let hasCam = false;
-    try {
-      const devs = await navigator.mediaDevices.enumerateDevices();
-      hasCam = devs.some(d => d.kind === 'videoinput');
-    } catch { hasCam = false; }
-    if (!hasCam) return toast('本机未检测到摄像头，请选择「手机拍摄」', false);
-    let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); }
-    catch { return toast('无法调用本机摄像头，请选择「手机拍摄」', false); }
-    const modal = view.querySelector('#camModal');
-    const video = view.querySelector('#camVideo');
-    video.srcObject = stream;
-    modal.style.display = 'flex';
-    const close = () => { stream.getTracks().forEach(t => t.stop()); modal.style.display = 'none'; };
-    view.querySelector('#camCancel').onclick = close;
-    view.querySelector('#camShot').onclick = async () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth || 1280;
-      canvas.height = video.videoHeight || 720;
-      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-      close();
+  // V5.0.3：弹窗选择本机摄像头 / 手机拍摄；取景拍照统一走 ui.js capturePhoto（V5.0.6 收敛）
+  const openCamera = () => capturePhoto(view, {
+    onFail: why => toast(why === 'none' ? '本机未检测到摄像头，请选择「手机拍摄」' : '无法调用本机摄像头，请选择「手机拍摄」', false),
+    onShot: async dataUrl => {
       view.querySelector('#lsPhotoTip').textContent = '上传中…';
       try {
-        const d = await must(post('/upload', { image: canvas.toDataURL('image/jpeg', 0.85) }), '照片已拍摄上传');
+        const d = await must(post('/upload', { image: dataUrl }), '照片已拍摄上传');
         lsPhotoPath = d.path;
         const prev = view.querySelector('#lsPhotoPrev');
         prev.src = imgUrl(lsPhotoPath); prev.style.display = '';
         view.querySelector('#lsPhotoTip').textContent = `已上传：${lsPhotoPath}`;
       } catch { view.querySelector('#lsPhotoTip').textContent = '上传失败，请重试'; }
-    };
-  };
+    },
+  });
   const startMobileShoot = async () => {
     let token = '';
     try {
@@ -668,19 +662,32 @@ export async function render(view, opts = {}) {
     // V4.9.7 列重排：明细行→总数量 · 创建→制单时间 · 签字移制单时间后 · 状态移签字后 · 数据靠左
     const pg = paginate(rows, lsPage, 10);
     view.querySelector('#lsList').innerHTML = rows.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="lsPrAll" title="全选打印" ${pg.slice.length && pg.slice.every(o => lsPrSel.has(Number(o.id))) ? 'checked' : ''}></th><th class="seq">序号</th><th>单号</th><th>原因</th><th>总数量</th><th>报损金额</th>
-        <th>经办人</th><th>制单时间</th><th>签字</th><th>状态</th><th style="width:180px">操作</th></tr></thead>
-      <tbody>${pg.slice.map((o, i) => `<tr data-lsrow="${o.id}" style="cursor:pointer" title="双击查看明细（右侧凭证照片）">
-        <td onclick="event.stopPropagation()"><input type="checkbox" data-lspr="${o.id}" ${lsPrSel.has(Number(o.id)) ? 'checked' : ''} title="勾选批量打印 A5"></td>
-        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td style="font-family:var(--mono);font-weight:600">${esc(o.loss_no)}</td>
-        <td>${esc(o.reason_type)}</td><td>${Number(o.total_qty ?? 0)}</td>
-        <td style="color:var(--warn)">${money(o.total_cost)}</td>
-        <td>${esc(o.employee_name || '')}</td><td>${dt(o.created_at)}</td>
-        <td>${signCell(o)}${(o.status === '待审核' && !Number(o.sign_record_id)) ? ' ' + signBtn(o.id) : ''}</td>
-        <td><span class="tag ${TAG[o.status] || 'y'}">${esc(o.status)}</span></td>
-        <td style="white-space:nowrap">
+      ${docTable({
+        cols: [
+          { h: `<input type="checkbox" id="lsPrAll" title="全选打印" ${pg.slice.length && pg.slice.every(o => lsPrSel.has(Number(o.id))) ? 'checked' : ''}>`, w: 34 },
+          { h: '序号', cls: 'seq' }, { h: '单号' }, { h: '原因' }, { h: '总数量' }, { h: '报损金额' },
+          { h: '经办人' }, { h: '制单时间' }, { h: '签字' }, { h: '状态' },
+          { h: '操作', w: 180 },
+        ],
+        rows: pg.slice.map((o, i) => ({
+          attrs: `data-lsrow="${o.id}" style="cursor:pointer" title="双击查看明细（右侧凭证照片）"`,
+          cells: [
+            `<td onclick="event.stopPropagation()"><input type="checkbox" data-lspr="${o.id}" ${lsPrSel.has(Number(o.id)) ? 'checked' : ''} title="勾选批量打印 A5"></td>`,
+            { h: (pg.page - 1) * 10 + i + 1, cls: 'num seq' },
+            { h: esc(o.loss_no), style: 'font-family:var(--mono);font-weight:600' },
+            esc(o.reason_type),
+            Number(o.total_qty ?? 0),
+            { h: money(o.total_cost), style: 'color:var(--warn)' },
+            esc(o.employee_name || ''),
+            dt(o.created_at),
+            `${signCell(o)}${(o.status === '待审核' && !Number(o.sign_record_id)) ? ' ' + signBtn(o.id) : ''}`,
+            `<span class="tag ${TAG[o.status] || 'y'}">${esc(o.status)}</span>`,
+            `<td style="white-space:nowrap">
           ${o.status === '待审核' && canLossAudit ? `<button class="btn sm pri" data-audit="${o.id}" data-kind="loss">✓ 审核</button>` : ''}
-        </td></tr>`).join('')}</tbody></table>${pg.bar}`
+        </td>`,
+          ],
+        })),
+      })}${pg.bar}`
       : '<div class="empty">无报损单</div>';
     bindPager(view.querySelector('#lsList'), p => { lsPage = p; loadLosses(); });
     view.querySelectorAll('[data-lsrow]').forEach(tr => tr.ondblclick = () => openLossDetail(Number(tr.dataset.lsrow)));
@@ -759,24 +766,38 @@ export async function render(view, opts = {}) {
     // V4.9.7 列重排：明细行→总数量 · 创建→制单时间 · 签字移制单时间后 · 状态移签字后 · 数据靠左
     const pg = paginate(rows, trPage, 10);
     view.querySelector('#trList').innerHTML = rows.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="trPrAll" title="全选打印" ${pg.slice.length && pg.slice.every(o => trPrSel.has(Number(o.id))) ? 'checked' : ''}></th><th class="seq">序号</th><th>单号</th><th>调入</th><th>原因</th><th>总数量</th><th>调拨金额</th>
-        <th>经办人</th><th>制单时间</th><th>签字</th><th>状态</th><th style="width:180px">操作</th></tr></thead>
-      <tbody>${pg.slice.map((o, i) => `<tr data-trrow="${o.id}" style="cursor:pointer" title="双击查看明细">
-        <td onclick="event.stopPropagation()"><input type="checkbox" data-trpr="${o.id}" ${trPrSel.has(Number(o.id)) ? 'checked' : ''} title="勾选批量打印 A5"></td>
-        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td style="font-family:var(--mono);font-weight:600">${esc(o.transfer_no)}</td>
-        <td>${esc(o.to_store_name || '本店（店内）')}</td><td>${esc(o.reason || '—')}</td>
-        <td>${Number(o.total_qty ?? 0)}</td><td>${money(o.total_cost)}</td>
-        <td>${esc(o.employee_name || '')}</td><td>${dt(o.created_at)}</td>
-        <td>${signCell(o)}${(o.status === '待确认' && !Number(o.sign_record_id)) ? ' ' + signBtn(o.id) : ''}</td>
-        <td><span class="tag ${TAG[o.status] || 'y'}">${esc(o.status)}</span></td>
-        <td style="white-space:nowrap">
+      ${docTable({
+        cols: [
+          { h: `<input type="checkbox" id="trPrAll" title="全选打印" ${pg.slice.length && pg.slice.every(o => trPrSel.has(Number(o.id))) ? 'checked' : ''}>`, w: 34 },
+          { h: '序号', cls: 'seq' }, { h: '单号' }, { h: '调入' }, { h: '原因' }, { h: '总数量' }, { h: '调拨金额' },
+          { h: '经办人' }, { h: '制单时间' }, { h: '签字' }, { h: '状态' },
+          { h: '操作', w: 180 },
+        ],
+        rows: pg.slice.map((o, i) => ({
+          attrs: `data-trrow="${o.id}" style="cursor:pointer" title="双击查看明细"`,
+          cells: [
+            `<td onclick="event.stopPropagation()"><input type="checkbox" data-trpr="${o.id}" ${trPrSel.has(Number(o.id)) ? 'checked' : ''} title="勾选批量打印 A5"></td>`,
+            { h: (pg.page - 1) * 10 + i + 1, cls: 'num seq' },
+            { h: esc(o.transfer_no), style: 'font-family:var(--mono);font-weight:600' },
+            esc(o.to_store_name || '本店（店内）'),
+            esc(o.reason || '—'),
+            Number(o.total_qty ?? 0),
+            money(o.total_cost),
+            esc(o.employee_name || ''),
+            dt(o.created_at),
+            `${signCell(o)}${(o.status === '待确认' && !Number(o.sign_record_id)) ? ' ' + signBtn(o.id) : ''}`,
+            `<span class="tag ${TAG[o.status] || 'y'}">${esc(o.status)}</span>`,
+            `<td style="white-space:nowrap">
           ${o.status === '待确认' && canTransferAudit ? `<button class="btn sm pri" data-confirm="${o.id}" data-kind="tr">✓ 确认</button>` : ''}
           ${o.status === '待审核' && canTransferAudit ? `<button class="btn sm pri" data-taudit="${o.id}" data-pass="1" data-kind="tr">✓ 通过</button>
             <button class="btn sm" data-taudit="${o.id}" data-pass="0" data-kind="tr">✕ 驳回</button>` : ''}
           ${o.status === '待发货' && canTransfer ? `<button class="btn sm pri" data-ship="${o.id}" data-kind="tr">🚚 发货</button>` : ''}
           ${o.status === '在途' && canTransfer ? `<button class="btn sm pri" data-recv="${o.id}" data-kind="tr">📥 收货确认</button>` : ''}
           ${['待审核', '待发货', '驳回', '待确认'].includes(o.status) && canTransferAudit ? `<button class="btn sm" data-tcancel="${o.id}" data-kind="tr">取消</button>` : ''}
-        </td></tr>`).join('')}</tbody></table>${pg.bar}`
+        </td>`,
+          ],
+        })),
+      })}${pg.bar}`
       : '<div class="empty">无调拨单</div>';
     bindPager(view.querySelector('#trList'), p => { trPage = p; loadTransfers(); });
     view.querySelectorAll('[data-trrow]').forEach(tr => tr.ondblclick = () => openTransferDetail(Number(tr.dataset.trrow)));

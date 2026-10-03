@@ -77,12 +77,12 @@ export async function render(view) {
     const rows = d.items || [];
     const pg = paginate(rows, shPage, 10);
     view.querySelector('#list').innerHTML = rows.length ? `
-      <table><thead><tr><th>班次</th><th>收银员</th><th>POS</th><th class="num">备用金</th>
+      <table><thead><tr><th class="seq">序号</th><th>班次</th><th>收银员</th><th>POS</th><th class="num">备用金</th>
         <th class="num">现金应收</th><th class="num">实盘</th><th class="num">差异</th>
         <th class="num">单数</th><th>开班</th><th>关班</th><th>状态</th></tr></thead>
-      <tbody>${pg.slice.map(s => {
+      <tbody>${pg.slice.map((s, i) => {
         const diff = Number(s.diff_amount ?? 0);
-        return `<tr data-shift="${s.id}" style="cursor:pointer" title="双击查看班次详情"><td>#${s.id}</td><td>${esc(s.cashier_name)}</td><td>${esc(s.pos_no)}</td>
+        return `<tr data-shift="${s.id}" style="cursor:pointer" title="双击查看班次详情"><td class="num seq">${(shPage - 1) * 10 + i + 1}</td><td>#${s.id}</td><td>${esc(s.cashier_name)}</td><td>${esc(s.pos_no)}</td>
         <td class="num">${money(s.opening_float)}</td>
         <td class="num">${s.cash_total === null ? '—' : money(s.cash_total)}</td>
         <td class="num">${s.cash_counted === null ? '—' : money(s.cash_counted)}</td>

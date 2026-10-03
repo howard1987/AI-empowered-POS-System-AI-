@@ -41,7 +41,7 @@ export async function render(view) {
         <button class="btn" id="mGo">查询</button>
         <span class="muted" style="font-weight:400;margin-left:8px">每页 10 条 · 双击行弹会员详情</span></h3>
       <div id="mList" class="tbl-min" style="max-height:calc(10 * 40px + 42px);overflow:auto"></div>
-      <div class="bar" style="justify-content:flex-end;margin-top:8px">
+      <div class="doc-foot" style="justify-content:flex-end;margin-top:0">
         <button class="btn sm" id="mPrev">‹ 上一页</button>
         <span class="muted" style="font-size:12px;display:flex;align-items:center;gap:4px">共 <span id="mTotal">0</span> 人 · 第
           <input type="number" id="mJump" min="1" value="1" style="width:52px;text-align:center;padding:2px 4px"> /

@@ -1,4 +1,5 @@
 import { post, get, must, esc, toast } from '../api.js';
+import { bindPad, padDirty, clearPad } from '../ui.js';
 
 /**
  * P1-P2 电子签字通用组件（桌面端入库/退货/报损/盘点共用）
@@ -279,19 +280,3 @@ function previewSign(box, d) {
     pv.addEventListener('click', e => { if (e.target === pv) done(null); });
   });
 }
-
-function bindPad(pad) {  const ctx = pad.getContext('2d');
-  ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.strokeStyle = '#111';
-  let drawing = false, last = null;
-  const pos = e => { const r = pad.getBoundingClientRect();
-    return { x: (e.clientX - r.left) * pad.width / r.width, y: (e.clientY - r.top) * pad.height / r.height }; };
-  pad.onpointerdown = e => { drawing = true; last = pos(e); pad.setPointerCapture(e.pointerId); };
-  pad.onpointermove = e => { if (!drawing) return; const p = pos(e);
-    ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p; };
-  pad.onpointerup = pad.onpointercancel = () => { drawing = false; };
-}
-function padDirty(pad) {
-  const d = pad.getContext('2d').getImageData(0, 0, pad.width, pad.height).data;
-  return d.some(v => v !== 0);
-}
-function clearPad(pad) { pad.getContext('2d').clearRect(0, 0, pad.width, pad.height); }
