@@ -101,23 +101,23 @@
   /* ② 卡片主体 */
   .lg-wrap{flex:1; min-height:0; display:flex; flex-direction:column; justify-content:center;}
   html.desktop-mode .lg-wrap{
-    align-items:center; justify-content:center; gap:16px; padding:16px 24px 24px; overflow:auto;
+    align-items:center; justify-content:center; gap:10px; padding:10px 22px 14px; overflow:hidden;
     background:radial-gradient(700px 380px at 100% 0%, rgba(46,133,87,.10), transparent 60%), #eef1ee;
   }
   .lg-brand{display:flex; flex-direction:column; align-items:center;}
-  html.desktop-mode .lg-brand{flex-direction:row; gap:12px;}
-  html.desktop-mode #auth .logo{width:46px; height:46px; font-size:24px; border-radius:14px; margin:0; color:var(--pri); box-shadow:0 4px 14px rgba(0,0,0,.10);}
-  html.desktop-mode #auth h1{color:var(--ink); font-size:20px; text-align:left; letter-spacing:.5px;}
+  html.desktop-mode .lg-brand{flex-direction:row; gap:10px;}
+  html.desktop-mode #auth .logo{width:38px; height:38px; font-size:20px; border-radius:11px; margin:0; color:var(--pri); box-shadow:0 4px 14px rgba(0,0,0,.10);}
+  html.desktop-mode #auth h1{color:var(--ink); font-size:18px; text-align:left; letter-spacing:.5px;}
   html.desktop-mode #auth p{display:none;}
-  html.desktop-mode #auth .card{width:100%; max-width:420px; margin:0; padding:20px 22px;}
+  html.desktop-mode #auth .card{width:100%; max-width:420px; margin:0; padding:14px 18px;}
   /* 行式字段（仿银豹：账号 / 工号 / 密码 左标签右输入） */
-  html.desktop-mode #auth .field{display:grid; grid-template-columns:58px 1fr; align-items:center; gap:10px; margin-bottom:12px;}
+  html.desktop-mode #auth .field{display:grid; grid-template-columns:58px 1fr; align-items:center; gap:10px; margin-bottom:9px;}
   html.desktop-mode #auth .field>label{margin:0; font-size:13.5px; color:var(--ink-2);}
   html.desktop-mode #auth .field>input,html.desktop-mode #auth .field>.pw-wrap{grid-column:2; min-width:0;}
-  html.desktop-mode #auth .field input{padding:10px 12px; font-size:15px;}
+  html.desktop-mode #auth .field input{padding:8px 10px; font-size:14.5px;}
   #auth #lgStore[readonly],#auth #rgStore[readonly]{background:#f6f4ee; border-color:transparent; color:var(--ink-2); cursor:default;}
   /* 管理员自检提示条 */
-  .lg-notice{border-radius:10px; padding:9px 12px; font-size:12.5px; line-height:1.65; margin-bottom:12px;}
+  .lg-notice{border-radius:9px; padding:6px 10px; font-size:11.5px; line-height:1.5; margin-bottom:9px;}
   .lg-notice.warn{background:var(--orange-soft); border:1px solid #eecf9d; color:#7a3a0a;}
   .lg-notice.ok{background:var(--green-soft); border:1px solid #bcd9bd; color:#14532d;}
   .lg-notice b{color:inherit;}
@@ -128,10 +128,10 @@
   .lg-alt a.hidden{display:none;}
   /* ③ 底部圆形入口 */
   .lg-foot{display:none;}
-  html.desktop-mode .lg-foot{display:flex; gap:34px; align-items:flex-start; justify-content:center;}
-  .lg-round{display:flex; flex-direction:column; align-items:center; gap:6px; font-size:12.5px; color:var(--ink-2);}
-  .lg-round .lg-ric{width:52px; height:52px; border-radius:50%; background:#fff; border:1px solid var(--line);
-    display:flex; align-items:center; justify-content:center; font-size:22px; box-shadow:var(--shadow);}
+  html.desktop-mode .lg-foot{display:flex; gap:26px; align-items:flex-start; justify-content:center; margin-top:0;}
+  .lg-round{display:flex; flex-direction:column; align-items:center; gap:4px; font-size:11.5px; color:var(--ink-2);}
+  .lg-round .lg-ric{width:42px; height:42px; border-radius:50%; background:#fff; border:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center; font-size:19px; box-shadow:var(--shadow);}
   .lg-round:active .lg-ric{background:var(--green-soft);} 
   .card{
     background:var(--card); border-radius:var(--r-lg); box-shadow:var(--shadow); padding:16px;

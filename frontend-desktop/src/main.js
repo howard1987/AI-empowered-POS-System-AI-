@@ -178,7 +178,7 @@ function applyKiosk(win, display) {
 //  规则：登录前 = 一张卡片大小的普通窗口（居中、不置顶、任务栏有图标、可 Alt+F4 关）；
 //        登录后 = 全屏 kiosk（盖任务栏）+ **不置顶** → 切换其他程序不受影响。
 //  渲染层在登录成功/退出登录时经 pos:shell-mode 通知主进程切换。
-const LOGIN_WIN = { width: 480, height: 680 };   // V4.24.0：登录窗加高（标题栏 + 卡片 + 底部圆入口）
+const LOGIN_WIN = { width: 480, height: 720 };   // V4.24.0：登录窗（V5.0.14g 加高至 720，配合高度自适应杜绝滚动）
 let shellMode = 'login';
 let kioskOn = false;
 let kioskTopmost = false;    // V4.24.0：后台 pos.desktop.kiosk_topmost —— 开=全屏强制置顶（不可切走）
@@ -319,6 +319,24 @@ ipcMain.on('pos:shell-mode', (_e, mode) => {
   if (mode === 'cashier') applyCashierMode(mainWindow);
   else applyLoginMode(mainWindow);
 });
+// ─── V5.0.14g：登录态窗口高度自适应内容 ───
+//  管理员检测提示条、服务器地址栏、错误提示等动态元素出现/消失时，窗口高度跟随
+//  （夹在 620~840），杜绝「内容溢出出现滚动条」。仅登录态且当前页为 /pwa/ 时生效。
+let lastFitH = 0;
+setInterval(() => {
+  if (shellMode !== 'login' || !mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    const url = mainWindow.webContents.getURL() || '';
+    if (!/\/pwa\//.test(url)) return;
+    mainWindow.webContents.executeJavaScript('document.documentElement.scrollHeight', true)
+      .then(h => {
+        if (!Number.isFinite(h)) return;
+        const target = Math.max(620, Math.min(840, Math.ceil(h) + 4));
+        if (Math.abs(target - lastFitH) > 4) { lastFitH = target; mainWindow.setSize(LOGIN_WIN.width, target); }
+      })
+      .catch(() => {});
+  } catch { /* noop */ }
+}, 1200);
 // 窗口状态自检（现场排查「登录页还是全屏 / 窗口被压住」类问题；也供自动化实测断言）
 ipcMain.handle('pos:shell-state', () => {
   const w = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
