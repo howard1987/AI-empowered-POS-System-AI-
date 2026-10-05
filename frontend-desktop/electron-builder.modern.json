@@ -7,6 +7,7 @@
   "asar": true,
   "electronVersion": "44.3.0",
   "win": {
+    "icon": "build/icon.png",
     "target": [
       { "target": "portable", "arch": ["x64"] },
       { "target": "nsis", "arch": ["x64"] }

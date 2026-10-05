@@ -293,6 +293,9 @@ if (-not $SkipExe) {
   }
   Copy-Item $setup[0].FullName $DESK_OUT -Force
   Copy-Item $port[0].FullName  $DESK_OUT -Force
+  # V5.0.14g：安装包统一落在 release\，electron-builder 的工作目录（含 win-unpacked 与重复 EXE）随后清空
+  PurgeDir $modernDir
+  Ok 'dist-modern 工作目录已清空（安装包只在 release\pos-desktop\）'
   if ($Win7) {
     Warn '同时产出 Win7(ia32) 轨'
     $rc7 = RunNpmSoft @('run', 'dist:win7') $DESKTOP
@@ -306,6 +309,28 @@ if (-not $SkipExe) {
     Info 'Win7 轨未构建（如需：build-all.ps1 -Win7）'
   }
   Ok "EXE 已汇总到 release/pos-desktop/（版本 $dv）"
+
+  # ── 8.5 服务端安装包（Inno Setup：Windows 服务 + 托盘管理器 + 内嵌 AI 模型/TTS）──
+  Step '8.5' '编译服务端安装包（Inno Setup）'
+  $iscc = @(
+    'D:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+    'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+    'C:\Program Files\Inno Setup 6\ISCC.exe'
+  ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+  if (-not $iscc) {
+    Warn '未找到 ISCC.exe（Inno Setup 6）——跳过服务端安装包（服务器可用 release\server\ 文件夹包）'
+  } else {
+    Info "ISCC: $iscc"
+    Push-Location (Join-Path $DEPLOY 'installer')
+    try {
+      & $iscc "/DMyAppVer=$dv" 'server-setup.iss' 2>&1 | Select-Object -Last 3 | Write-Host
+      if ($LASTEXITCODE -ne 0) { throw "ISCC 编译失败（退出码 $LASTEXITCODE）" }
+    } finally { Pop-Location }
+    $srvSetup = Join-Path $ROOT "release\pos-server\POS-Server-Setup-$dv.exe"
+    if (Test-Path $srvSetup) {
+      Ok ("服务端安装包: " + $srvSetup + "（" + [math]::Round((Get-Item $srvSetup).Length/1MB,1) + " MB）")
+    } else { throw "服务端安装包未产出：$srvSetup" }
+  }
 } else {
   Step 8 'EXE 打包已跳过（-SkipExe）'
 }

@@ -7,6 +7,7 @@
   "asar": true,
   "electronVersion": "22.3.27",
   "win": {
+    "icon": "build/icon.png",
     "target": [
       { "target": "portable", "arch": ["ia32"] },
       { "target": "nsis", "arch": ["ia32"] }

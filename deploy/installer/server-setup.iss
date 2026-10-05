@@ -8,7 +8,7 @@
 ; ============================================================================
 
 #define MyAppName "超市收银系统 服务端"
-#define MyAppVer "5.0.8"
+#define MyAppVer "5.0.14"
 #define SrcRoot "d:\Software\POS_system\超市收银系统-初版代码"
 
 [Languages]
@@ -23,7 +23,7 @@ AppVersion={#MyAppVer}
 DefaultDirName=D:\Program Files\POS-Server
 DirExistsWarning=no
 DisableProgramGroupPage=yes
-OutputDir=D:\Software\POS_system\V5.0\installers
+OutputDir=D:\Software\POS_system\release\pos-server
 OutputBaseFilename=POS-Server-Setup-{#MyAppVer}
 Compression=lzma2/max
 SolidCompression=yes
@@ -47,7 +47,7 @@ Source: "{#SrcRoot}\backend\dist\*"; DestDir: "{app}\backend\dist"; \
   Flags: ignoreversion recursesubdirs createallsubdirs sortfilesbyextension
 ; ── 后端运行资料（V4.28.0 F-10：不再随包分发 TS 源码/.env/tsconfig——运行只需 dist）──
 Source: "{#SrcRoot}\backend\*"; DestDir: "{app}\backend"; \
-  Excludes: "node_modules,dist,logs,.playwright-cli,.tmpcrawl,.runtime,_*,public\uploads\*,tests\*,*.log,src,src\*,.env,*.ts,tsconfig.json"; \
+  Excludes: "node_modules,dist,logs,.playwright-cli,.tmpcrawl,.runtime,_*,public\uploads\*,public\signatures\*,tests\*,tools,tools\*,ai-train,ai-train\*,*.log,src,src\*,.env,*.ts,tsconfig.json"; \
   Flags: ignoreversion recursesubdirs createallsubdirs
 ; ── 后端依赖（运行必需，压缩后显著变小）──
 Source: "{#SrcRoot}\backend\node_modules\*"; DestDir: "{app}\backend\node_modules"; \
