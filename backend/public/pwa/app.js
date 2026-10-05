@@ -747,7 +747,10 @@ function showMain() {
   let post = '';
   try { post = localStorage.getItem('pwa_post_login') || ''; localStorage.removeItem('pwa_post_login'); } catch { }
   // V5.0.11：老板 → 跳到已有的老板端应用（老板看板）；员工 → 留在员工移动端
-  if (isBoss() && post !== 'checkout') { gotoBossApp(); return; }
+  // V5.0.14g：桌面 EXE 壳（收银终端）不参与老板端分流——收银机就是收银机，
+  // 老板/管理员登录同样进桌面收银台；老板看板只在手机/浏览器端分流。
+  // （此前 EXE 里登管理员会被 gotoBossApp 弹到手机版看板，且窗口停在登录小卡片尺寸）
+  if (!IS_DESKTOP && isBoss() && post !== 'checkout') { gotoBossApp(); return; }
   setShellMode('cashier');   // V4.22.3：EXE 壳进全屏收银台（盖任务栏，但不置顶 → Alt+Tab 可切其他程序）
   openTab('work');
   // V5.0.6：手机端（小屏）登录后直落 checkout.js 移动收银；电脑/平板/桌面壳进入 cashier.js 全屏收银台
