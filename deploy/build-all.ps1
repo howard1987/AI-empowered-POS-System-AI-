@@ -178,6 +178,20 @@ foreach ($f in @('server-up.mjs', 'rawprint.ps1', 'gen-cert.js', 'backfill-pinyi
 }
 Ok 'dist · db · scripts 装配完成'
 
+# ── 2.5 运行期资产：语音引擎 + AI 模型 ──
+#  V5.0.14h：此前文件夹包只拷 dist/db/scripts/public，**漏了 tts/ 与 models/**——
+#  用 release\server\ 文件夹包部署的门店：/tts/health=false（无语音播报）、AI 商品识别不可用。
+#  （Inno 安装版向来带这两项目录，故只有文件夹包有此缺口。tts\cache 是运行期 WAV 缓存，不随包）
+Step '2.5' '装配运行期资产：tts（piper 语音引擎 + 音色）· models（AI 识别模型）'
+foreach ($asset in @('tts', 'models')) {
+  $srcDir = Join-Path $BACKEND $asset
+  $dstDir = Join-Path $SRV $asset
+  if (-not (Test-Path $srcDir)) { Warn "缺少目录（跳过）：$srcDir"; continue }
+  if ($asset -eq 'tts') { RC @($srcDir, $dstDir, '/E', '/XD', 'cache') }
+  else                  { RC @($srcDir, $dstDir, '/E') }
+  Ok "$asset/ 装配完成"
+}
+
 # ── 3. 生产依赖 ──
 Step 3 '复制生产依赖 node_modules'
 if ($SkipNodeModules -and (Test-Path (Join-Path $SRV 'node_modules\pg'))) {
