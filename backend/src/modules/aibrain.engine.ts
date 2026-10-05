@@ -40,6 +40,15 @@ export class AibrainEngine {
 
   private static async suggest(storeId: number, domain: string, payload: any,
                                reason: any, confidence?: number, bizRefType?: string | null, bizRefId?: number | null) {
+    /* V5.0.13 空建议守卫：payload 没有任何可执行明细（items/members/expand 全为空或缺省）
+     * → 不入库。空建议只会制造"点开没内容"的噪声（老板端反馈），也浪费决策中心列表位。 */
+    const lists = ['items', 'members', 'expand', 'segments', 'alerts']
+      .map(k => (Array.isArray(payload?.[k]) ? payload[k].length : null))
+      .filter(n => n !== null);
+    if (lists.length && lists.every(n => n === 0)) {
+      console.log(`[aibrain] 跳过空建议：${domain}（明细为空）`);
+      return 0;
+    }
     const ins = await q(
       `INSERT INTO ai_suggestions (store_id, domain, payload, reason, confidence, biz_ref_type, biz_ref_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
@@ -278,7 +287,7 @@ export class AibrainEngine {
       { rule: fcMap.size ? `预测优先：未来7天预测销量×(${coverage}+${safety}) − 库存 − 在途（无预测商品回落日均×周期）`
                         : `日均销×(${coverage}+${safety}) − 库存 − 在途`, coverageDays: coverage, safetyDays: safety, note: '可售天数低于覆盖周期即建议' },
       0.85, 'purchase_order', null);
-    await this.autoMaybe(storeId, sid, '补货');   // P7：全自动档直接执行（含成熟度门禁）
+    if (sid) await this.autoMaybe(storeId, sid, '补货');   // P7：全自动档直接执行（含成熟度门禁）
     return { count: items.length, items };
   }
 
@@ -514,7 +523,7 @@ export class AibrainEngine {
     if (!items.length) return { count: 0, items: [] };
     const sid = await this.suggest(storeId, '定价', { rule: '慢动销折扣建议', count: items.length, items },
       { rule: '价格弹性 + 损耗成本（只建议不自动改价）', note: '建议折扣档 8.5/9 折' }, 0.6);
-    await this.autoMaybe(storeId, sid, '定价');   // P7：全自动档直接执行（含成熟度门禁，回滚快照已记录）
+    if (sid) await this.autoMaybe(storeId, sid, '定价');   // P7：全自动档直接执行（含成熟度门禁，回滚快照已记录）
     return { count: items.length, items };
   }
 
@@ -1071,7 +1080,7 @@ export class AibrainEngine {
       { rule: `未来7天分品类预测 × (${factor} − 1) 向上取整 = 节日/周末增量备货量`, festival, daysLeft,
         note: `${festival}${daysLeft != null ? ` ${daysLeft} 天后` : ''}（提前 ${lead} 天提醒）；建议量为正常补货之外的增量` },
       0.7);
-    await this.autoMaybe(storeId, sid, '备货');
+    if (sid) await this.autoMaybe(storeId, sid, '备货');
     return { count: categories.length, festival, daysLeft, categories };
   }
 
@@ -1125,7 +1134,7 @@ export class AibrainEngine {
         count: payloadItems.length, items: payloadItems, categories: payloadItems },
       { rule: '天气系数：雨/雪 客流×0.9、高温≥32℃ 冷饮×1.3、骤降≥8℃或≤5℃ 速冻火锅×1.25；品类按名称关键词命中',
         note }, 0.65);
-    await this.autoMaybe(storeId, sid, '备货');
+    if (sid) await this.autoMaybe(storeId, sid, '备货');
     return { count: payloadItems.length, days: f, categories: payloadItems, note };
   }
 

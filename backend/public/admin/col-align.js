@@ -3,7 +3,14 @@
  *  · 金额 / 数量 / 单价 等数值列 → 数据居右
  * 规则：读每个 <th> 的表头文案判定该列语义，只给 tbody/tfoot 的 <td> 打标（表头沿用全局居中）。
  * 尊重单元格内联 text-align（内联优先级更高，不会被覆盖），故不破坏个别屏的刻意排版。
- * 动态渲染/异步列表：MutationObserver 防抖增量重扫（只改 class 不触发 childList，无死循环）。 */
+ *
+ * 性能与交互（V5.0.8a 修复「双击行弹明细」失效）：
+ *  此前用 MutationObserver 对 document.body 全量重扫，任何 DOM 变化（含弹窗打开、行内渲染）
+ *  都会 scan() 遍历全站表格并写 td.classList，持续重排抢占事件处理，
+ *  导致 tr 的 dblclick 在两次点击之间被重排打断而失焦。
+ *  现改为：① 初始全站扫一次，之后只扫「新增到 DOM 的节点」，不做全站盲扫；
+ *        ② 处理过的表打 __calDone 标记，绝不重复处理；
+ *        ③ 只在状态不符时增删 class，避免无谓 DOM 写入。 */
 (function () {
   'use strict';
 
@@ -36,6 +43,7 @@
   }
 
   function processTable(tb) {
+    if (tb.__calDone) return;               // 已处理过，绝不重复（保交互、防重排）
     var head = tb.tHead;
     if (!head || !head.rows.length) return;
     var hrow = head.rows[0];
@@ -43,7 +51,7 @@
     var map = [];
     var any = false;
     for (var i = 0; i < n; i++) { map[i] = alignOf(hrow.cells[i].textContent); if (map[i]) any = true; }
-    if (!any) return;
+    if (!any) { tb.__calDone = true; return; }
     var parts = [];
     for (var b = 0; b < tb.tBodies.length; b++) parts.push(tb.tBodies[b]);
     if (tb.tFoot) parts.push(tb.tFoot);
@@ -60,30 +68,55 @@
           var td = cells[c];
           var cl = td.classList;
           var other = want === 'tac' ? 'tar' : 'tac';
-          if (want) { if (!cl.contains(want)) cl.add(want); }
-          if (cl.contains(other)) cl.remove(other);
+          // 仅在状态不符时增删（幂等、不触发无谓重排）
+          if (want && !cl.contains(want)) { cl.add(want); }
+          if (cl.contains(other)) { cl.remove(other); }
         }
       }
     }
+    tb.__calDone = true;
   }
 
+  // 增量扫描：只处理 root 自身（若为 table）与 root 子树内的表格
   function scan(root) {
-    var list = ((root && root.querySelectorAll) ? root.querySelectorAll('table') : []);
-    for (var i = 0; i < list.length; i++) {
-      if (list[i].tHead) { try { processTable(list[i]); } catch (e) { /* 单表失败不影响其他 */ } }
+    if (!root || !root.querySelectorAll) return;
+    var list = [];
+    if (root.tagName === 'TABLE') list.push(root);
+    var sub = root.querySelectorAll('table');
+    for (var i = 0; i < sub.length; i++) list.push(sub[i]);
+    for (var j = 0; j < list.length; j++) {
+      if (list[j].tHead) { try { processTable(list[j]); } catch (e) { /* 单表失败不影响其他 */ } }
     }
   }
 
-  function run() { try { scan(document); } catch (e) { /* 静默 */ } }
+  function run(root) { try { scan(root || document); } catch (e) { /* 静默 */ } }
 
-  if (document.readyState !== 'loading') run();
-  else document.addEventListener('DOMContentLoaded', run);
+  // 初始：全站扫一次
+  if (document.readyState !== 'loading') run(document);
+  else document.addEventListener('DOMContentLoaded', function () { run(document); });
 
+  // 增量：只扫「新增到 DOM 的节点」，防抖 120ms 合并批量渲染
   if (typeof MutationObserver !== 'undefined' && document.body) {
-    var t = 0;
-    new MutationObserver(function () {
-      clearTimeout(t);
-      t = setTimeout(run, 120);   // 防抖：批量渲染后统一重扫
-    }).observe(document.body, { childList: true, subtree: true });
+    var pending = [];
+    var scheduled = false;
+    function flush() {
+      scheduled = false;
+      var list = pending; pending = [];
+      for (var i = 0; i < list.length; i++) run(list[i]);
+    }
+    var mo = new MutationObserver(function (muts) {
+      for (var i = 0; i < muts.length; i++) {
+        var added = muts[i].addedNodes;
+        for (var j = 0; j < added.length; j++) {
+          var nd = added[j];
+          if (nd.nodeType === 1) pending.push(nd);   // 只收集元素节点（含表格容器/弹窗）
+        }
+      }
+      if (pending.length && !scheduled) {
+        scheduled = true;
+        setTimeout(flush, 120);
+      }
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
   }
 })();

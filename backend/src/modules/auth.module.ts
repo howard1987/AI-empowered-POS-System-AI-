@@ -9,6 +9,7 @@ import { AuthUser, CurrentUser, JWT_SECRET, Public, clearAuthStateCache } from '
 import { lanIPv4, MDNS_HOST } from '../common/cert';
 import { q as qSetting } from '../common/db';
 import { allow, failAndLock, lockedFor, clearFailures, clientIp } from '../common/ratelimit';
+import { detectDeviceType, resolveDeviceName, DEVICE_TYPE_CN } from '../common/device-name';  // V5.0.11d 设备名/类型自动识别
 import { notifyStaff } from '../common/notices';
 import { checkPasswordPolicy } from '../common/password-policy';
 
@@ -80,45 +81,362 @@ async function findAdminHint(): Promise<{ empNo: string; name: string } | null> 
 // ─── 扫码登录票据（内存态：5 分钟一次性，重启即失效）───
 const qrTickets = new Map<string, { empId: number; storeId: number; exp: number }>();
 
+/* ══════════════ V5.0.11 设备授权辅助（P0 配额 + P1 硬件身份）══════════════ */
+
+/** 客户端上报的设备凭据 */
+type DeviceCtx = {
+  code?: string;        // 设备码（PC-/MB- 前缀或旧随机码）
+  type?: string;        // pc / mobile / pad
+  pubkey?: string;      // P1：base64 SPKI 公钥
+  sig?: string;         // P1：base64 签名
+  ts?: number;          // P1：签名时的毫秒时间戳（防重放）
+  nonce?: string;       // P1：一次性随机串（防重放）
+  recovery?: string;    // 应急恢复码（仅当设备被挡时前端才带）
+  pair?: string;        // 配对码（V5.0.11b：仅当设备「待授权」且用户输入了配对码时才带）
+  name?: string;        // 设备显示名（V5.0.11e：APK 可自报 Android 设备名，如「vivo X100」）
+};
+
+/** 角色 → 设备配额档位（决策 1-C，可在后台「设备管理」调整） */
+const ROLE_LIMIT_TIER: Array<{ re: RegExp; key: 'pos.device.limit.cashier' | 'pos.device.limit.manager'; dflt: number }> = [
+  { re: /收银员|库管|仓管/, key: 'pos.device.limit.cashier', dflt: 1 },
+  { re: /店长|财务|经理|管理员|总经理|老板/, key: 'pos.device.limit.manager', dflt: 2 },
+];
+
+/** 员工的角色名列表 */
+async function roleNamesOf(empId: number | string): Promise<string[]> {
+  const r = await q<{ name: string }>(
+    `SELECT r.name FROM roles r JOIN employee_roles er ON er.role_id=r.id WHERE er.employee_id=$1`, [Number(empId)]);
+  return r.map(x => String(x.name));
+}
+
+/** 该员工的设备配额（多角色取最宽松档；无匹配角色按收银员档，但至少 1 台） */
+async function deviceQuotaOf(empId: number | string, roles: string[]): Promise<number> {
+  let quota = 0;
+  for (const r of roles) {
+    for (const t of ROLE_LIMIT_TIER) {
+      if (t.re.test(r)) { quota = Math.max(quota, Number(await getSetting(t.key, t.dflt)) || t.dflt); }
+    }
+  }
+  if (quota === 0) quota = Math.max(1, Number(await getSetting('pos.device.limit.cashier', 1)) || 1);
+  return quota;
+}
+
+/** 设备签名载荷：客户端与服务端必须逐字节一致（改动任一侧都会导致验签失败） */
+function deviceSignPayload(d: DeviceCtx, empNo: string): string {
+  return `${empNo}|${String(d.code || '')}|${Number(d.ts) || 0}|${String(d.nonce || '')}`;
+}
+
+/** 验签：base64(SPKI 公钥) + base64(签名)，RSA-SHA256（PKCS#1 v1.5）
+ *  Android Keystore 的 SHA256withRSA 与 WebCrypto RSASSA-PKCS1-v1_5 产出的格式 Node 可直接验。 */
+function verifyDeviceSig(pubkeyB64: string, sigB64: string, payload: string): boolean {
+  try {
+    const key = crypto.createPublicKey({ key: Buffer.from(pubkeyB64, 'base64'), format: 'der', type: 'spki' });
+    return crypto.verify('sha256', Buffer.from(payload, 'utf8'), key, Buffer.from(sigB64, 'base64'));
+  } catch { return false; }
+}
+
+/** 防重放：nonce 5 分钟内不可复用（登录请求量级小，内存表足够；多实例部署需换 Redis） */
+const usedNonces = new Map<string, number>();
+function nonceFresh(nonce: string): boolean {
+  const now = Date.now();
+  for (const [k, t] of usedNonces) if (now - t > 5 * 60_000) usedNonces.delete(k);
+  if (!nonce) return false;
+  if (usedNonces.has(nonce)) return false;
+  usedNonces.set(nonce, now);
+  return true;
+}
+
+/** 本机回环地址判定：127.0.0.0/8、::1、IPv4-mapped 的 127.x。
+ *  来自这里面的请求＝进程就跑在这台服务器上，具备本机管理员权限，
+ *  设备授权（防的是「拿别人设备码/在别人手机上登录」）对它没有意义。 */
+function isLoopbackIp(ip: string): boolean {
+  const s = String(ip || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (!s) return false;
+  if (s === '::1' || s === '0:0:0:0:0:0:0:1') return true;
+  const m = s.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  const v4 = m ? m[1] : s;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v4);
+}
+
+/** 应急恢复码：环境变量 DEVICE_RECOVERY_CODE 优先，其次后台「设备管理」里的设置项。
+ *  定长哈希比较，避免按字符提前返回而泄露前缀。 */
+async function recoveryCodeOk(input: string): Promise<boolean> {
+  const code = String(input || '').trim();
+  if (!code) return false;
+  const fromEnv = String(process.env.DEVICE_RECOVERY_CODE || '').trim();
+  const stored = fromEnv ? fromEnv : String(await getSetting('pos.device.recovery.hint', '') || '').trim();
+  if (!stored) return false;
+  const a = crypto.createHash('sha256').update(stored).digest();
+  const b = crypto.createHash('sha256').update(code).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+/* ─────────── 配对码（V5.0.11b）───────────
+ * 取代「管理员按设备码手工审批」：管理员为某台待授权设备生成一个短码，
+ * 员工在登录框输入该码 → 配对成功 → 该设备转为已授权 → 登录放行。
+ * 安全前提：配对请求走的是正常登录接口，工号密码在此之前已校验通过；
+ * 且设备记录本身也只有凭据校验通过后才会被登记为「待授权」。
+ * 故配对码是凭证之上的第二道确认，而不是一个可匿名换取授权的独立通道。 */
+
+/** 配对码字母表：去掉 0/O/1/I/L 等易混淆字符，减少电话/微信转抄出错 */
+const PAIR_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+const PAIR_CODE_LEN = 8;
+
+/** 生成随机配对码（无外部依赖，crypto.randomInt 均匀取值） */
+export function genPairCode(len = PAIR_CODE_LEN): string {
+  let s = '';
+  for (let i = 0; i < len; i++) s += PAIR_ALPHABET[crypto.randomInt(0, PAIR_ALPHABET.length)];
+  return s;
+}
+
+/** 定长不比较（与 recoveryCodeOk 同理，避免按字符提前返回泄露前缀） */
+function pairCodeEquals(a: string, b: string): boolean {
+  const ha = crypto.createHash('sha256').update(String(a || '').trim().toUpperCase()).digest();
+  const hb = crypto.createHash('sha256').update(String(b || '').trim().toUpperCase()).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+/** 配对码是否仍可使用：未过期且未用尽。返回失败原因（成功时为 ''）。 */
+export function pairCodeUsable(row: any, now = Date.now()): string {
+  if (!row || !row.pair_code) return '该设备没有待用的配对码，请联系管理员生成';
+  if (row.pair_expires_at && new Date(row.pair_expires_at).getTime() < now) return '配对码已过期，请联系管理员重新生成';
+  const max = Number(row.pair_max_uses) || 0;
+  if (max > 0 && Number(row.pair_used || 0) >= max) return '配对码使用次数已用尽，请联系管理员重新生成';
+  return '';
+}
+
+/** 从登录请求体提取设备凭据。
+ *  兼容两种形态：① 旧客户端只传扁平的 deviceCode；② 新客户端传 device:{code,type,pubkey,sig,ts,nonce}。
+ *  应急恢复码 recovery 允许放在顶层——前端仅在收到 40307（设备未授权）后才带它重试。 */
+function devCtxOf(body: any): DeviceCtx {
+  const d = (body && body.device) || {};
+  const pick = (k: string) => d[k] ?? (body ? body[k] : undefined);
+  return {
+    code: String(pick('code') ?? pick('deviceCode') ?? '').trim(),
+    type: String(pick('type') ?? '').trim(),
+    pubkey: String(pick('pubkey') ?? '').trim(),
+    sig: String(pick('sig') ?? '').trim(),
+    ts: Number(pick('ts') ?? 0) || 0,
+    nonce: String(pick('nonce') ?? '').trim(),
+    recovery: String(pick('recovery') ?? '').trim(),
+    pair: String(pick('pair') ?? pick('pairCode') ?? '').trim(),
+    name: String(pick('name') ?? pick('deviceName') ?? '').trim().slice(0, 60),
+  };
+}
+
 // ─── Service ───
 class AuthService {
-  /** V4.21.1 收银机设备校验：pos.device.auth 开启后，员工登录须使用已授权设备。
-   *  首次见到设备码自动登记为「待授权」（40307 带设备码提示管理员审批）；
-   *  ADMIN 超管豁免（保证老板永远能登录审批，防锁死）。MAC 浏览器不可得，采用设备码+UA 白名单。 */
-  private async checkDeviceAuth(emp: any, deviceCode: string, ua: string, ip: string) {
-    const on = await getSetting('pos.device.auth', false);
-    if (!on || on === 'false' || on === '0' || on === 0) return;
-    if (await isSuperAdmin(emp.id)) return;   // 超管豁免：老板端永远可登录（审批入口不被锁）；V4.24.0 改按角色判定
+  /* V5.0.11 设备授权加固。修复的真实缺陷：此前 pos.device.auth 默认关 + 超管无条件豁免
+   * + 设备码由前端自生成（可任意伪造） ⇒ 任何人知道账密即可在任意设备登录。
+   * 现在：开关默认开、超管不豁免（改由应急恢复码兜底）、设备码须通过公钥验签（P1）。
+   * dev: { code, type, pubkey, sig, ts, nonce, recovery } */
+  private async checkDeviceAuth(emp: any, dev: DeviceCtx, ua: string, ip: string) {
+    const on = await getSetting('pos.device.auth', true);
+    if (on === false || on === 'false' || on === '0' || on === 0) return;   // 开关关闭才跳过
+
+    // ── V5.0.11c 防引导死锁：回环地址豁免 ──
+    // 设备授权会形成死锁：要授权设备得先登录，要登录得先被授权。
+    // 唯一能无条件打开后台的，是「人就在服务器这台机器上」——那本来就已有本机管理员权限，
+    // 再要求它先注册设备码没有意义，反而把管理员锁在门外。
+    // 仅对 127.0.0.0/8 与 ::1 生效；局域网里其它机器（手机、同事电脑）依然必须走授权。
+    if (isLoopbackIp(ip) && (await getSetting('pos.device.auth.loopback.bypass', true)) !== false) {
+      const c = String(dev.code || '').trim().toUpperCase();
+      // 回环 = 就在服务器这台机器上，直接取本机计算机名（Windows 上就是「计算机名」，如 YL）。
+      // 这是浏览器永远拿不到的信息，只有服务端读得到，对「哪台是自己的电脑」很关键。
+      let hostName = '';
+      try { hostName = String(require('os').hostname() || '').slice(0, 60); } catch { /* 取不到就算了 */ }
+      if (c) {
+        const d = await q1<any>(`SELECT id, status FROM pos_devices WHERE store_id=$1 AND device_code=$2`,
+          [emp.store_id, c]);
+        if (d) {
+          // 「待授权」直接转正（这正是本条豁免要解决的死锁）；
+          // 「已停用」是管理员显式收回权限，尊重该意图不动 —— 真要恢复走 CLI。
+          await q(`UPDATE pos_devices SET last_seen_at=now(), last_ip=$2,
+                       status = CASE WHEN status='待授权' THEN '已授权' ELSE status END,
+                       device_name=COALESCE(NULLIF(device_name,''), $3)
+                    WHERE id=$1`, [d.id, ip, hostName]);
+        }
+        /* V5.0.14d：回环登录**不再自动登记新设备**。本机请求本来就永久豁免授权（上面直接 return），
+         * 登记纯粹是为了列表展示；但每个新浏览器配置（含自动化测试的临时配置）都会生成新设备码，
+         * 自动登记会让「授权设备」列表被同名「YL」快速刷屏（真机截图实测堆了 5+ 条）。
+         * 只更新已有行（老设备保留计算机名标注），新码不再入库。 */
+      }
+      await audit(emp.store_id, emp.id, '系统', 'pos_device.loopback_bypass', 'pos_device', 0, { code: c, ip });
+      return;
+    }
+
+    const deviceCode = dev.code;
     const code = String(deviceCode || '').trim().toUpperCase();
-    if (!code) throw new BizException(40306, '设备授权已开启：本机尚未登记设备码，请刷新页面后重试', 403);
-    if (!/^[A-Z0-9-]{4,32}$/.test(code)) throw new BizException(40003, '设备码格式非法', 403);
-    const row = await q1<any>(
+    if (!code) throw new BizException(40306, '设备授权已开启：本机尚未生成设备码，请刷新页面后重试', 403);
+    if (!/^[A-Z0-9-]{4,40}$/.test(code)) throw new BizException(40003, '设备码格式非法', 403);
+    const dType = ['pc', 'mobile', 'pad'].includes(String(dev.type)) ? String(dev.type) : null;
+    const uaShort = String(ua || '').slice(0, 400);
+    let row = await q1<any>(
       `SELECT * FROM pos_devices WHERE store_id=$1 AND device_code=$2`, [emp.store_id, code]);
+
+    // 应急恢复码（决策 2-A：超管不豁免，靠恢复码防锁死）。
+    // 必须放在「未登记」分支之前：否则全新设备会先被登记成待授权并直接抛错，
+    // 恢复码根本没机会生效 → 管理员换新设备后永远登不上（实测踩到）。
+    if (dev.recovery && await recoveryCodeOk(dev.recovery)) {
+      if (!row) {
+        row = await q1<any>(
+          `INSERT INTO pos_devices (store_id, device_code, device_type, device_name, ua, status, last_ip)
+           VALUES ($1,$2,$3,$4,$5,'已授权',$6) RETURNING *`,
+          [emp.store_id, code, detectDeviceType(ua, dev.type), resolveDeviceName({ reported: dev.name, ua, type: dev.type }), uaShort, ip]);
+      } else if (row.status !== '已授权') {
+        row = await q1<any>(
+          `UPDATE pos_devices SET status='已授权', approved_at=now(), last_seen_at=now(), last_ip=$2,
+                           device_type=COALESCE($3,device_type),
+                           device_name=COALESCE(NULLIF(device_name,''), $5),
+                           ua=COALESCE(NULLIF($4,''),ua)
+            WHERE id=$1 RETURNING *`, [row.id, ip, detectDeviceType(ua, dev.type), uaShort, resolveDeviceName({ reported: dev.name, ua, type: dev.type })]);
+      }
+      await audit(emp.store_id, emp.id, '系统', 'pos_device.recover', 'pos_device', Number(row.id),
+        { code, by: 'recovery-code' });
+    }
+
     if (!row) {
-      await q(`INSERT INTO pos_devices (store_id, device_code, ua, status, last_ip)
-               VALUES ($1,$2,$3,'待授权',$4) ON CONFLICT (store_id, device_code) DO NOTHING`,
-        [emp.store_id, code, String(ua || '').slice(0, 400), ip]);
-      throw new BizException(40307, `本机设备待授权（设备码 ${code}）：请管理员在后台「系统设置→收银机授权」审批通过后再登录`, 403);
+      // 门店授权设备总量上限（0=不限；超限则连「待授权」都不登记）
+      const cap = Number(await getSetting('pos.device.store.cap', 0)) || 0;
+      if (cap > 0) {
+        const n = await q1<any>(`SELECT count(*)::int AS n FROM pos_devices WHERE store_id=$1 AND status<>'已停用'`, [emp.store_id]);
+        if (Number(n?.n || 0) >= cap) {
+          throw new BizException(40311,
+            `本门店授权设备已达上限（${cap} 台），无法登记新设备。请联系管理员在「系统设置 → 设备管理」调整上限或停用闲置设备`, 403);
+        }
+      }
+      // 决策 5：首次见到即登记为「待授权」，并把设备码自动上报管理后台（老板端消息中心可见）
+      await q(`INSERT INTO pos_devices (store_id, device_code, device_type, device_name, ua, status, last_ip)
+               VALUES ($1,$2,$3,$4,$5,'待授权',$6) ON CONFLICT (store_id, device_code) DO NOTHING`,
+        [emp.store_id, code, detectDeviceType(ua, dev.type), resolveDeviceName({ reported: dev.name, ua, type: dev.type }), uaShort, ip]);
+      try {
+        await notifyStaff(Number(emp.store_id), 'device_pending',
+          `新设备待授权：${code}（${DEVICE_TYPE_CN[detectDeviceType(ua, dev.type) || ''] || '未知设备'} ${resolveDeviceName({ reported: dev.name, ua, type: dev.type })}，来自 ${emp.emp_no} ${emp.name}）`,
+          { deviceCode: code, deviceType: detectDeviceType(ua, dev.type), deviceName: resolveDeviceName({ reported: dev.name, ua, type: dev.type }),
+            empNo: emp.emp_no, name: emp.name, ip },
+          'sys.settings', `devreq:${code}`);
+      } catch { /* 上报失败不阻断登录 */ }
+      throw new BizException(40307, `该设备未授权，暂无法登录，请联系管理员进行授权（设备码 ${code}）`, 403);
     }
     if (row.status === '待授权') {
-      await q(`UPDATE pos_devices SET last_seen_at=now(), last_ip=$2, ua=COALESCE(NULLIF($3,''),ua) WHERE id=$1`,
-        [row.id, ip, String(ua || '').slice(0, 400)]);
-      throw new BizException(40307, `本机设备待授权（设备码 ${code}）：请管理员在后台「系统设置→收银机授权」审批通过后再登录`, 403);
+      // ── 配对码流程（V5.0.11b）：码正确 → 配对成功 → 授权成功 → 继续走下面的正常登录 ──
+      if (dev.pair) {
+        const why = pairCodeUsable(row);
+        if (!why && pairCodeEquals(row.pair_code, dev.pair)) {
+          // 消费一次：达到上限则立即作废，避免同码被重复转发使用
+          const max = Number(row.pair_max_uses) || 0;
+          const used = Number(row.pair_used || 0) + 1;
+          /* V5.0.14f：配对成功即**换绑公钥**（TOFU 经人肉确认刷新）。旧版只解锁状态不动公钥——
+           * 若设备端密钥曾重生成（WebView 回收 IndexedDB 等），登记的旧公钥与本次签名不再匹配，
+           * 下次登录验签必失败 → 自动翻回「待授权」→ 又要配对……无限循环（真机投诉根因）。
+           * 配对码本身就是管理员的人工确认，凭它换绑新公钥安全等价于重新审批。 */
+          await q(`UPDATE pos_devices
+                      SET status='已授权', approved_at=now(), paired_at=now(),
+                          pair_used=$2,
+                          pair_code = CASE WHEN $3 > 0 AND $2 >= $3 THEN NULL ELSE pair_code END,
+                          pubkey = COALESCE(NULLIF($10,''), pubkey),
+                          last_emp_id=$4, last_emp_no=$5, last_emp_name=$6, last_emp_at=now(),
+                          last_seen_at=now(), last_ip=$7, device_type=COALESCE($8,device_type),
+                          device_name=COALESCE(NULLIF(device_name,''), $9)
+                    WHERE id=$1`,
+            [row.id, used, max, emp.id, emp.emp_no, emp.name, ip, detectDeviceType(ua, dev.type),
+              resolveDeviceName({ reported: dev.name, ua, type: dev.type }), String(dev.pubkey || '')]);
+          await audit(emp.store_id, emp.id, '系统', 'pos_device.pair', 'pos_device', Number(row.id),
+            { code, used, max: max || 'unlimited', pubkeyRebound: !!dev.pubkey });
+          row.status = '已授权';
+        } else {
+          // 码错误/过期/用尽：给出明确原因，员工可反复重试
+          await q(`UPDATE pos_devices SET last_seen_at=now(), last_ip=$2 WHERE id=$1`, [row.id, ip]);
+          throw new BizException(40317,
+            (why || '配对码不正确') + `。请核对后重试，或联系管理员重新获取（设备码 ${code}）`, 403);
+        }
+      } else {
+        // 恢复码已在上方统一处理；走到这里说明既没配对码也没恢复码
+        await q(`UPDATE pos_devices SET last_seen_at=now(), last_ip=$2, device_type=COALESCE($3,device_type),
+                         ua=COALESCE(NULLIF($4,''),ua) WHERE id=$1`,
+          [row.id, ip, dType, uaShort]);
+        throw new BizException(40307, `该设备未授权，暂无法登录，请联系管理员进行授权（设备码 ${code}）`, 403);
+      }
     }
     if (row.status === '已停用') {
       throw new BizException(40308, '本机授权已被停用，请联系管理员（设备码 ' + code + '）', 403);
     }
-    // P4 设备绑定强化：已授权设备的 UA 与登记时不一致 → 视为新设备，转待授权复审
-    // （UA 仅为辅助信号、可伪造，非唯一绑定；但可显著降低"仅知设备码即可任意终端登录"的风险）
-    const storedUa = String(row.ua || '').trim();
-    const curUa = String(ua || '').trim();
-    if (storedUa && curUa && storedUa !== curUa) {
-      await q(`UPDATE pos_devices SET status='待授权', ua=$2, last_seen_at=now(), last_ip=$3 WHERE id=$1`,
-        [row.id, curUa.slice(0, 400), ip]);
-      throw new BizException(40307, `设备 UA 与登记时不一致（设备码 ${code}），已转待授权复审，请联系管理员重新审批`, 403);
+    // ── P1 硬件级设备身份验签 ──
+    // 已登记公钥的设备，每次登录都必须用不可导出的私钥对「工号|设备码|时间戳|随机串」签名。
+    // 攻击者即使把设备码抄到另一台电脑/手机，也拿不到私钥 → 登不进去。
+    if (row.pubkey) {
+      const requireSig = await getSetting('pos.device.require.signature', false) === true;
+      if (!dev.sig) {
+        if (requireSig) throw new BizException(40312, `设备签名缺失（设备码 ${code}），请升级收银端/APP 后重试`, 403);
+      } else {
+        const ts = Number(dev.ts) || 0;
+        if (!ts || Math.abs(Date.now() - ts) > 5 * 60_000) {
+          throw new BizException(40313, '设备签名已过期，请重新登录', 403);
+        }
+        if (!nonceFresh(String(dev.nonce || ''))) {
+          throw new BizException(40313, '设备签名重复（疑似重放攻击），请重新登录', 403);
+        }
+        if (!verifyDeviceSig(row.pubkey, dev.sig, deviceSignPayload(dev, emp.emp_no))) {
+          await q(`UPDATE pos_devices SET status='待授权' WHERE id=$1`, [row.id]);
+          throw new BizException(40314,
+            `设备签名校验失败（设备码 ${code}）：该设备码可能已被复制到其他设备，已转待授权，请管理员重新审批`, 403);
+        }
+      }
     }
-    await q(`UPDATE pos_devices SET last_seen_at=now(), last_ip=$2, ua=COALESCE(NULLIF($3,''),ua) WHERE id=$1`,
-      [row.id, ip, curUa.slice(0, 400)]);
+
+    // ── 设备↔员工绑定（4A）—— V5.0.11b 起**默认关闭** ──
+    // 业务实况：收银台共用，一台设备要服务多个员工。开启后设备会被第一个人占住，
+    // 其余员工登不进来（40315），属于阻塞营业的误伤。仅在「专用设备/专用机」场景才值得开。
+    if (await getSetting('pos.device.bind.employee', false) === true) {
+      if (row.employee_id && Number(row.employee_id) !== Number(emp.id)) {
+        const other = await q1<any>(`SELECT emp_no, name FROM employees WHERE id=$1`, [row.employee_id]);
+        throw new BizException(40315,
+          `该设备已绑定其他员工（${other?.emp_no || '?'} ${other?.name || ''}），无法登录本账号。`
+          + '如需换人使用，请联系管理员在「系统设置 → 设备管理」解绑或停用该设备', 403);
+      }
+      if (!row.employee_id) {
+        const roles = await roleNamesOf(emp.id);
+        const quota = await deviceQuotaOf(emp.id, roles);
+        const used = await q1<any>(
+          `SELECT count(*)::int AS n FROM pos_devices
+            WHERE store_id=$1 AND employee_id=$2 AND status='已授权' AND id<>$3`,
+          [emp.store_id, emp.id, row.id]);
+        if (Number(used?.n || 0) >= quota) {
+          const tier = roles.some(r => ROLE_LIMIT_TIER[1].re.test(r)) ? '店长/财务/管理员' : '收银员/库管';
+          throw new BizException(40316,
+            `已达到${tier}的设备数上限（${quota} 台）。请先在「系统设置 → 设备管理」停用闲置设备，或调高该配额`, 403);
+        }
+        await q(`UPDATE pos_devices SET employee_id=$2, bound_at=now() WHERE id=$1`, [row.id, emp.id]);
+        row.employee_id = emp.id;
+      }
+    }
+
+    // ── P1 TOFU：首次见到公钥即登记（此后每次登录都必须验签通过）──
+    if (!row.pubkey && dev.pubkey) {
+      await q(`UPDATE pos_devices SET pubkey=$2, sig_algo='RSA-SHA256' WHERE id=$1`,
+        [row.id, String(dev.pubkey).slice(0, 800)]);
+      if (await getSetting('pos.device.require.signature', false) === true) {
+        throw new BizException(40312, `设备公钥已登记，请重新登录一次以完成签名校验（设备码 ${code}）`, 403);
+      }
+    }
+    // V5.0.11d：登录时顺手补齐 device_name / device_type（仅当为空时），
+    // 这样历史上已登记但名称为空的设备，下次登录就自动显示友好名称
+    await q(`UPDATE pos_devices SET last_seen_at=now(), last_ip=$2, last_login_at=now(),
+                     last_emp_id=$3, last_emp_no=$4, last_emp_name=$5, last_emp_at=now(),
+                     device_type=COALESCE($6,device_type),
+                     device_name=COALESCE(NULLIF(device_name,''), $7),
+                     ua=COALESCE(NULLIF($8,''),ua) WHERE id=$1`,
+      [row.id, ip, emp.id, emp.emp_no, emp.name, detectDeviceType(ua, dev.type),
+        resolveDeviceName({ reported: dev.name, ua, type: dev.type }), uaShort]);
+  }
+
+  /** 单会话（决策 1：同一时间一个账号只允许一台设备在线）
+   *  复用「改密/停用」的吊销机制：登录时 token_version+1，旧设备的 JWT 里 tv 落后即被守卫拒绝（60 秒内）。 */
+  private async enforceSingleSession(emp: any) {
+    if (await getSetting('pos.device.single.session', true) !== true) return;
+    await q(`UPDATE employees SET token_version=COALESCE(token_version,0)+1 WHERE id=$1`, [emp.id]);
+    clearAuthStateCache(Number(emp.id));
+    emp.token_version = Number(emp.token_version || 0) + 1;   // 同步内存态，本次签发即带新 tv
   }
 
   /** V4.24.0：签发 token（登录 / 扫码登录 / PIN 登录三路共用，权限点与安全标记口径一致） */
@@ -153,15 +471,16 @@ class AuthService {
   }
 
   /** 员工登录：bcrypt 校验 + 权限点打入 JWT（方案 十 权限与数据安全） */
-  async login(empNo: string, password: string, deviceCode?: string, ua?: string, ip?: string) {
+  async login(empNo: string, password: string, dev?: DeviceCtx, ua?: string, ip?: string) {
     if (!empNo || !password) throw new BizException(40001, '工号与密码必填');
     const emp = await q1<any>(
       `SELECT * FROM employees WHERE emp_no=$1 AND status='在职'`, [empNo],
     );
     if (!emp || !emp.password_hash) throw new BizException(41001, '工号或密码错误', 401);
     if (!bcrypt.compareSync(password, emp.password_hash)) throw new BizException(41002, '工号或密码错误', 401);
-    // V4.21.1：凭证通过后校验设备授权（先验凭证防未授权设备探测账号/刷待授权记录）
-    await this.checkDeviceAuth(emp, deviceCode || '', ua || '', ip || '');
+    // 凭证通过后校验设备授权（先验凭证防未授权设备探测账号/刷待授权记录）
+    await this.checkDeviceAuth(emp, dev || {}, ua || '', ip || '');
+    await this.enforceSingleSession(emp);   // 决策 1：同一时间一个账号只允许一台设备在线
     return this.issue(emp, 'auth.login');
   }
 
@@ -187,15 +506,16 @@ class AuthService {
   }
 
   /** 手机端扫码换 token（PWA 打开链接 #qr=<ticket> 自动调用）：一次性、过期拒绝 */
-  async qrLogin(ticket: string, deviceCode?: string, ua?: string, ip?: string) {
+  async qrLogin(ticket: string, dev?: DeviceCtx, ua?: string, ip?: string) {
     const t = ticket ? qrTickets.get(ticket) : null;
     if (!t) throw new BizException(41003, '登录二维码无效或已被使用', 401);
     qrTickets.delete(ticket);                               // 先消费：保证一次性
     if (t.exp < Date.now()) throw new BizException(41004, '登录二维码已过期，请在后台重新生成', 401);
     const emp = await q1<any>(`SELECT * FROM employees WHERE id=$1 AND status='在职'`, [t.empId]);
     if (!emp) throw new BizException(41001, '员工不存在或已离职', 401);
-    // V4.21.1：扫码登录同样校验设备授权（手机/PAD 也是收银设备）
-    await this.checkDeviceAuth(emp, deviceCode || '', ua || '', ip || '');
+    // 扫码登录同样校验设备授权（手机/PAD 也是收银设备）
+    await this.checkDeviceAuth(emp, dev || {}, ua || '', ip || '');
+    await this.enforceSingleSession(emp);
     return this.issue(emp, 'auth.qr_login');
   }
 
@@ -269,13 +589,14 @@ class AuthService {
   }
 
   /** 工号 + PIN 免密登录（PIN 未设置 → 41001 提示改用密码） */
-  async pinLogin(empNo: string, pin: string, deviceCode?: string, ua?: string, ip?: string) {
+  async pinLogin(empNo: string, pin: string, dev?: DeviceCtx, ua?: string, ip?: string) {
     const no = String(empNo || '').trim();
     if (!no || !pin) throw new BizException(40001, '工号与 PIN 必填');
     const emp = await q1<any>(`SELECT * FROM employees WHERE emp_no=$1 AND status='在职'`, [no]);
     if (!emp || !emp.pin_hash) throw new BizException(41011, '该工号未设置 PIN，请改用密码登录', 401);
     if (!bcrypt.compareSync(String(pin), emp.pin_hash)) throw new BizException(41012, 'PIN 不正确', 401);
-    await this.checkDeviceAuth(emp, deviceCode || '', ua || '', ip || '');
+    await this.checkDeviceAuth(emp, dev || {}, ua || '', ip || '');
+    await this.enforceSingleSession(emp);
     return this.issue(emp, 'auth.pin_login');
   }
 
@@ -404,7 +725,7 @@ class AuthController {
   @Public()
   @HttpCode(200)
   @Post('login')
-  async login(@Body() body: { empNo?: string; password?: string; deviceCode?: string }, @Req() req: any) {
+  async login(@Body() body: any, @Req() req: any) {
     // V4.14.4 安全加固：登录爆破防护——账号维连错 5 次锁 15 分钟 + IP 维 100 次/5 分钟
     const empNo = String(body.empNo || '');
     const ipKey = 'ip:' + clientIp(req);
@@ -413,8 +734,8 @@ class AuthController {
     if (lockSec > 0) throw new BizException(42901, `密码连续错误已锁定，请 ${Math.ceil(lockSec / 60)} 分钟后再试`, 429);
     if (!allow(ipKey, 100, 5 * 60_000)) throw new BizException(42902, '尝试过于频繁，请稍后再试', 429);
     try {
-      const r = await this.svc.login(empNo, body.password || '',
-        String(body.deviceCode || ''), String(req.headers['user-agent'] || ''), clientIp(req));
+      const r = await this.svc.login(empNo, body.password || '', devCtxOf(body),
+        String(req.headers['user-agent'] || ''), clientIp(req));
       clearFailures(lockKey);   // 登录成功清零失败计数
       return r;
     } catch (e: any) {
@@ -471,15 +792,15 @@ class AuthController {
   @Public()
   @HttpCode(200)
   @Post('pin-login')
-  async pinLogin(@Body() b: { empNo?: string; pin?: string; deviceCode?: string }, @Req() req: any) {
+  async pinLogin(@Body() b: any, @Req() req: any) {
     const empNo = String(b.empNo || '');
     const lockKey = 'pin:' + empNo.trim().toLowerCase();
     const lockSec = lockedFor(lockKey);
     if (lockSec > 0) throw new BizException(42901, `PIN 连续错误已锁定，请 ${Math.ceil(lockSec / 60)} 分钟后再试`, 429);
     if (!allow('ip:' + clientIp(req), 200, 5 * 60_000)) throw new BizException(42902, '尝试过于频繁，请稍后再试', 429);
     try {
-      const r = await this.svc.pinLogin(empNo, String(b.pin || ''),
-        String(b.deviceCode || ''), String(req.headers['user-agent'] || ''), clientIp(req));
+      const r = await this.svc.pinLogin(empNo, String(b.pin || ''), devCtxOf(b),
+        String(req.headers['user-agent'] || ''), clientIp(req));
       clearFailures(lockKey);
       return r;
     } catch (e: any) {
@@ -546,18 +867,26 @@ class AuthController {
   @Public()
   @HttpCode(200)
   @Post('qr-login')
-  async qrLogin(@Body() body: { ticket?: string; deviceCode?: string }, @Req() req: any) {
+  async qrLogin(@Body() body: any, @Req() req: any) {
     // V4.14.4：票据本身 128bit 随机无爆破面，IP 维频控兜底
     if (!allow('qrl:' + clientIp(req), 30, 5 * 60_000)) throw new BizException(42902, '尝试过于频繁，请稍后再试', 429);
-    return this.svc.qrLogin(String(body.ticket || ''), String(body.deviceCode || ''),
+    return this.svc.qrLogin(String(body.ticket || ''), devCtxOf(body),
       String(req.headers['user-agent'] || ''), clientIp(req));
   }
 
   @Get('me')
   async me(@CurrentUser() user: AuthUser) {
     const st = await q1<any>(`SELECT name FROM stores WHERE id=$1`, [user.storeId || 1]);
+    // V5.0.11：返回角色名列表。手机端据此分流「老板端 / 员工移动端」——
+    //   此前 /auth/me 只有 perms，前端无法区分管理者与普通员工，导致管理员登录后
+    //   也被直接丢进收银台。角色是权限的来源（perms 由角色推导），用它做分流最准确。
+    const roles = await q<{ name: string }>(
+      `SELECT r.name FROM roles r
+         JOIN employee_roles er ON er.role_id = r.id
+        WHERE er.employee_id = $1 ORDER BY r.name`, [user.sub]);
     return { staffId: user.sub, empNo: user.empNo, name: user.name, storeId: user.storeId, perms: user.perms,
              storeName: String(st?.name || ''),
+             roles: roles.map(r => r.name),
              // V5.0.0 连锁：前端据此裁剪菜单（hqOnly）与显示门店选择器
              dataScope: user.ds ?? 'all', scopeStores: user.ss ?? null, hq: !!user.hq };
   }

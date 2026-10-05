@@ -314,6 +314,52 @@ export class FinanceNoticesController {
       [Number(id), Number(u.sub), u.storeId]);
     return { ok: true };
   }
+
+  /** V5.0.13 一键全部已读（老板端消息中心） */
+  @Post('read-all')
+  async markAllRead(@CurrentUser() u: AuthUser) {
+    const { storeId, perms } = this.visibleFilter(u);
+    const before = await q1<{ n: string }>(
+      `SELECT count(*) AS n FROM notices
+        WHERE store_id=$1 AND (perm = ANY($3::text[]) OR '*' = ANY($3::text[]))
+          AND NOT (read_by @> to_jsonb($2::int))`, [storeId, Number(u.sub), perms]);
+    await q(
+      `UPDATE notices SET read_by = read_by || to_jsonb($2::int)
+        WHERE store_id=$1 AND (perm = ANY($3::text[]) OR '*' = ANY($3::text[]))
+          AND NOT (read_by @> to_jsonb($2::int))`,
+      [storeId, Number(u.sub), perms]);
+    return { ok: true, updated: Number(before?.n ?? 0) };
+  }
+
+  /** V5.0.13b 批量标记已读：body { ids:number[] }，仅限本人可见的消息，返回实际新标记数 */
+  @Post('read-batch')
+  async markBatchRead(@Body() b: { ids?: number[] }, @CurrentUser() u: AuthUser) {
+    const ids = (Array.isArray(b?.ids) ? b.ids : []).map(Number).filter(n => Number.isInteger(n) && n > 0);
+    if (!ids.length) throw new BizException(40001, '未选择消息');
+    const { storeId, perms } = this.visibleFilter(u);
+    const rows = await q<{ id: number }>(
+      `UPDATE notices SET read_by = read_by || to_jsonb($2::int)
+        WHERE store_id=$1 AND (perm = ANY($3::text[]) OR '*' = ANY($3::text[]))
+          AND id = ANY($4::int[]) AND NOT (read_by @> to_jsonb($2::int))
+        RETURNING id`, [storeId, Number(u.sub), perms, ids]);
+    return { ok: true, updated: rows.length };
+  }
+
+  /** V5.0.13b 批量删除已读消息：body { ids?:number[] }。
+   *  安全口径：只删「本人已读」的可见消息（read_by 含当前员工）；传 ids 时未读的自动剔除并返回 skipped。 */
+  @Post('delete-read')
+  async deleteRead(@Body() b: { ids?: number[] }, @CurrentUser() u: AuthUser) {
+    const { storeId, perms } = this.visibleFilter(u);
+    const ids = (Array.isArray(b?.ids) ? b.ids : []).map(Number).filter(n => Number.isInteger(n) && n > 0);
+    const rows = await q<{ id: number }>(
+      `DELETE FROM notices
+        WHERE store_id=$1 AND (perm = ANY($2::text[]) OR '*' = ANY($2::text[]))
+          AND read_by @> to_jsonb($3::int)
+          AND ($4::int[] IS NULL OR id = ANY($4::int[]))
+        RETURNING id`, [storeId, perms, Number(u.sub), ids.length ? ids : null]);
+    const deleted = rows.map(r => Number(r.id));
+    return { ok: true, deleted: deleted.length, skipped: ids.length ? ids.length - deleted.length : 0 };
+  }
 }
 
 @Module({ controllers: [FinanceReconController, FinanceNoticesController], providers: [BillReconService] })

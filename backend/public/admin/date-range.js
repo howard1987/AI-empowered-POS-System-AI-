@@ -35,8 +35,11 @@
       '.drp-preset{font:inherit;font-size:12px;padding:4px 9px;border:1px solid var(--line,#e3ddcf);border-radius:14px;background:#fff;cursor:pointer;color:var(--ink,#222)}',
       '.drp-preset:hover{border-color:var(--pri,#2f7d4f)}',
       '.drp-ok{font:inherit;font-size:12px;padding:4px 14px;border:1px solid var(--pri,#2f7d4f);border-radius:14px;background:var(--pri,#2f7d4f);color:#fff;cursor:pointer;margin-left:auto}',
-      '.drp-mtitle{cursor:pointer;user-select:none}',
+      '.drp-mtitle{cursor:pointer;user-select:none;flex:1;text-align:center;font-size:12.5px;font-weight:600;color:var(--ink,#222)}',
       '.drp-mtitle:hover{color:var(--pri,#2f7d4f);text-decoration:underline}',
+      '.drp-mhead{display:flex;align-items:center;gap:2px;margin-bottom:4px}',
+      '.drp-mnav{flex:none;font:inherit;width:22px;height:22px;line-height:1;border:1px solid var(--line,#e3ddcf);border-radius:5px;background:#fff;cursor:pointer;color:var(--ink-3,#9a9486);font-size:13px}',
+      '.drp-mnav:hover{border-color:var(--pri,#2f7d4f);color:var(--pri,#2f7d4f)}',
       '.drp-grid.pick{grid-template-columns:repeat(3,1fr);padding:2px 8px;gap:4px}',
       '.drp-grid.pick .drp-cell{height:32px;line-height:32px;font-size:12.5px;border-radius:8px}',
       '@media (max-width:640px){',
@@ -133,8 +136,8 @@
     from.type = 'hidden'; to.type = 'hidden';
 
     var _vm0 = firstOfMonth(from.value || today());
-    // 左月默认本月、右月默认上月（V5.0.8）
-    var st = { start: from.value || '', end: to.value || '', vmL: _vm0, vmR: addMonths(_vm0, -1), pickMode: null, pickYear: _vm0.getFullYear() };
+    // 左月默认上月、右月默认本月（V5.0.8）
+    var st = { start: from.value || '', end: to.value || '', vmL: addMonths(_vm0, -1), vmR: _vm0, pickMode: null, pickYear: _vm0.getFullYear() };
     // 快捷预设：默认集；该屏可用 data-drp-presets="键,键" 覆盖（对账单用 m,lm,q,h1）
     var presetKeys = DEFAULT_PRESETS;
     if (from.dataset.drpPresets) {
@@ -169,9 +172,10 @@
         prev.onclick = function (e) { e.stopPropagation(); st.pickYear -= 1; renderCal(); };
         next.onclick = function (e) { e.stopPropagation(); st.pickYear += 1; renderCal(); };
       } else {
-        hint.textContent = '点选起止日期 · ‹左月 ›右月 · 点年月选年';
-        prev.onclick = function (e) { e.stopPropagation(); st.vmL = addMonths(st.vmL, -1); renderCal(); };  // 只动左月
-        next.onclick = function (e) { e.stopPropagation(); st.vmR = addMonths(st.vmR, 1); renderCal(); };    // 只动右月
+        // 日历模式：翻月改由各月份面板自己的 ‹ › 控制，这里不再放全局箭头
+        hint.textContent = '点选起止日期 · 两侧箭头各自翻月 · 点年月快速选年';
+        prev.style.display = 'none';
+        next.style.display = 'none';
       }
       head.appendChild(prev); head.appendChild(hint); head.appendChild(next);
       pop.appendChild(head);
@@ -208,11 +212,27 @@
       var sD = parse(st.start), eD = parse(st.end);
       months.forEach(function (mv, side) {
         var mc = document.createElement('div'); mc.className = 'drp-month';
+        // 每个月份面板自带一对 ‹ ›，独立翻月，互不影响
+        var mh = document.createElement('div'); mh.className = 'drp-mhead';
+        var mPrev = document.createElement('button'); mPrev.type = 'button'; mPrev.className = 'drp-mnav'; mPrev.textContent = '‹';
+        var mNext = document.createElement('button'); mNext.type = 'button'; mNext.className = 'drp-mnav'; mNext.textContent = '›';
+        mPrev.title = '上一'; mNext.title = '下一';
         var mt = document.createElement('div'); mt.className = 'drp-mtitle';
         mt.textContent = mv.getFullYear() + '年' + (mv.getMonth() + 1) + '月';
         mt.title = '点击快速选择年份 / 月份';
         mt.onclick = function (e) { e.stopPropagation(); st.pickMode = side === 0 ? 'L' : 'R'; st.pickYear = mv.getFullYear(); renderCal(); };
-        mc.appendChild(mt);
+        mPrev.onclick = function (e) {
+          e.stopPropagation();
+          if (side === 0) st.vmL = addMonths(st.vmL, -1); else st.vmR = addMonths(st.vmR, -1);
+          renderCal();
+        };
+        mNext.onclick = function (e) {
+          e.stopPropagation();
+          if (side === 0) st.vmL = addMonths(st.vmL, 1); else st.vmR = addMonths(st.vmR, 1);
+          renderCal();
+        };
+        mh.appendChild(mPrev); mh.appendChild(mt); mh.appendChild(mNext);
+        mc.appendChild(mh);
         var g = document.createElement('div'); g.className = 'drp-grid';
         WD.forEach(function (w) { var c = document.createElement('span'); c.className = 'drp-wd'; c.textContent = w; g.appendChild(c); });
         monthCells(mv.getFullYear(), mv.getMonth()).forEach(function (d) {

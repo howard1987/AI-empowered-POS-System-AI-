@@ -216,12 +216,16 @@ function loginView() {
         && !confirm('即将把后台数据发送到非本机地址：\n' + base + '\n登录信息与业务数据将发往该地址，确认继续？')) return;
     localStorage.setItem('api_base', base); API.base = base;
     const empNo = view.querySelector('#lgNo').value.trim();
-    const r = await post('/auth/login', { empNo, password: view.querySelector('#lgPw').value, deviceCode: webDeviceCode() });
-    if (r.code !== 0) { view.querySelector('#lgErr').textContent = r.msg || '登录失败'; return; }
-    setAuth(r.data.token, { name: r.data.name, empNo, perms: r.data.perms,
-      storeId: r.data.storeId, dataScope: r.data.dataScope, scopeStores: r.data.scopeStores, hq: r.data.hq });
-    location.hash = '#/home';
-    route();
+    const r = await post('/auth/login', { empNo, password: view.querySelector('#lgPw').value,
+      device: { code: webDeviceCode(), type: webDeviceType() } });
+    if (r.code !== 0) {
+      // V5.0.11c：设备未授权（40307）/ 配对码错误（40317）→ 弹配对码对话框，
+      // 否则管理员从非服务器本机（如在自己另一台电脑、笔记本上管店）会被挡在门外且毫无出路。
+      if (r.code === 40307 || r.code === 40317) { showDevicePairDialog(r.msg, empNo); return; }
+      view.querySelector('#lgErr').textContent = r.msg || '登录失败';
+      return;
+    }
+    afterLogin(r.data, empNo);
   };
   view.querySelector('#lgPw').addEventListener('keydown', e => { if (e.key === 'Enter') view.querySelector('#lgGo').click(); });
 
@@ -245,16 +249,101 @@ function loginView() {
     if (!empNo || !name || !pw) { view.querySelector('#lgErr').textContent = '工号、姓名、密码均为必填'; return; }
     const btn = view.querySelector('#rgGo'); btn.disabled = true;
     try {
-      const r = await post('/auth/bootstrap-admin', { empNo, name, password: pw, storeName: view.querySelector('#rgStore').value.trim(), deviceCode: webDeviceCode() });
+      const r = await post('/auth/bootstrap-admin', { empNo, name, password: pw,
+        storeName: view.querySelector('#rgStore').value.trim(),
+        device: { code: webDeviceCode(), type: webDeviceType() } });
       if (r.code !== 0) { view.querySelector('#lgErr').textContent = r.msg || '创建失败'; btn.disabled = false; return; }
-      setAuth(r.data.token, { name: r.data.name, empNo, perms: r.data.perms,
-        storeId: r.data.storeId, dataScope: r.data.dataScope, scopeStores: r.data.scopeStores, hq: r.data.hq });
-      location.hash = '#/home'; route();
+      afterLogin(r.data, empNo);
     } catch (e) {
       view.querySelector('#lgErr').textContent = (e && e.msg) || (e && e.message) || '创建失败';
       btn.disabled = false;
     }
   };
+
+  /** 登录/建管理员成功后的统一收尾（配对重试也要走这里，避免两份代码） */
+  function afterLogin(d, empNo) {
+    setAuth(d.token, { name: d.name, empNo, perms: d.perms,
+      storeId: d.storeId, dataScope: d.dataScope, scopeStores: d.scopeStores, hq: d.hq });
+    location.hash = '#/home';
+    route();
+  }
+
+  /* ── V5.0.11c 配对码对话框 ──
+   * 流程：未授权设备登录 → 40307 + 设备码 → 管理员在「授权管理 → 授权设备」为该设备
+   *      生成配对码 → 员工/老板在这里输入 → 配对成功即完成授权并登录。
+   * 另留「应急恢复码」兜底：管理员把自己锁在门外、且配对码也拿不到时用。 */
+  function showDevicePairDialog(msg, empNo) {
+    document.getElementById('dvPairMask')?.remove();
+    const code = webDeviceCode();
+    const m = document.createElement('div');
+    m.className = 'modal-mask'; m.id = 'dvPairMask';
+    m.innerHTML = `<div class="modal" style="max-width:440px">
+      <h3>🔒 该设备未授权</h3>
+      <div class="doc-tip" style="margin:0 0 12px">${esc(msg || '该设备未授权，暂无法登录，请联系管理员进行授权')}</div>
+      <div class="fld"><label>本机设备码（请把它告诉管理员）</label>
+        <input id="dvCodeShow" readonly value="${esc(code)}"
+          style="font-family:Consolas,monospace;font-weight:700;letter-spacing:1px"></div>
+      <div class="doc-tip" style="margin:0 0 12px">管理员在<b>「授权管理 → 授权设备」</b>里找到这个设备码，点「生成配对码」，
+        把配对码告诉你，填在下面即可完成配对与授权。</div>
+      <div class="fld"><label>配对码</label>
+        <input id="dvPairIn" placeholder="例如 K7M2XP9A" autocomplete="off" autocapitalize="characters" maxlength="12"
+          style="font-family:Consolas,monospace;letter-spacing:2px;text-transform:uppercase"></div>
+      <div id="dvPairErr" class="doc-tip" style="margin:0 0 12px;color:#b71c1c;display:none"></div>
+      <div class="doc-foot">
+        <button class="btn pri" id="dvPairGo">配对并登录</button>
+        <button class="btn" id="dvPairX">关闭</button>
+      </div>
+      <details style="margin-top:10px">
+        <summary class="muted" style="cursor:pointer;font-size:12.5px">管理员被锁在门外？用应急恢复码</summary>
+        <div class="fld" style="margin-top:8px"><input id="dvRecIn" type="password" placeholder="应急恢复码" autocomplete="off"></div>
+        <button class="btn" id="dvRecGo" style="width:100%">用恢复码重试</button>
+      </details>
+    </div>`;
+    document.body.appendChild(m);
+
+    const errBox = m.querySelector('#dvPairErr');
+    const showErr = t => { errBox.textContent = t; errBox.style.display = t ? '' : 'none'; };
+    const inp = m.querySelector('#dvPairIn');
+    inp.oninput = () => { inp.value = inp.value.replace(/\s+/g, '').toUpperCase(); };
+    m.querySelector('#dvCodeShow').onclick = e => { e.target.select(); };
+    setTimeout(() => inp.focus(), 60);
+    m.querySelector('#dvPairX').onclick = () => m.remove();
+
+    /** 配对/恢复码重试：把码带进登录请求，成功则 afterLogin */
+    const retry = async (pair, rec) => {
+      const btn = m.querySelector('#dvPairGo');
+      btn.disabled = true; showErr('');
+      try {
+        const dev = { code: webDeviceCode(), type: webDeviceType() };
+        if (pair) dev.pair = pair;
+        if (rec) dev.recovery = rec;
+        const r = await post('/auth/login', { empNo, password: view.querySelector('#lgPw').value, device: dev });
+        if (r.code === 40307) { m.remove(); setTimeout(() => showDevicePairDialog(r.msg, empNo), 0); return; }
+        if (r.code !== 0) {
+          // 40317 配对码错误等：留在框内可反复重试
+          showErr(r.msg || '配对失败'); btn.disabled = false;
+          try { inp.focus(); inp.select(); } catch { /* noop */ }
+          return;
+        }
+        m.remove();
+        afterLogin(r.data, empNo);
+        toast(pair ? '配对成功，本设备已授权' : '已用恢复码授权本设备');
+      } catch (e) {
+        showErr((e && (e.msg || e.message)) || '配对失败'); btn.disabled = false;
+      }
+    };
+    m.querySelector('#dvPairGo').onclick = () => {
+      const p = (inp.value || '').trim();
+      if (!p) { showErr('请输入管理员提供的配对码'); return; }
+      retry(p, '');
+    };
+    m.querySelector('#dvRecGo').onclick = () => {
+      const rec = (m.querySelector('#dvRecIn').value || '').trim();
+      if (!rec) { showErr('请输入应急恢复码'); return; }
+      retry('', rec);
+    };
+    inp.onkeydown = e => { if (e.key === 'Enter') m.querySelector('#dvPairGo').click(); };
+  }
   view.querySelector('#lgSwitch').onclick = () => showPane(document.getElementById('lgForm').classList.contains('hidden') ? 'login' : 'reg');
 
   // 启动自检：库里有没有管理员（无 → 引导创建；有 → 提示用其密码登录并预填工号）
@@ -316,6 +405,17 @@ function webDeviceCode() {
     try { localStorage.setItem('pos_device_code', dc); } catch { }
   }
   return dc;
+}
+
+/** V5.0.11d：本机设备类型。
+ *  原先登录时硬编码 type:'pc'，导致**手机浏览器**打开管理后台也登记成「电脑」，
+ *  管理员在设备列表里根本认不出哪台是自己的手机。这里按 UA 判定，与收银端一致。 */
+function webDeviceType() {
+  const ua = navigator.userAgent || '';
+  if (/\biPad\b|\bTablet\b|\bPlayBook\b|\bSilk\b/i.test(ua)) return 'pad';
+  if (/Android/i.test(ua) && !/\bMobile\b/i.test(ua)) return 'pad';
+  if (/\bMobi\b|\biPhone\b|\biPod\b|Android|\bWindows Phone\b/i.test(ua)) return 'mobile';
+  return 'pc';
 }
 
 /* ── V5.0.3 多标签页导航条：打开过的页面列成标签，可关闭/切换（首页固定）──

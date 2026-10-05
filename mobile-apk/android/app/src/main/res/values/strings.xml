@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">超市收银</string>
+    <string name="title_activity_main">超市收银</string>
+    <string name="package_name">com.pos.cashier</string>
+    <string name="custom_url_scheme">com.pos.cashier</string>
+</resources>

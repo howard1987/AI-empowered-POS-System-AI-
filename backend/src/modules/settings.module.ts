@@ -9,6 +9,23 @@ import { curStore, curScope } from '../common/context';
 import { chainEnabled } from '../common/scope';
 
 /**
+ * V5.0.11e P0：敏感设置键判定。
+ * 这些键的值等同于凭据 —— 尤其 `pos.device.recovery.hint` 是应急恢复码，
+ * 拿到它就能绕过整套设备授权在任何设备上直接登录（V5.0.11 的防护被清零）。
+ * 命中即：非管理员不下发（连键名都不给），管理员也只给掩码。
+ * 注意 `value_type='secret'` 已有掩码机制，但历史上有些密钥没标 secret（裸明文），
+ * 所以这里按**键名模式**再兜一层，避免依赖「是否记得标 secret」这种人工约定。
+ *
+ * 规则里 `[._-]key$`（键名以 _key 结尾）是关键：能命中 `qweather_key`、`apiv3_key`、
+ * `private_key` 这类第三方凭据；而 `pos.cashier.hotkey_map`（以 _map 结尾）、
+ * `pos.cashier.hotkeys`（无 key 后缀）**不会**被误伤 —— 收银员要能改快捷键。
+ */
+const SENSITIVE_KEY_RE = /(recovery|恢复码|secret|private[_-]?key|public[_-]?key|api[_-]?v?[0-9]*[_-]?key|apikey|app_?key|app_?secret|password|passwd|pwd|credential|token|mch_?key|sign_?key|[._-]key$)/i;
+export function isSensitiveSetting(key: string): boolean {
+  return SENSITIVE_KEY_RE.test(String(key || ''));
+}
+
+/**
  * V5.0.0 连锁（方案 §3.7）：门店级设置覆盖值读取。
  * 仅在「连锁模式」（库中存在 org_type='hq' 总部行）时生效 —— 单店部署零额外查询、零回归。
  */
@@ -73,13 +90,24 @@ class SettingsController {
   /**
    * 九大分组设置列表（可按 group 过滤）；secret 类型只返回脱敏值（••••尾号），明文/密文均不出服务端。
    * V5.0.0 连锁：附带 scope（hq/store）与门店级覆盖值解析 —— 单店部署结果与改造前完全一致。
+   *
+   * V5.0.11e P0 安全修复：本接口**不能**整体加 sys.settings 守卫 ——
+   *   收银端 pwa/cashier.js 要读「设备管理」「收银台」分组，scale.js 还要读全量，
+   *   一刀切会把收银员打回原形。改为**按调用者权限过滤敏感项**：
+   *   此前任何登录用户（含收银员）都能读到
+   *     pos.device.recovery.hint = "POS-RECOVERY-****"   ← 应急恢复码
+   *     ai.weather.qweather_key                          ← 第三方 API Key（未标 secret，无掩码）
+   *   拿到恢复码即可绕过整套设备授权直接登录，等于把 V5.0.11 的防护清零。
    */
   @Get()
-  async list(@Query('group') group?: string) {
+  async list(@Query('group') group?: string, @CurrentUser() user?: AuthUser) {
     const rows = await q<any>(
       `SELECT id, group_name, setting_key, display_name, value, default_value, value_type, enum_options, unit, remark, updated_at, scope
          FROM system_settings WHERE ($1::text IS NULL OR group_name=$1) ORDER BY id`, [group || null],
     );
+    // 无 sys.settings 的调用者（收银员等）看不到敏感项 —— 连键名都不给，避免试探
+    const privileged = !!user && (user.perms.includes('*') || user.perms.includes('sys.settings'));
+    const visible = privileged ? rows : rows.filter(r => !isSensitiveSetting(String(r.setting_key || '')));
     const chain = await chainEnabled();
     let overrides = new Map<string, any>();
     if (chain) {
@@ -88,7 +116,7 @@ class SettingsController {
         overrides = new Map(orows.map(r => [String(r.setting_key), r.value]));
       } catch { /* 未迁移 → 无覆盖 */ }
     }
-    return rows.map(r => {
+    return visible.map(r => {
       const ov = chain && r.scope === 'store' && overrides.has(String(r.setting_key)) ? overrides.get(String(r.setting_key)) : undefined;
       const merged: any = {
         ...r,
@@ -96,7 +124,8 @@ class SettingsController {
         hqLocked: chain && r.scope === 'hq',      // 前端据此禁用编辑（总部账号不受限，见 PUT 守卫）
         ...(ov !== undefined ? { value: ov, overridden: true } : {}),
       };
-      return merged.value_type === 'secret'
+      // 双重保险：即使 key 没命中上面的敏感正则，命中敏感模式的一律掩码
+      return merged.value_type === 'secret' || isSensitiveSetting(String(r.setting_key || ''))
         ? { ...merged, value: maskSecret(String(merged.value ?? '')), default_value: '未配置' }
         : merged;
     });

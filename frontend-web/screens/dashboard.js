@@ -130,7 +130,13 @@ export async function render(view) {
             <td class="num">${p.orderCount}</td><td class="num">${money(p.salesTotal)}</td><td class="num">${money(p.profitTotal)}</td></tr>`).join('')}</tbody></table></div>
         <div class="card"><h3>分类销售额占比（近 30 日 Top12）</h3>
           ${d.categoryShare.length ? `<table><thead><tr><th class="seq">序号</th><th>分类</th><th class="num">销售额</th></tr></thead>
-            <tbody>${d.categoryShare.map((s, i) => `<tr${s.id ? ` data-cat="${s.id}" style="cursor:pointer" title="点击查看该分类商品销售明细"` : ''}><td class="num seq">${i + 1}</td><td>${esc(s.name)}</td><td class="num">${money(s.revenue)}</td></tr>`).join('')}</tbody></table>`
+            <tbody>${d.categoryShare.map((s, i) => {
+              /* V5.0.11h：与 docTable 同一个 bug —— `<tr${...}>` 少空格会拼出
+               * `<trdata-cat="7" ...>`，被 tbody 丢弃 → 隐式 tr → 属性全丢，
+               * 导致「点击分类行看销售明细」失效。条件非空时必须先补空格。 */
+              const a = s.id ? ` data-cat="${s.id}" style="cursor:pointer" title="点击查看该分类商品销售明细"` : '';
+              return `<tr${a}><td class="num seq">${i + 1}</td><td>${esc(s.name)}</td><td class="num">${money(s.revenue)}</td></tr>`;
+            }).join('')}</tbody></table>`
           : '<div class="empty">暂无数据</div>'}</div>
       </div>`;
 

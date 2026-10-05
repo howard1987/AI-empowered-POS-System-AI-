@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 训练环境 · 检测与一键安装</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f4f6f9; color: #1d2b3a; }
+  header { background: #1d2b3a; color: #fff; padding: 10px 16px; display: flex; align-items: center; gap: 12px; }
+  header b { font-size: 15px; }
+  header a { color: #9ecbff; font-size: 13px; text-decoration: none; margin-left: auto; }
+  main { max-width: 760px; margin: 0 auto; padding: 14px; }
+  .card { background: #fff; border: 1px solid #e3e8ef; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  .kv { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px dashed #edf1f5; font-size: 13.5px; }
+  .kv:last-child { border-bottom: 0; }
+  .kv .k { color: #44546a; }
+  button { border: 0; border-radius: 8px; padding: 10px 18px; font-size: 14px; cursor: pointer; background: #2f6fed; color: #fff; width: 100%; }
+  button.ghost { background: #eef2f7; color: #33445a; width: auto; padding: 6px 14px; }
+  button:disabled { opacity: .5; cursor: default; }
+  .verdict { padding: 10px 12px; border-radius: 10px; font-size: 13.5px; margin-bottom: 10px; background: #eef2f7; }
+  .verdict.ok { background: #e8f7ee; color: #1c7c3c; }
+  .verdict.bad { background: #fdecec; color: #c0392b; }
+  .step { padding: 8px 0; border-bottom: 1px dashed #edf1f5; font-size: 13px; }
+  .step b.ok { color: #1c7c3c; } .step b.failed { color: #c0392b; } .step b.running { color: #c07f00; }
+  pre { background: #101820; color: #cde3f5; border-radius: 10px; padding: 10px; font-size: 11.5px; line-height: 1.5;
+        max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin-top: 6px; }
+  .hint { font-size: 12px; color: #6b7a8c; line-height: 1.7; }
+</style>
+</head>
+<body>
+<header><b>🛠 AI 训练环境</b><span style="font-size:12px;color:#9ecbff">检测 / 一键安装（GPU 版 PyTorch + ultralytics）</span><a href="/pwa/">← 返回</a></header>
+<main id="app"></main>
+<script>
+'use strict';
+const API_BASE = localStorage.getItem('pwa_api_base') || '';
+const TOKEN = localStorage.getItem('pwa_token') || '';
+const app = document.getElementById('app');
+let pollTimer = 0;
+
+async function api(method, path, body) {
+  const res = await fetch(API_BASE + path, {
+    method,
+    headers: { ...(TOKEN ? { authorization: 'Bearer ' + TOKEN } : {}), ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const r = await res.json().catch(() => ({ code: -1, msg: '网络异常' }));
+  if (r.code !== 0) throw new Error(r.msg || ('请求失败 #' + r.code));
+  return r.data;
+}
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function render(d) {
+  const e = d.env || {}, j = d.job;
+  const cls = e.ready ? 'ok' : (e.cudaAvailable === false || !e.pythonVersion) ? 'bad' : '';
+  app.innerHTML = `
+  <div class="card">
+    <div class="verdict ${cls}">${esc(e.verdict || '检测中…')}</div>
+    <div class="kv"><span class="k">Python</span><span>${esc(e.pythonVersion || '未找到')}</span></div>
+    <div class="kv"><span class="k">pip</span><span>${e.pip ? '✅ 可用' : '❌ 不可用'}</span></div>
+    <div class="kv"><span class="k">PyTorch</span><span>${esc(e.torchVersion || '未安装')}</span></div>
+    <div class="kv"><span class="k">GPU（CUDA）</span><span>${e.cudaAvailable === true ? ('✅ ' + esc(e.gpuName || '可用')) : e.cudaAvailable === false ? '❌ 不可用（CPU 版 PyTorch 或无 NVIDIA 显卡）' : '未知'}</span></div>
+    <div class="kv"><span class="k">ultralytics（训练框架）</span><span>${esc(e.ultralytics || '未安装')}</span></div>
+  </div>
+  <div class="card">
+    <button id="setup" ${j && j.running ? 'disabled' : ''}>${j && j.running ? '⏳ 环境安装中（下方实时进度）…' : '🚀 一键安装 / 修复训练环境（GPU 版，约 10~30 分钟）'}</button>
+    <div class="hint" style="margin-top:8px">等价于手工执行两条命令：① pip install torch torchvision --index-url …/cu121（GPU 版 PyTorch）② pip install -r backend/ai-train/requirements.txt。只需成功执行一次，之后每周自动训练直接可用。</div>
+  </div>
+  ${j ? `<div class="card">
+    <div class="kv"><span class="k">安装任务</span><span>${j.running ? '⏳ 进行中（本页每 3 秒自动刷新）' : (j.finishedAt ? '已结束：' + esc(j.finishedAt.slice(0, 19).replace('T', ' ')) : '')}</span></div>
+    ${(j.steps || []).map(s => `<div class="step"><b class="${s.status}">${s.status === 'ok' ? '✅' : s.status === 'failed' ? '❌' : s.status === 'running' ? '⏳' : '⏭'} ${esc(s.name)} — ${s.status === 'ok' ? '成功' : s.status === 'failed' ? '失败' : s.status === 'running' ? '进行中' : '跳过'}</b>${s.log ? `<pre>${esc(s.log.slice(-2500))}</pre>` : ''}</div>`).join('') || '<div class="hint">尚无步骤记录</div>'}
+  </div>` : ''}
+  <div class="card"><div class="hint">
+    常见问题：<br>
+    ① 训练很慢 → 99% 是 PyTorch 装成了 CPU 版（上方 GPU 显示"不可用"），点一键安装重装 GPU 版即可；<br>
+    ② 一键安装仍显示无 GPU → 确认本机是 <b>NVIDIA</b> 显卡且已装显卡驱动（nvidia-smi 能跑）；AMD/Intel 显卡不支持 CUDA，只能 CPU 训练或换 NVIDIA 机器；<br>
+    ③ 安装失败 → 查看步骤日志（多为网络超时，重试即可）；<br>
+    ④ 环境就绪后 → 后台设置打开「自动训练开关」，每周自动训练即可运行。
+  </div></div>`;
+  const btn = document.getElementById('setup');
+  if (btn && !(j && j.running)) btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = '启动中…';
+    try { await api('POST', '/ai/autotrain/setup-env'); poll(); }
+    catch (e) { alert(e.message); render(d); }
+  };
+}
+
+async function poll() {
+  try {
+    const d = await api('GET', '/ai/autotrain/env');
+    render(d);
+    clearTimeout(pollTimer);
+    if (d.job && d.job.running) pollTimer = setTimeout(poll, 3000);
+  } catch (e) {
+    app.innerHTML = `<div class="card"><div class="verdict bad">加载失败：${esc(e.message)}<br><span class="hint">请从 PWA 登录后打开本页（需 ai.train.launch 权限）</span></div></div>`;
+  }
+}
+poll();
+</script>
+</body>
+</html>

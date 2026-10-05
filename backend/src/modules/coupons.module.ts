@@ -108,6 +108,16 @@ export async function applyCoupons(
   c: PoolClient, memberId: number,
   requestedMcIds: number[], goodsAmount: number, promoAmount: number, lines: SaleLineLike[],
 ): Promise<{ amount: number; usedIds: number[]; names: string[] }> {
+  /* V5.0.11g P0 结账阻断修复（真机收银实测发现）：
+   *  原先 `if (!memberId) throw '使用优惠券必须关联会员'` 位于函数最开头，
+   *  而 sales.module 的 checkout 是**无条件**调用 applyCoupons 的（并非「有券才调」），
+   *  于是「无会员 + 未选任何券」的普通现金单也会撞上这句校验 → 直接结不了账。
+   *  现场表现：扫一瓶水、选现金、结账报「使用优惠券必须关联会员」，
+   *  让人误以为这瓶水被关联了优惠券，实际是校验被无条件触发。
+   *  正确语义：只有**确实要核销券**（传了券 id）而没关联会员时才报错；
+   *  无会员且无券 → 正常按原价结账，抵扣 0。 */
+  const wantIds = (requestedMcIds || []).map(Number).filter(x => x > 0);
+  if (!memberId && !wantIds.length) return { amount: 0, usedIds: [], names: [] };
   if (!memberId) throw new BizException(40003, '使用优惠券必须关联会员');
   const mode = await couponMode(c);
   if (!(await couponStackWithPromo(c)) && promoAmount > 0) throw new BizException(50046, '当前设置：优惠券不与促销活动叠加');

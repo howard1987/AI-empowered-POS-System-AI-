@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  network_security_config.xml (V5.0.9)
+
+  Trust model for the internal self-signed server certificate:
+    - The POS backend serves HTTPS on :3443 with a SELF-SIGNED cert (CN=POS-LAN) whose SAN
+      covers DNS: pos-server.local, localhost, IP: 127.0.0.1 and the machine's LAN IPs.
+    - Android does NOT trust self-signed certs by default, so the WebView would reject every
+      API call. We add the server cert as an explicit trust anchor (pinned) instead of
+      disabling verification.
+    - We deliberately do NOT use a trust-all / "accept any certificate" WebViewClient hook:
+      that would silently disable TLS verification for every host the app talks to.
+
+  Scope is limited to pos-server.local (the mDNS name we standardise on) plus localhost, so
+  the pinned copy of the cert can only ever be used for our own server.
+
+  NOTE: pos-server.local is used because the server LAN IP changes on reboot; the mDNS name
+  does not. If a device cannot resolve it, enable network hotspot/mDNS support on the
+  LAN, or type the raw IP - see sync-cert.ps1 for refreshing the pinned certificate.
+-->
+<network-security-config>
+    <!-- 默认：仅 HTTPS、禁用明文；信任系统根证书 + 我们自己的本地根 CA。
+         CA 放进 base-config（而不是只放在 domain-config）的原因：
+           内网实际是「用 IP 访问」（https://192.168.x.x:3443），mDNS 域名在很多网络下
+           解析不了；而 IP 又会随 DHCP 变动，无法穷举进 domain-config。放进 base-config 后，
+           任何由该 CA 签发证书的主机都被信任，服务器换 IP 也不需要重打 APK。
+         同时保留 system，意味着一旦将来切换到广域服务器（Let's Encrypt 等公网证书），
+         系统根证书照常生效，本配置无需改动、APK 也无需重打。 -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/pos_server_cert" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -12,7 +12,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { storePrice } from './store-price.service';   // V4.26.5 门店覆盖价（价签按门店）
 import { assertStoreAllowed } from '../common/scope'; // V4.28.6 跨店设备审批范围校验
+import { genPairCode } from './auth.module';         // V5.0.11b 配对码生成（与校验同源，字母表一致）
 import * as os from 'os';
+
+/** 系统设置读取（与 auth.module / fraud.module 同口径的本地实现：
+ *  system_settings.value 是 jsonb，直接返回原始 JS 值；取不到用 fb 兜底） */
+async function getSetting(key: string, fb: any = null): Promise<any> {
+  const r = await q(`SELECT value FROM system_settings WHERE setting_key=$1`, [key]);
+  return r.length ? r[0].value : fb;
+}
 
 /** V4.18.7b 系统驱动 RAW 直发（USB 已装 Windows 驱动的小票机，如 POS-80）：
  *  winspool RAW 字节流交打印驱动，免 WebUSB/免改驱动。打印机名=Windows「打印机和扫描仪」里的名称。
@@ -941,45 +949,183 @@ class DeviceEventsController {
 @Controller('pos-devices')
 class PosDevicesController {
 
-  /** 授权设备列表（待授权优先）。V4.25.1：查看无需 sys.settings，审批/状态/删除仍限管理员。
-   *  V4.28.6：总部视角可见全部门店的设备（带门店名），防跨店误授权——审批仍校验设备归属在操作者范围内； */
+  /** 授权设备列表（待授权优先）。V5.0.11e：改为**必须 sys.settings** ——
+   *  V4.25.1 曾刻意允许任何登录用户查看，但设备授权已成为安全功能后，
+   *  列表里的设备码 + 最近使用人 + 来源 IP 属于不该外泄的运维信息。
+   *  确认过收银端/老板端均不调用本接口（只有管理后台的「授权管理」「系统设置」用），加守卫不影响营业。 */
   @Get()
+  @RequirePerms('sys.settings')
   async list(@CurrentUser() user: AuthUser, @Query('status') status?: string) {
     const seeAll = user.perms.includes('*') || user.perms.includes('hq.store.view');
     const conds: string[] = []; const params: any[] = [];
     if (!seeAll) { conds.push(`d.store_id=$1`); params.push(user.storeId); }
     if (status && ['待授权', '已授权', '已停用'].includes(status)) { params.push(status); conds.push(`d.status=$${params.length}`); }
     const rows = await q(
-      `SELECT d.*, a.name AS approved_by_name, s.name AS store_name
+      `SELECT d.*, a.name AS approved_by_name, s.name AS store_name,
+              e.emp_no AS employee_emp_no, e.name AS employee_name
          FROM pos_devices d
          LEFT JOIN employees a ON a.id = d.approved_by
          LEFT JOIN stores s ON s.id = d.store_id
+         LEFT JOIN employees e ON e.id = d.employee_id
         WHERE ${conds.length ? conds.join(' AND ') : 'TRUE'}
         ORDER BY (d.status='待授权') DESC, d.last_seen_at DESC NULLS LAST, d.id DESC`, params);
-    return rows.map((r: any) => ({
-      id: Number(r.id), deviceCode: r.device_code, deviceName: r.device_name, ua: r.ua,
-      status: r.status, approvedAt: r.approved_at, approvedByName: r.approved_by_name,
-      storeId: Number(r.store_id), storeName: r.store_name || `门店#${r.store_id}`,
-      lastSeenAt: r.last_seen_at, lastIp: r.last_ip, createdAt: r.created_at,
-    }));
+    // 配额：与 auth.module 的 deviceQuotaOf 同口径（含按角色的默认档位）
+    const limCashier = Number(await getSetting('pos.device.limit.cashier', 1)) || 1;
+    const limManager = Number(await getSetting('pos.device.limit.manager', 2)) || 2;
+    const used: Record<string, number> = {};
+    for (const r of rows) {
+      if (r.status !== '已授权' || !r.employee_id) continue;
+      used[String(r.employee_id)] = (used[String(r.employee_id)] || 0) + 1;
+    }
+    return rows.map((r: any) => {
+      const cnt = r.employee_id ? (used[String(r.employee_id)] || 0) : 0;
+      const isMgr = /店长|财务|经理|管理员|总经理|老板/.test(String(r.employee_name_role || '') || '');
+      return {
+        id: Number(r.id), deviceCode: r.device_code, deviceName: r.device_name, ua: r.ua,
+        status: r.status, approvedAt: r.approved_at, approvedByName: r.approved_by_name,
+        storeId: Number(r.store_id), storeName: r.store_name || `门店#${r.store_id}`,
+        lastSeenAt: r.last_seen_at, lastLoginAt: r.last_login_at, lastIp: r.last_ip, createdAt: r.created_at,
+        // V5.0.11 新增
+        deviceType: r.device_type || null,
+        employeeId: r.employee_id ? Number(r.employee_id) : null,
+        employeeEmpNo: r.employee_emp_no || null,
+        employeeName: r.employee_name || null,
+        boundAt: r.bound_at || null,
+        signed: !!r.pubkey,                       // 是否已登记 P1 公钥（已开启硬件签名）
+        usedByEmployee: cnt,
+        quotaHint: r.employee_id ? (isMgr ? limManager : limCashier) : null,
+        // V5.0.11b 配对码（仅待授权设备用得上）
+        pairCode: r.pair_code || null,
+        pairExpiresAt: r.pair_expires_at || null,
+        pairMaxUses: Number(r.pair_max_uses) || 0,
+        pairUsed: Number(r.pair_used) || 0,
+        pairedAt: r.paired_at || null,
+        // V5.0.11b 最近使用人（审计留痕，不作为准入条件）
+        lastEmpNo: r.last_emp_no || null,
+        lastEmpName: r.last_emp_name || null,
+        lastEmpAt: r.last_emp_at || null,
+      };
+    });
   }
 
-  /** 审批通过（可同时命名，如「1号收银机」）。
-   *  V4.28.6：总部可审批跨店设备（先 assertStoreAllowed 校验归属在操作者范围内），门店账号仍限本店。 */
+  /** 设备管理总览：给后台设置页顶部用（各状态计数 + 门店总量上限占用 + 开关状态） */
+  @Get('summary')
+  @RequirePerms('sys.settings')
+  async summary(@CurrentUser() user: AuthUser) {
+    const r = await q1<any>(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE status='待授权')::int AS pending,
+              count(*) FILTER (WHERE status='已授权')::int AS approved,
+              count(*) FILTER (WHERE status='已停用')::int AS disabled,
+              count(*) FILTER (WHERE pubkey IS NOT NULL)::int AS signed
+         FROM pos_devices WHERE store_id=$1`, [user.storeId]);
+    const cap = Number(await getSetting('pos.device.store.cap', 0)) || 0;
+    return {
+      total: Number(r?.total || 0), pending: Number(r?.pending || 0),
+      approved: Number(r?.approved || 0), disabled: Number(r?.disabled || 0),
+      signed: Number(r?.signed || 0),
+      storeCap: cap, storeCapUsed: Number(r?.total || 0),
+      authOn: (await getSetting('pos.device.auth', true)) === true,
+      bindEmployee: (await getSetting('pos.device.bind.employee', false)) === true,   // V5.0.11b 默认关
+      singleSession: (await getSetting('pos.device.single.session', true)) === true,
+      requireSignature: (await getSetting('pos.device.require.signature', false)) === true,
+      limitCashier: Number(await getSetting('pos.device.limit.cashier', 1)) || 1,
+      limitManager: Number(await getSetting('pos.device.limit.manager', 2)) || 2,
+      // V5.0.11b：待生成配对码的设备数 / 已有有效配对码的设备数
+      pairPending: await q1<any>(`SELECT count(*)::int AS n FROM pos_devices
+         WHERE store_id=$1 AND status='待授权'`, [user.storeId]).then(r => Number(r?.n || 0)),
+      pairCoded: await q1<any>(`SELECT count(*)::int AS n FROM pos_devices
+         WHERE store_id=$1 AND pair_code IS NOT NULL AND (pair_expires_at IS NULL OR pair_expires_at > now())`, [user.storeId])
+        .then(r => Number(r?.n || 0)),
+      pairTtlHours: Number(await getSetting('pos.device.pair.ttl.hours', 24)) || 24,
+      pairMaxUses: Number(await getSetting('pos.device.pair.max.uses', 1)) || 1,
+    };
+  }
+
+  /** 解绑设备（4A 遗留接口：仅当后台开启了「设备绑定员工」时才有意义；
+   *  V5.0.11b 起该开关默认关闭，日常无需使用，保留以便专用设备场景） */
+  @Post(':id/unbind')
+  @RequirePerms('sys.settings')
+  async unbind(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
+    const dev = await q1<any>(`SELECT store_id, device_code, employee_id FROM pos_devices WHERE id=$1`, [id]);
+    if (!dev) throw new BizException(40400, '设备不存在', 404);
+    assertStoreAllowed(Number(dev.store_id), '该收银机设备');
+    if (!dev.employee_id) throw new BizException(40003, '该设备尚未绑定员工');
+    await q(`UPDATE pos_devices SET employee_id=NULL, bound_at=NULL WHERE id=$1`, [id]);
+    await audit(user.storeId, user.sub, '系统', 'pos_device.unbind', 'pos_device', id, { code: dev.device_code });
+    return { id, unbound: true };
+  }
+
+  /** ── 配对码（V5.0.11b）──
+   *  为一台「待授权」设备生成配对码。员工在登录框输入该码即完成配对授权。
+   *  参数：ttlHours 不传则取后台「配对码有效期」；maxUses 不传则取后台默认值（1）。 */
+  @Post(':id/pair-code')
+  @RequirePerms('sys.settings')
+  async genPairCode(@Param('id', ParseIntPipe) id: number, @Body() b: any, @CurrentUser() user: AuthUser) {
+    const dev = await q1<any>(`SELECT store_id, device_code, status FROM pos_devices WHERE id=$1`, [id]);
+    if (!dev) throw new BizException(40400, '设备不存在', 404);
+    assertStoreAllowed(Number(dev.store_id), '该收银机设备');
+    if (dev.status === '已停用') throw new BizException(40003, '该设备已停用，无法生成配对码');
+    const ttl = Math.min(Math.max(Number(b?.ttlHours) || Number(await getSetting('pos.device.pair.ttl.hours', 24)) || 24, 1), 720);
+    const maxUses = b?.maxUses === 0 ? 0
+      : Math.min(Math.max(Number(b?.maxUses) || Number(await getSetting('pos.device.pair.max.uses', 1)) || 1, 1), 999);
+    // 极小概率撞码：同门店已有同码则重生成（最多 5 次）
+    let code = '';
+    for (let i = 0; i < 5; i++) {
+      const c = genPairCode();
+      const dup = await q1<any>(`SELECT id FROM pos_devices WHERE store_id=$1 AND pair_code=$2 AND pair_code IS NOT NULL`, [dev.store_id, c]);
+      if (!dup) { code = c; break; }
+    }
+    if (!code) throw new BizException(40003, '配对码生成失败，请重试');
+    const r = await q1<any>(
+      `UPDATE pos_devices SET pair_code=$2, pair_expires_at=now() + ($3 || ' hours')::interval,
+                       pair_max_uses=$4, pair_used=0
+        WHERE id=$1 RETURNING id, device_code, pair_code, pair_expires_at, pair_max_uses, pair_used`,
+      [id, code, ttl, maxUses]);
+    await audit(user.storeId, user.sub, '系统', 'pos_device.pair_code', 'pos_device', id,
+      { code: dev.device_code, ttlHours: ttl, maxUses: maxUses || 'unlimited' });
+    return {
+      id: Number(r.id), deviceCode: r.device_code, pairCode: r.pair_code,
+      expiresAt: r.pair_expires_at, maxUses: Number(r.pair_max_uses), used: Number(r.pair_used),
+    };
+  }
+
+  /** 撤销配对码（作废后员工再输该码会提示「没有待用的配对码」） */
+  @Post(':id/pair-code/revoke')
+  @RequirePerms('sys.settings')
+  async revokePairCode(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
+    const dev = await q1<any>(`SELECT store_id, device_code FROM pos_devices WHERE id=$1`, [id]);
+    if (!dev) throw new BizException(40400, '设备不存在', 404);
+    assertStoreAllowed(Number(dev.store_id), '该收银机设备');
+    await q(`UPDATE pos_devices SET pair_code=NULL, pair_expires_at=NULL, pair_used=0 WHERE id=$1`, [id]);
+    await audit(user.storeId, user.sub, '系统', 'pos_device.pair_code_revoke', 'pos_device', id, { code: dev.device_code });
+    return { id, revoked: true };
+  }
+
+  /** 审批通过时顺带指定绑定员工（不传则留空，等该员工首次登录时按 TOFU 绑定） */
   @Post(':id/approve')
   @RequirePerms('sys.settings')
-  async approve(@Param('id', ParseIntPipe) id: number, @Body() b: { name?: string }, @CurrentUser() user: AuthUser) {
+  async approve(@Param('id', ParseIntPipe) id: number, @Body() b: { name?: string; employeeId?: number }, @CurrentUser() user: AuthUser) {
     const dev = await q1<any>(`SELECT store_id, device_code FROM pos_devices WHERE id=$1`, [id]);
     if (!dev) throw new BizException(41004, '设备不存在', 404);
     assertStoreAllowed(Number(dev.store_id), '该收银机设备');
+    const empId = Number(b?.employeeId) > 0 ? Number(b.employeeId) : null;
+    if (empId) {
+      const e2 = await q1<any>(`SELECT id, emp_no, name FROM employees WHERE id=$1 AND store_id=$2`, [empId, dev.store_id]);
+      if (!e2) throw new BizException(40003, '指定员工不存在或不属于该门店');
+    }
     const r = await q1<any>(
       `UPDATE pos_devices SET status='已授权', approved_by=$2, approved_at=now(),
-              device_name=COALESCE(NULLIF($3,''), device_name)
-       WHERE id=$1 RETURNING id, device_code, status`,
-      [id, user.sub, String(b?.name || '').trim().slice(0, 60)]);
+              device_name=COALESCE(NULLIF($3,''), device_name),
+              employee_id=COALESCE($4, employee_id),
+              bound_at=CASE WHEN $4 IS NOT NULL THEN now() ELSE bound_at END
+       WHERE id=$1 RETURNING id, device_code, status, employee_id`,
+      [id, user.sub, String(b?.name || '').trim().slice(0, 60), empId]);
     if (!r) throw new BizException(41004, '设备不存在', 404);
-    await audit(user.storeId, user.sub, '系统', 'pos_device.approve', 'pos_device', id, { code: r.device_code });
-    return { id: Number(r.id), deviceCode: r.device_code, status: r.status };
+    await audit(user.storeId, user.sub, '系统', 'pos_device.approve', 'pos_device', id,
+      { code: r.device_code, employeeId: empId ?? undefined });
+    return { id: Number(r.id), deviceCode: r.device_code, status: r.status,
+             employeeId: r.employee_id ? Number(r.employee_id) : null };
   }
 
   /** 状态流转：已停用/待授权/已授权（停用即拒绝登录） */

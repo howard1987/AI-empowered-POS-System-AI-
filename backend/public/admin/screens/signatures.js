@@ -12,13 +12,16 @@ import { paginate, bindPager, pagerBar } from '../common-ui.js';
  *  「授权设备」：收银机等设备白名单（待授权/已授权/已停用），仅管理员/老板端可审批。 */
 
 const MIN_SAMPLES = 3;   // 画像最少采集次数
+// V5.0.11c：签字样本表每页行数。原 10 行 → 单页近 700px 高，把下方「授权设备」「操作记录」
+// 挤出首屏，用户反馈「容器太高」。降到 5 行，配合去掉 .tbl-min 的 512px 硬撑，高度约减半。
+const SG_PAGE_SIZE = 5;
 
 export async function render(view) {
   view.innerHTML = `
     <div class="card">
       <h3>🖊️ 签字授权（预采集） 
         <button class="btn sm pri" id="sgAdd" style="margin-left:12px">➕ 预采集签字</button></h3>
-      <div class="doc-tip" style="margin:0 18px 10px">💡 采集时须连续签名 <b>${MIN_SAMPLES} 遍</b>形成签字画像（提升识别精度）；系统自动识别签名姓名并联动供应商业务员。现场补签（入库/退货等）也会自动采集进样本库。</div>
+      <div class="doc-tip" style="margin:0 18px 8px;padding:7px 14px;line-height:1.5">💡 须连续签 <b>${MIN_SAMPLES} 遍</b>形成签字画像；自动识别姓名并联动供应商业务员，现场补签也会自动入库。</div>
       <div class="bar" id="sgBatchBar" style="padding:0 18px 8px;display:none">
         <span class="muted" style="font-size:12.5px">已选 <b id="sgSelN">0</b> 项：</span>
         <button class="btn sm" data-ba="enable">启用</button>
@@ -38,22 +41,28 @@ export async function render(view) {
         <span class="muted" style="font-size:12.5px">检测到 <b id="sgInvalidN">0</b> 张疑似无效样本（近空白/纯色块）：</span>
         <button class="btn sm danger" id="sgInvalidDel">🗑 删除疑似无效</button>
       </div>
-      <div style="padding:0 18px 16px" id="sgList" class="tbl-min">加载中…</div>
+      <div style="padding:0 18px 16px" id="sgList">加载中…</div>
     </div>
 
     <div class="card" style="margin-top:14px">
-      <h3>🖥️ 授权设备 </h3>
+      <h3>🖥️ 授权设备
+        <span class="muted" style="font-size:12px;font-weight:400;margin-left:8px">收银机 / 手机 / 平板的设备白名单</span></h3>
       <div class="bar" style="padding:0 18px 8px">
-        <select id="dvFilter" style="width:130px">
+        <select id="dvFilter" style="width:118px">
           <option value="">全部状态</option>
           <option>待授权</option>
           <option>已授权</option>
           <option>已停用</option>
         </select>
         <button class="btn sm" id="dvGo">查询</button>
-        <span class="muted" style="font-size:12px">开启「收银机授权」开关后，新设备首次登录自动登记为待授权，管理员在此审批。</span>
+        <span id="dvStat" class="muted" style="font-size:12px"></span>
       </div>
-      <div style="padding:0 18px 16px" id="dvList" class="tbl-min">加载中…</div>
+      <div style="padding:0 18px 12px" id="dvList">加载中…</div>
+      <div class="doc-tip" style="margin:0 18px 14px;padding:8px 14px;line-height:1.6">
+        <b>未授权设备无法登录任何账号</b>；已授权设备可登录任意账号（收银台共用），但同一账号同一时间只允许一台设备在线。
+        新设备首次登录会自动登记为「待授权」并出现在这里 →
+        点「生成配对码」把码告诉现场人员，对方在登录框输入即完成配对授权。
+      </div>
     </div>
 
     <div class="card" style="margin-top:14px">
@@ -293,7 +302,9 @@ export async function render(view) {
   async function drawSigs() {
     const d = await must(get('/purchase/signatures' + (sgCat ? `?cat=${encodeURIComponent(sgCat)}` : '')));
     sgRows = d.items;
-    const pg = paginate(sgRows, sgPage, 10);
+    // V5.0.11c：签字样本表 5 行/页（原 10 行）。签字行含样本数/画像遍数/操作按钮，单行偏高，
+    // 10 行会把「签字授权」整块撑到近 700px，把下面的「授权设备」「操作记录」全挤出首屏。
+    const pg = paginate(sgRows, sgPage, SG_PAGE_SIZE);
     sgPage = pg.page;
     const rows = pg.slice;
     const list = view.querySelector('#sgList');
@@ -309,7 +320,7 @@ export async function render(view) {
         const n = sigImgs.length;
         return `<tr>
         <td><input type="checkbox" class="sg-chk" data-id="${t.id}"></td>
-        <td class="num seq">${(sgPage - 1) * 10 + i + 1}</td><td>${t.id}</td><td>${esc(t.person_name)}</td><td>${catTag(t.person_cat)}${String(t.person_cat) === '待确认' ? ` <button class="btn mini" data-catfix="${t.id}" data-nm="${esc(t.person_name)}">改分类</button>` : ''}</td><td class="muted">${esc(t.role_title || '—')}</td>
+        <td class="num seq">${(sgPage - 1) * SG_PAGE_SIZE + i + 1}</td><td>${t.id}</td><td>${esc(t.person_name)}</td><td>${catTag(t.person_cat)}${String(t.person_cat) === '待确认' ? ` <button class="btn mini" data-catfix="${t.id}" data-nm="${esc(t.person_name)}">改分类</button>` : ''}</td><td class="muted">${esc(t.role_title || '—')}</td>
         <td class="muted">${esc(t.supplier_name || (t.supplier_id ? '#' + t.supplier_id : '—'))}</td>
         <td style="text-align:center">${n > 0
           ? `<span data-prev="${t.id}" title="点击预览签字样本" style="cursor:pointer;color:#e03131;font-weight:700;text-decoration:underline;text-underline-offset:3px">${n}</span>`
@@ -559,55 +570,103 @@ export async function render(view) {
   view.querySelector('#sgGo').onclick = () => { recPage = 1; drawRecs(); };
   view.querySelector('#sgBiz').onchange = () => { recPage = 1; drawRecs(); };
 
-  /* ── 授权设备（V4.25.1：收银机/浏览器端白名单，仅管理员可审批/操作） ── */
+  /* ── 授权设备（V5.0.11b/c：收银机/手机/平板白名单 + 配对码授权）──
+   * V5.0.11c：本页是设备授权的**唯一入口**。原先「系统设置 → 设备管理 → 收银机授权」
+   * 是同一份功能的两处重复实现，已移除，改由本页统一承载。 */
   const perms = API.user?.perms || [];
   const canApprove = perms.includes('*') || perms.includes('sys.settings');
+
+  /** 配对码展示：大号等宽字，方便管理员照着念/截图发给现场人员 */
+  function pairCodeCell(d) {
+    if (!d.pairCode) return '<span class="muted">—</span>';
+    const exp = d.pairExpiresAt ? new Date(d.pairExpiresAt).getTime() : 0;
+    const expired = exp && exp < Date.now();
+    const usedUp = Number(d.pairMaxUses) > 0 && Number(d.pairUsed) >= Number(d.pairMaxUses);
+    const dead = expired || usedUp;
+    return `<span style="font-family:Consolas,monospace;font-weight:700;font-size:13px;letter-spacing:1.5px;${dead ? 'color:#8a8577;text-decoration:line-through' : 'color:#c2410c'}">${esc(d.pairCode)}</span>`
+      + `<div class="muted" style="font-size:11px;line-height:1.4">${expired ? '已过期' : usedUp ? '次数已用尽'
+        : `有效至 ${dt(d.pairExpiresAt)} · 限 ${Number(d.pairMaxUses) || '不限'} 次（已用 ${Number(d.pairUsed) || 0}）`}</div>`;
+  }
+
   async function drawDevices() {
     const status = encodeURIComponent(view.querySelector('#dvFilter').value || '');
     const list = view.querySelector('#dvList');
+    const stat = view.querySelector('#dvStat');
     try {
       const rows = await must(get(`/pos-devices?status=${status}`));
       if (!Array.isArray(rows) || !rows.length) {
-        list.innerHTML = '<div class="empty">暂无设备登记。开启「收银机授权」开关后，新设备首次登录会自动登记为「待授权」。</div>';
+        list.innerHTML = '<div class="empty">暂无设备登记。开启「收银机授权」开关后，新设备首次登录会自动登记为「待授权」并出现在这里。</div>';
+        if (stat) stat.textContent = '';
         return;
       }
+      // 门店用量 + 待授权数：让管理员一眼看到还有多少设备等着授权
+      try {
+        const s = await must(get('/pos-devices/summary'));
+        if (stat) {
+          const bits = [];
+          if (s.pairPending) bits.push(`<b style="color:#b5544a">${s.pairPending} 台待授权</b>`);
+          if (s.storeCap > 0) bits.push(`门店设备 ${s.total ?? rows.length}/${s.storeCap} 台`);
+          stat.innerHTML = bits.join(' · ');
+        }
+      } catch { /* 汇总失败不影响主列表 */ }
+
       const stColor = s => s === '待授权' ? '#b5544a' : (s === '已授权' ? 'var(--pri,#20663f)' : '#8a8577');
-      list.innerHTML = `<table><thead><tr><th>设备码</th><th>名称</th><th>状态</th><th>最后活跃</th><th>操作</th></tr></thead>
-        <tbody>${rows.map(d => `<tr>
+      const typeText = t => ({ pc: '💻 电脑', mobile: '📱 手机', pad: '📲 平板' }[t] || '—');
+      const seeStore = rows.some(d => d.storeName);   // 总部视角带门店列
+      // 待授权排前，其余按最后活跃倒序
+      const sorted = [...rows].sort((a, b) =>
+        (a.status === '待授权' ? 0 : 1) - (b.status === '待授权' ? 0 : 1)
+        || String(b.lastSeenAt || '').localeCompare(String(a.lastSeenAt || '')));
+
+      list.innerHTML = `<table><thead><tr><th>设备码</th><th>名称</th><th>类型</th>${seeStore ? '<th>所属门店</th>' : ''}<th>状态</th><th>配对码</th><th>最近使用</th><th>最后活跃</th><th>操作</th></tr></thead>
+        <tbody>${sorted.map(d => `<tr>
           <td style="font-family:Consolas,monospace;font-size:12px">${esc(d.deviceCode)}</td>
           <td>${esc(d.deviceName || '—')}</td>
+          <td class="muted" style="font-size:12px">${typeText(d.deviceType)}</td>
+          ${seeStore ? `<td class="muted">${esc(d.storeName || '—')}</td>` : ''}
           <td><b style="color:${stColor(d.status)}">${esc(d.status)}</b></td>
-          <td class="muted">${d.lastSeenAt ? dt(d.lastSeenAt) : '—'}${d.lastIp ? ' · ' + esc(d.lastIp) : ''}</td>
+          <td>${pairCodeCell(d)}</td>
+          <td class="muted" style="font-size:12px">${d.lastEmpNo ? esc(d.lastEmpNo) + (d.lastEmpName ? ' ' + esc(d.lastEmpName) : '') : '—'}</td>
+          <td class="muted" style="font-size:12px">${d.lastSeenAt ? dt(d.lastSeenAt) : '—'}</td>
           <td style="white-space:nowrap">
-            ${canApprove && d.status === '待授权' ? `<button class="btn sm pri" data-dvok="${d.id}" data-name="${esc(d.deviceName || '')}">✓ 授权</button> ` : ''}
-            ${canApprove && d.status === '已停用'
-              ? `<button class="btn sm" data-dvstatus="${d.id}" data-st="已授权">启用</button> `
-              : (canApprove ? `<button class="btn sm warn" data-dvstatus="${d.id}" data-st="已停用">停用授权</button> ` : '')}
+            ${canApprove && d.status === '待授权' ? `<button class="btn sm pri" data-dvpair="${d.id}" data-code="${esc(d.deviceCode)}">🔑 生成配对码</button> ` : ''}
+            ${canApprove && d.pairCode ? `<button class="btn sm" data-dvrevoke="${d.id}">撤销码</button> ` : ''}
+            ${canApprove && d.status !== '已授权' ? `<button class="btn sm" data-dvstatus="${d.id}" data-st="已授权">直接授权</button> ` : ''}
+            ${canApprove && d.status === '已授权' ? `<button class="btn sm warn" data-dvstatus="${d.id}" data-st="已停用">停用</button> ` : ''}
             ${canApprove ? `<button class="btn sm" data-dvrename="${d.id}" data-name="${esc(d.deviceName || '')}">命名</button> ` : ''}
             ${canApprove ? `<button class="btn sm danger" data-dvdel="${d.id}">删除</button>` : ''}
           </td>
         </tr>`).join('')}</tbody></table>
-        <div class="muted" style="font-size:12px;margin-top:8px;line-height:1.5">
-          说明：浏览器拿不到 MAC 地址（且 MAC 可伪造），所以用<b>设备码 + 浏览器指纹</b>做白名单。
-          删除或停用后，该设备再登录会重新登记为「待授权」。
-          ${canApprove ? '' : '<span style="color:#b5544a">仅超级管理员/老板端可审批或管理设备授权。</span>'}
+        <div class="muted" style="font-size:11.5px;margin-top:8px;line-height:1.6">
+          配对码 = 现场人员输入即完成授权的短码，默认 ${'24'} 小时有效、限 1 次，用完自动作废。
+          <b>最近使用</b>仅作对账追溯（这台收银机刚才是谁在用），<b>不限制</b>该账号或其他账号登录本设备。
+          停用后该设备再登录会重新登记为「待授权」。
+          ${canApprove ? '' : '<span style="color:#b5544a">　仅超级管理员/老板端可审批或管理设备授权。</span>'}
         </div>`;
       if (canApprove) {
-        list.querySelectorAll('[data-dvok]').forEach(b => b.onclick = async () => {
-          const name = prompt('设备名称（如：1号收银机）', b.dataset.name || '') ?? '';
-          try { await must(post(`/pos-devices/${b.dataset.dvok}/approve`, { name })); toast('已授权通过'); drawDevices(); } catch { /* must 已 toast */ }
+        /* 生成配对码 → 直接把码放大显示，便于管理员念给现场人员或截图发微信 */
+        list.querySelectorAll('[data-dvpair]').forEach(b => b.onclick = async () => {
+          try {
+            const r = await must(post(`/pos-devices/${b.dataset.dvpair}/pair-code`, {}), '配对码已生成');
+            showPairCode(r, b.dataset.code);
+            drawDevices();
+          } catch { /* must 已 toast */ }
+        });
+        list.querySelectorAll('[data-dvrevoke]').forEach(b => b.onclick = async () => {
+          if (!confirm('撤销该配对码？已生成但还没用的码会立即失效。')) return;
+          try { await must(post(`/pos-devices/${b.dataset.dvrevoke}/pair-code/revoke`, {}), '配对码已撤销'); drawDevices(); } catch { /* must 已 toast */ }
+        });
+        list.querySelectorAll('[data-dvstatus]').forEach(b => b.onclick = async () => {
+          try { await must(post(`/pos-devices/${b.dataset.dvstatus}/status`, { status: b.dataset.st })); toast(b.dataset.st === '已停用' ? '已停用（该设备将无法登录员工账号）' : '已启用'); drawDevices(); } catch { /* must 已 toast */ }
         });
         list.querySelectorAll('[data-dvrename]').forEach(b => b.onclick = async () => {
           const name = prompt('设备名称（如：1号收银机）', b.dataset.name || '');
           if (name === null) return;
-          try { await must(post(`/pos-devices/${b.dataset.dvrename}/approve`, { name })); toast('已保存名称'); drawDevices(); } catch { /* must 已 toast */ }
-        });
-        list.querySelectorAll('[data-dvstatus]').forEach(b => b.onclick = async () => {
-          try { await must(post(`/pos-devices/${b.dataset.dvstatus}/status`, { status: b.dataset.st })); toast(b.dataset.st === '已停用' ? '已停用授权' : '已启用授权'); drawDevices(); } catch { /* must 已 toast */ }
+          try { await must(post(`/pos-devices/${b.dataset.dvrename}/approve`, { name }), '已保存名称'); drawDevices(); } catch { /* must 已 toast */ }
         });
         list.querySelectorAll('[data-dvdel]').forEach(b => b.onclick = async () => {
           if (!confirm('删除该设备登记？删除后该设备再登录会重新登记为待授权。')) return;
-          try { await must(del(`/pos-devices/${b.dataset.dvdel}`)); toast('已删除'); drawDevices(); } catch { /* must 已 toast */ }
+          try { await must(del(`/pos-devices/${b.dataset.dvdel}`), '已删除'); drawDevices(); } catch { /* must 已 toast */ }
         });
       }
     } catch (e) {
@@ -618,4 +677,34 @@ export async function render(view) {
   view.querySelector('#dvFilter').onchange = () => drawDevices();
 
   await drawSigs(); await drawDevices(); await drawRecs();
+}
+
+/** V5.0.11b 配对码展示弹窗
+ *  配对码要「念得出口、截得下来」，所以字放大 + 一键复制，并写清有效期与用法。 */
+function showPairCode(r, deviceCode) {
+  const m = document.createElement('div');
+  m.className = 'modal-mask';
+  m.innerHTML = `<div class="modal" style="max-width:420px">
+    <h3>🔑 配对码已生成</h3>
+    <div class="doc-tip" style="margin:0 0 12px">
+      把下面的配对码告诉现场人员，让对方在<b>登录框的「配对码」</b>里输入，
+      点「配对并登录」即可完成授权并登录。
+    </div>
+    <div style="text-align:center;font-family:Consolas,monospace;font-size:38px;font-weight:800;
+                letter-spacing:8px;padding:18px 0;color:#c2410c;-webkit-user-select:all;user-select:all">${esc(r.pairCode)}</div>
+    <div class="muted" style="text-align:center;font-size:12px;line-height:1.7">
+      设备码 <b>${esc(deviceCode || r.deviceCode || '')}</b><br>
+      有效至 <b>${dt(r.expiresAt)}</b> · 限 <b>${Number(r.maxUses) || '不限'}</b> 次（已用 ${Number(r.used) || 0}）
+    </div>
+    <div class="doc-foot">
+      <button class="btn pri" id="pcCopy">📋 复制配对码</button>
+      <button class="btn" id="pcX">关闭</button>
+    </div>
+  </div>`;
+  document.body.appendChild(m);
+  m.querySelector('#pcX').onclick = () => m.remove();
+  m.querySelector('#pcCopy').onclick = async () => {
+    try { await navigator.clipboard.writeText(r.pairCode); toast('配对码已复制'); }
+    catch { toast('复制失败，请手动选中复制', false); }
+  };
 }

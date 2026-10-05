@@ -112,11 +112,37 @@ function parseVLJson(text: string): any[] {
 export interface VLResult { productId: number; name: string; count: number; conf: number; }
 
 /**
+ * 置信度校准（V5.0.8e 修复「AI智拍置信度虚高 100%」）：
+ * 视觉大模型自报的 confidence 极不可靠——被问「给个置信度」时几乎恒输出 1.0/0.99，
+ * 直接采信会让 minConf 阈值形同虚设（错品也能 100% 通过）。
+ * 处置：
+ *   ① prompt 明确「不确定就给低分，宁可漏报不可错报」，去掉「必须给分」的暗示；
+ *   ② 对模型自报分做**保守压缩**（开方 + 上限 0.9），任何情况下不出现 100%；
+ *   ③ 0.99/1.0 这类「饱和值」额外降权——真正确定的判断模型往往给不出满分；
+ *   ④ 数量异常（>9 件）视为不确定，略微降权。
+ * 目标是让分数「可解释、可分层」：>0.75 才是高可信，低分进入人工确认。
+ */
+function calibrateConf(raw: unknown, count: number): number {
+  let c = Number(raw);
+  if (!Number.isFinite(c)) c = 0.4;
+  c = Math.min(1, Math.max(0, c));
+  // 饱和值惩罚：0.98 及以上视为「模型未真正区分」，降一半
+  if (c >= 0.98) c = 0.62;
+  // 保守压缩：开方使 0.9→0.95、0.7→0.84、0.5→0.71、0.3→0.55，低分被压低更明显
+  c = Math.sqrt(c);
+  // 硬上限：永不出现「100%」这种不可信展示
+  c = Math.min(c, 0.9);
+  // 一次拍出过多件（>9）本身可疑，轻微降权
+  if (count > 9) c *= 0.9;
+  return Math.round(c * 1000) / 1000;
+}
+
+/**
  * 真模型识别：返回命中商品列表（已映射到知识库 product_id）。
  * 知识库为空或 Ollama 不可达时抛错，由调用方降级到 dHash。
  */
 export async function recognizeWithVL(
-  frameBase64: string, storeId: number, scene: string, minConf = 0.3,
+  frameBase64: string, storeId: number, scene: string, minConf = 0.35,
 ): Promise<{ items: VLResult[]; kbSize: number; model: string }> {
   const base = String(await getSetting('ai.llm.base', DEFAULT_BASE)).replace(/\/$/, '');
   const model = String(await getSetting('ai.ocr.vl_model', DEFAULT_MODEL));
@@ -129,11 +155,14 @@ export async function recognizeWithVL(
   const refB64s = await Promise.all(refList.map(c => downscaleB64(c.refBase64 as string)));
   const images = [frameB64, ...refB64s];
   const prompt =
-    `你是一个超市商品识别器。第 1 张图是收银台/货架的实时照片。后面 ${refList.length} 张是已知商品的参考照片，顺序对应下列编号：\n` +
-    refList.map((c, i) => `#${i + 1} = 商品ID ${c.id}（${c.name}）`).join('\n') + `\n` +
-    `请判断第 1 张图中实际出现了哪些已知商品（可能多个），对每个给出数量 count（整数）与置信度 confidence(0-1)。\n` +
-    `只输出 JSON，格式：{"products":[{"product_id":<编号>,"count":<整数>,"confidence":<0-1>}]}。` +
-    `未出现任何已知商品则输出 {"products":[]}。不要输出多余解释。`;
+    `你是一个严谨的超市商品识别器。第 1 张图是收银台/货架的实时照片。后面 ${refList.length} 张是已知商品的参考照片，顺序对应下列编号：\n` +
+    refList.map((c, i) => `#${i + 1} = 商品ID ${c.id}（${c.name}）`).join('\n') + '\n' +
+    `请判断第 1 张图中实际出现了哪些已知商品（可能多个），对每个给出数量 count（正整数）与你的把握程度 confidence(0~1 的小数)。\n` +
+    `打分标准务必严格：只有当图像特征与参考图高度一致时才给 0.8 以上；` +
+    `有任何不确定（包装被遮挡、角度不同、相似商品混淆）请给 0.4~0.6；` +
+    `看不清或不是这些商品则不要输出该商品。宁可漏报也不要错报，绝对不要一律给 0.9 或 1.0。\n` +
+    `只输出 JSON，格式：{"products":[{"product_id":<编号>,"count":<正整数>,"confidence":<0~1 小数>}]}。` +
+    `没有匹配商品则输出 {"products":[]}。不要输出多余解释。`;
 
   const text = await callVL(base, model, images, prompt);
   const parsed = parseVLJson(text);
@@ -142,9 +171,10 @@ export async function recognizeWithVL(
     const pid = Number(p?.product_id);
     const c = refList.find(x => x.id === pid);
     if (!c) continue; // 模型编了知识库外的 id → 丢弃
-    const conf = Math.min(1, Math.max(0, Number(p?.confidence ?? 0.5)));
+    const count = Math.max(1, Number(p?.count) || 1);
+    const conf = calibrateConf(p?.confidence, count);
     if (conf < minConf) continue;
-    items.push({ productId: c.id, name: c.name, count: Math.max(1, Number(p?.count) || 1), conf });
+    items.push({ productId: c.id, name: c.name, count, conf });
   }
   return { items, kbSize: refList.length, model };
 }

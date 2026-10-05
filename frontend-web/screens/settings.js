@@ -1,4 +1,5 @@
-import { get, post, put, del, must, esc, dt, toast, API } from '../api.js';
+// V5.0.11c 起不再 import del：设备删除已迁到「授权管理 → 授权设备」，本页无删除操作
+import { get, post, put, must, esc, dt, toast, API } from '../api.js';
 import { confirmBox } from '../ui.js';
 import { openDetailModal } from '../common-ui.js';
 import { anchorNav, applyGlass } from '../ui-polish.js';   // V4.26.3 长页面锚点导航 / 液态玻璃开关
@@ -57,8 +58,13 @@ export async function render(view) {
         <button class="btn sm" id="setKwClear">清空</button>
       </div>
       <div id="slist"></div></div>
-    <div class="card" id="devCard" style="display:none"><h3>🖥️ 收银机授权 </h3>
-      <div id="devBody"></div></div>
+    <div class="card" id="devCard" style="display:none"><h3>🖥️ 设备授权入口已迁移 </h3>
+      <div class="doc-tip" style="margin:0 18px 14px;line-height:1.7">
+        收银机 / 手机 / 平板的<b>授权与配对码</b>已统一到 <b>「授权管理 → 授权设备」</b>。
+        本页只保留设备相关的<b>开关设置</b>（收银机授权总开关、回环豁免、配对码有效期与次数等）。
+        <div style="margin-top:8px"><a id="devGoSign" style="cursor:pointer;color:var(--pri);text-decoration:underline">前往「授权管理 → 授权设备」 →</a></div>
+      </div>
+    </div>
     <div class="card" id="initCard" style="display:none"><h3>🏗️ 开业初始化 </h3>
       <div id="initBody"></div></div>
     <div class="card"><h3>变更留痕 </h3>
@@ -102,56 +108,21 @@ export async function render(view) {
   }
 
   /** V4.21.2 设备管理页签：收银机授权列表（审批通过/停用启用/命名/删除，待授权排前） */
+  /** V5.0.11c 设备管理页签：设备授权列表已迁移到「授权管理 -> 授权设备」。
+   *  本页不再重复渲染同一份列表 —— 原先「系统设置-设备管理」与「授权管理-授权设备」
+   *  是同一功能的两处完整重复实现（同样调 /pos-devices、同样一套审批/停用/命名/删除按钮），
+   *  状态极易不一致，且管理员会困惑于两处该点哪个。现统一到授权管理。
+   *  本页只保留设备相关的**开关设置**（总开关、回环豁免、配对码有效期与次数等）。 */
   async function renderDevCard() {
     const card = view.querySelector('#devCard');
     if (!card) return;
     const show = curGroup === '设备管理';
     card.style.display = show ? '' : 'none';
     if (!show) return;
-    const body = view.querySelector('#devBody');
-    try {
-      const rows = await must(get('/pos-devices'));
-      if (!Array.isArray(rows) || !rows.length) {
-        body.innerHTML = '<div class="empty">暂无设备登记。开启上方「收银机授权」开关后，新设备首次登录会自动登记为「待授权」，回到这里审批即可。</div>';
-        return;
-      }
-      const stColor = s => s === '待授权' ? '#b5544a' : (s === '已授权' ? 'var(--pri,#20663f)' : '#8a8577');
-      const seeAll = rows.some(d => d.storeName);   // V4.28.6：总部视图带门店列
-      body.innerHTML = `<table><thead><tr><th class="seq">序号</th><th>设备码</th><th>名称</th>${seeAll ? '<th>所属门店</th>' : ''}<th>状态</th><th>最后活跃</th><th>操作</th></tr></thead>
-        <tbody>${rows.map((d, i) => `<tr>
-          <td class="num seq">${i + 1}</td><td style="font-family:Consolas,monospace">${esc(d.deviceCode)}</td>
-          <td>${esc(d.deviceName || '—')}</td>
-          ${seeAll ? `<td>${esc(d.storeName || '—')}</td>` : ''}
-          <td><b style="color:${stColor(d.status)}">${esc(d.status)}</b></td>
-          <td class="muted">${d.lastSeenAt ? dt(d.lastSeenAt) : '—'}${d.lastIp ? ' · ' + esc(d.lastIp) : ''}</td>
-          <td style="white-space:nowrap">
-            ${d.status !== '已授权' ? `<button class="btn sm pri" data-dvok="${d.id}" data-name="${esc(d.deviceName || '')}">✓ 通过</button> ` : ''}
-            ${d.status === '已停用'
-              ? `<button class="btn sm" data-dvstatus="${d.id}" data-st="已授权">启用</button> `
-              : `<button class="btn sm" data-dvstatus="${d.id}" data-st="已停用">停用</button> `}
-            <button class="btn sm" data-dvrename="${d.id}" data-name="${esc(d.deviceName || '')}">命名</button>
-            <button class="btn sm danger" data-dvdel="${d.id}">删除</button>
-          </td>
-        </tr>`).join('')}</tbody></table>
-        <div class="muted" style="font-size:12px;margin-top:6px">说明：浏览器拿不到 MAC 地址（且 MAC 可伪造），采用<b>设备码 + 浏览器指纹</b>白名单，强于 MAC 绑定。设备登记归属于<b>其登录的门店</b>（总部视角可见所属门店列，审批前请核对门店防误授权）。审批前建议先「命名」便于识别；删除后该设备再登录会重新登记为待授权。</div>`;
-      body.querySelectorAll('[data-dvok]').forEach(b => b.onclick = async () => {
-        const name = prompt('设备名称（如：1号收银机）', b.dataset.name || '') ?? '';
-        try { await must(post(`/pos-devices/${b.dataset.dvok}/approve`, { name })); toast('已授权通过'); renderDevCard(); } catch { /* must 已 toast */ }
-      });
-      body.querySelectorAll('[data-dvrename]').forEach(b => b.onclick = async () => {
-        const name = prompt('设备名称（如：1号收银机）', b.dataset.name || '');
-        if (name === null) return;
-        try { await must(post(`/pos-devices/${b.dataset.dvrename}/approve`, { name })); toast('已保存名称'); renderDevCard(); } catch { /* must 已 toast */ }
-      });
-      body.querySelectorAll('[data-dvstatus]').forEach(b => b.onclick = async () => {
-        try { await must(post(`/pos-devices/${b.dataset.dvstatus}/status`, { status: b.dataset.st })); toast(b.dataset.st === '已停用' ? '已停用（该设备将无法登录员工账号）' : '已启用'); renderDevCard(); } catch { /* must 已 toast */ }
-      });
-      body.querySelectorAll('[data-dvdel]').forEach(b => b.onclick = async () => {
-        if (!confirm('删除该设备登记？删除后该设备再登录会重新登记为待授权。')) return;
-        try { await must(del(`/pos-devices/${b.dataset.dvdel}`)); toast('已删除'); renderDevCard(); } catch { /* must 已 toast */ }
-      });
-    } catch (e) {
-      body.innerHTML = `<div class="empty">设备列表加载失败：${esc(e?.msg || e?.message || '')}</div>`;
+    const link = card.querySelector('#devGoSign');
+    if (link && !link.dataset.bound) {
+      link.dataset.bound = '1';
+      link.onclick = () => { location.hash = '#/signatures'; };
     }
   }
 

@@ -238,12 +238,23 @@ class DividendEngine {
         givenCents += Math.round(it.amount * 100);
       }
       const given = givenCents / 100;
+      /* V5.0.14 新规则：零发放（当日无任何成功发放）→ 该笔计提次日自动失效，不再进入分红池。
+       * 计提明细落一条「失效」记录（整期级，member_id 为空，迁移 156 已放开）并注明失效原因，
+       * 老板在发放明细里能看到这笔钱的去向与失效原因。 */
+      if (status === '零发放') {
+        await cx(c,
+          `INSERT INTO dividend_records (store_id, member_id, period_id, record_type, amount,
+                                         expire_at, operator_id, remark)
+           VALUES (${curStore()},NULL,$1,'失效',$2,$3,$4,$5)`,
+          [period[0].id, calc.pool, addDaysStr(bizDate, 1), operatorId,
+           '当日无符合发放条件的会员（30 天内无达标消费窗口或全员已达封顶），按规则次日失效：不计入分红池、不分发']);
+      }
       await audit(storeId, operatorId, '分红', 'dividend.period.run', 'dividend_period', period[0].id,
         { bizDate, netProfit, pool: calc.pool, given });
       return { periodId: period[0].id, pool: calc.pool, given, memberCount: calc.memberCount,
                orangeAlert: calc.orangeAlert, redAlert: calc.redAlert,
                note: status === '零发放'
-                 ? '本期无符合条件的会员（30 天内无达标消费窗口或全员已达封顶），计提金额留存分红池、明细为空'
+                 ? '本期无符合条件的会员（30 天内无达标消费窗口或全员已达封顶），计提金额按新规则次日失效（发放明细已记「失效」及原因），不分发'
                  : '' };
     });
   }
@@ -382,9 +393,11 @@ class DividendController {
 
   @Get('records')
   records(@Query('memberId') memberId?: string) {
+    /* V5.0.14：LEFT JOIN——「失效」记录是整期级（member_id 为空），内联会把它们吞掉；
+     * 指定 memberId 过滤时自然排除空会员行（失效记录不属于任何会员）。 */
     return q(
       `SELECT d.*, m.name AS member_name, m.card_no
-         FROM dividend_records d JOIN members m ON m.id = d.member_id
+         FROM dividend_records d LEFT JOIN members m ON m.id = d.member_id
         WHERE ($1::bigint IS NULL OR d.member_id = $1::bigint)
         ORDER BY d.id DESC LIMIT 100`, [memberId ? Number(memberId) : null]);
   }

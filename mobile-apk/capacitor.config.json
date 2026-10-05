@@ -1,0 +1,10 @@
+{
+  "appId": "com.pos.cashier",
+  "appName": "超市收银",
+  "webDir": "www",
+  "loggingBehavior": "debug",
+  "android": {
+    "allowMixedContent": true,
+    "webContentsDebuggingEnabled": true
+  }
+}

@@ -1,0 +1,5 @@
+path: d:/Software/POS_system/超市收银系统-初版代码/backend/ai-train/dataset-loc
+train: images/train
+val: images/val
+names:
+  0: 商品

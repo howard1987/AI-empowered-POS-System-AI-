@@ -15,8 +15,15 @@ import { existsSync, readFileSync } from 'fs';
 const MODELS_DIR = path.join(__dirname, '..', '..', 'models');
 const CN_MODEL_FILE = 'clipcn/model_quantized.onnx';
 const CN_VOCAB_FILE = 'clipcn/vocab.txt';
-/** 存入 ai_samples.emb_model / ai_name_embs.emb_model，换模型后可识别重建索引 */
-export const CLIPCN_MODEL_TAG = 'clipcn-vit-b16-quant';
+/** 存入 ai_samples.emb_model / ai_name_embs.emb_model，换模型后可识别重建索引。
+ *  V5.0.12：预处理加中心裁剪（抑制桌面背景主导），向量口径变化 → tag 同步升级，
+ *  旧向量自动视为 stale（emb_status 可见），需在训练台「重建索引」后恢复检索。 */
+export const CLIPCN_MODEL_TAG = 'clipcn-vit-b16-quant-c82';
+/** V5.0.12 中心裁剪比例：真机实测全帧嵌入被背景/台面主导——同一桌面拍的不同商品
+ *  相互相似度高达 0.96~0.98、Top1-Top2 边距仅 0.02~0.04 且排序会翻转（拍偏帧真品排第三），
+ *  门槛再严也救不了排序错误。先中心裁掉 ~18% 边缘（背景占比最高的区域）再走 CLIP 标准预处理，
+ *  样本与识别帧同口径，让特征向"商品本体"集中。 */
+const CN_CROP_RATIO = 0.82;
 const CN_SIZE = 224;
 const CN_TEXT_LEN = 52;                    // Chinese-CLIP 官方文本最大长度（含 [CLS]/[SEP]）
 // 与 ai.clip.ts 相同的 CLIP 归一化参数（Chinese-CLIP preprocessor_config 一致）
@@ -113,7 +120,13 @@ async function preprocessImage(imageBase64: string): Promise<Float32Array> {
   const img = await Jimp.read(buf);
   const w0 = img.bitmap.width, h0 = img.bitmap.height;
   if (!w0 || !h0) throw new Error('图片解码失败');
-  const scale = Math.max(CN_SIZE / w0, CN_SIZE / h0);
+  // V5.0.12：先中心裁剪（样本/识别帧同口径），再走 CLIP 标准 shortest-side + 中心裁剪
+  if (CN_CROP_RATIO < 1) {
+    const cw = Math.round(w0 * CN_CROP_RATIO), ch = Math.round(h0 * CN_CROP_RATIO);
+    img.crop({ x: Math.floor((w0 - cw) / 2), y: Math.floor((h0 - ch) / 2), w: cw, h: ch });
+  }
+  const wc = img.bitmap.width, hc = img.bitmap.height;   // 裁剪后的实际尺寸
+  const scale = Math.max(CN_SIZE / wc, CN_SIZE / hc);
   img.scale(scale);
   const w1 = img.bitmap.width, h1 = img.bitmap.height;
   const x0 = Math.max(0, Math.floor((w1 - CN_SIZE) / 2));

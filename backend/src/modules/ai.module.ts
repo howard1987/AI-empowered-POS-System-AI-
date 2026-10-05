@@ -23,7 +23,7 @@ import { segmentItemsYolo } from './ai.seg.yolo';
 import { autotrainStatus, autotrainRun, autotrainTick, autotrainBusy, autotrainEnvCheck, autotrainEnvSetup, autotrainEnvJob } from './ai.autotrain';
 import { AiModelsController } from './ai.models';
 import { AiOcrController, AiSignatureController } from './ai.ocr';
-import { uploadsFilePath, saveUploadImage } from '../common/uploads';
+import { uploadsFilePath, saveUploadImage, isRealImage } from '../common/uploads';
 import { scheduleFrameCleanup } from './ai.housekeeping';
 
 const cx = (c: any, sql: string, params: any[] = []) => c.query(sql, params).then((r: any) => r.rows);
@@ -62,10 +62,24 @@ function gateClip(cands: any[], minConf: number, strictConf: number, margin: num
   const img2 = top2 ? (top2.rawImgSim ?? top2.conf) : 0;
   if (!top1 || img1 < minConf) return { hit: null, ambiguous: false, textAgree: false };
   const strictOk = img1 >= strictConf;
+  /* V5.0.12：**文本信号退出自动命中裁决，只用于候选排序展示**。
+   * 实测（V5.0.11k 真机数据）：Chinese-CLIP 图文相似度对所有商品名都落在 0.29~0.33 的窄带里，
+   * 正确命中的图文差（0.018）与错误命中的图文差（0.017）不可区分——按 textAgree 放行等于掷硬币，
+   * pid=75 拍偏帧就是被 0.017 的图文差"佐证"成宜简水的。自动命中只认图像边距。 */
   const textAgree = !!top1.textSim && !!top2?.textSim && top1.textSim > top2.textSim;
-  const marginOk = !top2 || (img1 - img2) >= margin || textAgree;
-  if (strictOk || marginOk) return { hit: top1, ambiguous: false, textAgree };
-  return { hit: null, ambiguous: true, textAgree };
+  const marginOk = !top2 || (img1 - img2) >= margin;
+  /* V5.0.12 修复（真机投诉根因）：strict 快速通道此前**不做任何边距检查**——
+   * 真机实测全帧 CLIP 相似度被背景/台面主导，不同 SKU 之间也能到 0.96~0.98：
+   * 拍宜简水角度稍偏，益达（仅 1 张样本）以 0.971~0.977 越过 strict_conf=0.97
+   * 直接"97% 置信"自动命中（ai_recognition_logs #78/#79/#81/#87 实录）。
+   * strict 通道现在保留一个紧凑边距下限 min(0.02, margin)；
+   * 另：图像边距 <0.005 的" razor-tie"（两个 SKU 几乎并列）一律视为 ambiguous——
+   * 此时文本信号同样不可信（差异在噪声量级），自动命中等于掷硬币，交给店员点选。 */
+  const tightMargin = Math.min(0.025, margin);
+  const strictMarginOk = !top2 || (img1 - img2) >= tightMargin;
+  const razorTie = !!top2 && (img1 - img2) < 0.005;
+  if (!razorTie && ((strictOk && strictMarginOk) || marginOk)) return { hit: top1, ambiguous: false, textAgree };
+  return { hit: null, ambiguous: !!top2, textAgree };
 }
 
 /** 模型文件目录（backend/models，相对脚本目录自动适配） */
@@ -190,27 +204,29 @@ export class AiController {
      *  尽量避免"未识别"整帧浪费；hit=true 的件为自动命中（免纠错直采）。 */
     let cropDetail: { cropBox: any; hit: boolean; productId: number | null; name: string | null; conf: number | null; cands: { productId: number; name: string; conf: number }[] }[] = [];
 
-    /* ── V4.11.2 M2 多件识别（方案 v3.2）：mode='multi' 时先试零训练轮廓分割 + 逐件 CLIP 检索；
+    /* ── V4.11.2 M2 多件识别（方案 v3.2）：mode='multi' 时先试分割定位 + 逐件 CLIP 检索；
      *    每件独立过三门槛 → 命中件按商品聚合计数（确认卡片多件同出），未决件给出候选卡片；
-     *    单件画面（分割出 0~1 个有效框）自动回落下方单件管线，前端无需感知。 ── */
+     *    V5.0.12 主体优先：分割出 ≥1 个主体框就走逐件裁剪检索（crop 商品本体主导，消除全帧
+     *    背景主导误判），仅 0 框（分割失败/纯背景）回落下方单件全帧管线，前端无需感知。 ── */
     let multiDone = false;
     if (b.mode === 'multi' && b.imageBase64 && (await embEnabled()) && (await embMultiEnabled()) && embModelReady()) {
       try {
         const em = await embSearchMulti(b.imageBase64, user.storeId, await embTopK());
-        if (em.multi) {
+        if (em.crops.length) {
           // crop 采信阈值放宽（换背景复拍系统性偏低），但 strict/margin 门槛不变，双保险防误判
           const minConf = Math.min(await embMinConf(), await embMultiMinConf());
           const strictConf = await embStrictConf(), margin = await embMargin();
-          const counts = new Map<number, { productId: number; name: string; count: number; conf: number }>();
+          const counts = new Map<number, { productId: number; name: string; count: number; conf: number; rawImgSim: number }>();
           const candCards = new Map<number, any>();
           const cropHits: { productId: number; name: string; conf: number; cropBox: any }[] = [];   // V4.27.4 多品同拍采集：逐件命中明细
           let ambCrops = 0, lowCrops = 0;
           for (const crop of em.crops) {
             const g = gateClip(crop.candidates, minConf, strictConf, margin);
             if (g.hit) {
-              const it = counts.get(g.hit.productId) || { productId: g.hit.productId, name: g.hit.name, count: 0, conf: 0 };
+              const it = counts.get(g.hit.productId) || { productId: g.hit.productId, name: g.hit.name, count: 0, conf: 0, rawImgSim: 0 };
               it.count += 1;
               it.conf = Math.max(it.conf, Math.round(g.hit.conf * 1000) / 1000);
+              it.rawImgSim = Math.max(it.rawImgSim, Math.round((g.hit.rawImgSim ?? g.hit.conf) * 1000) / 1000);
               counts.set(g.hit.productId, it);
               cropHits.push({ productId: g.hit.productId, name: g.hit.name, conf: g.hit.conf, cropBox: crop.box });
               candCards.delete(g.hit.productId);   // 已确认件不再出现在候选卡片
@@ -228,7 +244,7 @@ export class AiController {
           layer = 'clip-multi';
           multiDone = true;
           clipMs = em.ms;
-          result = [...counts.values()].map(it => ({ productId: it.productId, name: it.name, count: it.count, conf: it.conf, matched: true }));
+          result = [...counts.values()].map(it => ({ productId: it.productId, name: it.name, count: it.count, conf: it.conf, rawImgSim: it.rawImgSim ?? null, matched: true }));
           candidates = [...candCards.values()];
           // V4.27.4 多品同拍采集：逐件命中明细（同品取最高置信，≤10 个），供前端裁剪入样本库
           const bestBy = new Map<number, { productId: number; name: string; conf: number; cropBox: any }>();
@@ -246,7 +262,7 @@ export class AiController {
               productId: g.hit ? g.hit.productId : null,
               name: g.hit ? g.hit.name : null,
               conf: g.hit ? g.hit.conf : null,
-              cands: (crop.candidates || []).slice(0, 3).map(c => ({ productId: Number(c.productId), name: c.name, conf: Number(c.conf) || 0 })),
+              cands: (crop.candidates || []).slice(0, 3).map(c => ({ productId: Number(c.productId), name: c.name, conf: Number(c.conf) || 0, img: c.rawImgSim ?? null, text: c.textSim ?? null })),
             };
           });
           imagePath = em.framePath;
@@ -277,16 +293,18 @@ export class AiController {
      *      ③ 达标但边距不足：若 rerank 后文本信号与 Top1 同向（top1.textSim > top2.textSim）→ 仍命中
      *         （瓶身品牌字可读出时的强佐证）；否则 layer='clip-cand' 跳过 VL 慢兜底，返回候选卡片店员点选；
      *      ④ 原始图像 < min_conf：灰图/未建库商品 → 照旧走 VL/dHash 链路。 ── */
+    let clipRan = false;   // V5.0.12：CLIP 层是否已完整跑完（用于下方 yolo 分支优雅降级）
     if (!multiDone && b.imageBase64 && (await embEnabled()) && embModelReady()) {
       try {
         const es = await embSearch(b.imageBase64, user.storeId, await embTopK());
+        clipRan = true;
         candidates = es.candidates;
         clipMs = es.ms;
         const g = gateClip(candidates, await embMinConf(), await embStrictConf(), await embMargin());
         const top1 = candidates[0], top2 = candidates[1];
         if (g.hit) {
           layer = 'clip';
-          result = [{ productId: g.hit.productId, name: g.hit.name, count: 1, conf: g.hit.conf, matched: true }];
+          result = [{ productId: g.hit.productId, name: g.hit.name, count: 1, conf: g.hit.conf, rawImgSim: g.hit.rawImgSim ?? null, matched: true }];
           imagePath = es.framePath;
           notice = `向量检索命中「${g.hit.name}」（图像相似度 ${Math.round((g.hit.rawImgSim ?? g.hit.conf) * 100)}%${g.textAgree ? `，瓶身文字佐证 ${Math.round(g.hit.textSim! * 100)}%` : ''}，图像编码+检索 ${clipMs}ms）`;
         } else if (g.ambiguous) {
@@ -339,24 +357,44 @@ export class AiController {
     } else if (!result) {
       // yolo 真机：加载激活模型（ai_models.is_active）走 ONNX Runtime 真推理
       const active = await q(`SELECT * FROM ai_models WHERE is_active ORDER BY id DESC LIMIT 1`);
-      if (!active.length) throw new BizException(50047, '无已部署模型（先在训练台导入/训练并激活）');
-      const m = active[0];
-      if (!b.imageBase64) throw new BizException(40003, '真机推理须传 imageBase64（收银端摄像头原图）');
-      const meta = {
-        id: Number(m.id), name: String(m.name), file_path: String(m.file_path),
-        mode: (m.metrics?.mode) || 'detect',
-        classes: (m.metrics?.classes) || {},
-      };
-      const det = await runDetection(meta, b.imageBase64, fbConf);
-      if (!det.ok) throw new BizException(50050, `模型推理失败：${det.err || '未知错误'}`);
-      layer = 'onnx';
-      result = det.boxes.map(bx => ({
-        productId: bx.productId != null ? Number(bx.productId) : null,
-        name: bx.name, count: bx.count, conf: r2(bx.conf), bbox: bx.bbox,
-      }));
-      usedFallback = det.lowConf; // 主模型置信度低于兜底阈值 → 预留本地多模态兜底
-      if (usedFallback) fallbackModel = 'qwen2-vl-2b-instruct-gguf';
-      if (!result.length) throw new BizException(50051, '模型未检出商品（置信度均低于阈值，可调低 ai.fallback_conf 或补充训练样本）');
+      if (!active.length) {
+        /* V5.0.12：CLIP 已完整检索但未自动命中（低于 min_conf / razor-tie 候选确认）时，
+         * 此前会下落到 yolo 分支再抛 50047 硬错误，前端表现为"识别失败"。
+         * 改为优雅返回（未部署检测模型时不该报错打断实时识别）：
+         *   · 有候选（ambiguous）→ 保留候选卡片与原 notice，result 置空数组结束分流；
+         *   · 无候选（低于阈值）→ 空结果 + 可行动提示。 */
+        if (clipRan) {
+          if (clipAmbiguous && candidates.length) {
+            result = [];   // 相近候选：保留候选卡片交店员点选（前端按 candidates 渲染）
+          } else {
+            /* 低于 min_conf（未建库/背景噪声）：不返回候选卡片——
+             * "识别只认真实样本，不猜"。返回空结果 + 可行动提示。 */
+            layer = 'clip';
+            result = [];
+            candidates = [];
+            notice = '未识别出商品：与已建库样本相似度过低。请对准商品正面重试；若该商品还没采集过样本，请先在「AI 训练采集」建库';
+          }
+        } else throw new BizException(50047, '无已部署模型（先在训练台导入/训练并激活）');
+      }
+      if (active.length) {
+        const m = active[0];
+        if (!b.imageBase64) throw new BizException(40003, '真机推理须传 imageBase64（收银端摄像头原图）');
+        const meta = {
+          id: Number(m.id), name: String(m.name), file_path: String(m.file_path),
+          mode: (m.metrics?.mode) || 'detect',
+          classes: (m.metrics?.classes) || {},
+        };
+        const det = await runDetection(meta, b.imageBase64, fbConf);
+        if (!det.ok) throw new BizException(50050, `模型推理失败：${det.err || '未知错误'}`);
+        layer = 'onnx';
+        result = det.boxes.map(bx => ({
+          productId: bx.productId != null ? Number(bx.productId) : null,
+          name: bx.name, count: bx.count, conf: r2(bx.conf), bbox: bx.bbox,
+        }));
+        usedFallback = det.lowConf; // 主模型置信度低于兜底阈值 → 预留本地多模态兜底
+        if (usedFallback) fallbackModel = 'qwen2-vl-2b-instruct-gguf';
+        if (!result.length) throw new BizException(50051, '模型未检出商品（置信度均低于阈值，可调低 ai.fallback_conf 或补充训练样本）');
+      }
     }
     const latency = Date.now() - t0;
     // V4.16.0 P6：候选卡片补差异字段 + 频率展示排序（不改命中判定）
@@ -1402,6 +1440,48 @@ print('完成：runs/detect/train/weights/best.onnx 导入训练台，并设置 
       await audit(user.storeId, user.sub, 'AI', 'ai.samples.import', 'ai_samples', undefined, { imported: ok, failed: failed.length });
       return { ok: true, imported: ok, failedCount: failed.length, failed: failed.slice(0, 10) };
     });
+  }
+
+  /* ── V5.0.12d/e 条码绑定采集：把 AI 智拍画面帧绑定为商品训练样本，建立"商品图片 ↔ 条码"绑定。
+   *  两种来源（kind）：'confirm'（店长/店员勾选确认=人工认定，60s 节流）与
+   *  'scan'（条码秒识别命中，静默采集，10min 节流）。只进训练，绝不拦截业务流程。
+   *  cropBox：多件识别的逐件分割框（原图像素坐标）——有则裁出商品主体入库，无则全帧。 ── */
+  private static bindThrottle = new Map<string, number>();
+  @Post('samples/bind')
+  async samplesBind(@Body() b: { productId?: number; imageBase64?: string; scene?: string; kind?: 'confirm' | 'scan'; cropBox?: { x: number; y: number; w: number; h: number } },
+                    @CurrentUser() user: AuthUser) {
+    const pid = Number(b.productId);
+    if (!Number.isFinite(pid) || pid <= 0 || !b.imageBase64 ||
+        !/^data:image\/(png|jpeg|jpg);base64,/.test(String(b.imageBase64))) {
+      throw new BizException(40003, '参数不合法（需 productId 与 imageBase64）');
+    }
+    const p = await q(`SELECT id FROM products WHERE id=$1 AND deleted_at IS NULL`, [pid]);
+    if (!p.length) throw new BizException(40404, '商品不存在', 404);
+    const kind = b.kind === 'scan' ? 'scan' : 'confirm';
+    const source = kind === 'confirm' ? '确认绑定' : '条码绑定';
+    const throttleMs = kind === 'confirm' ? 60 * 1000 : 10 * 60 * 1000;
+    const key = `${user.storeId}:${pid}`;
+    const now = Date.now();
+    const last = AiController.bindThrottle.get(key) || 0;
+    if (now - last < throttleMs) return { ok: true, throttled: true, sampleId: null as number | null };
+    let base64 = String(b.imageBase64).replace(/^data:image\/\w+;base64,/, '');
+    // 有分割框 → 裁出商品主体（cropItemBase64 内部做边界收敛），主体样本对检索/训练价值远高于全帧
+    if (b.cropBox && b.cropBox.w > 10 && b.cropBox.h > 10) {
+      try {
+        const { cropItemBase64 } = await import('./ai.seg');
+        base64 = await cropItemBase64(b.imageBase64, { ...b.cropBox, frac: 0 });
+      } catch { /* 裁剪失败回落全帧 */ }
+    }
+    const buf = Buffer.from(base64, 'base64');
+    if (!buf.length || !isRealImage(buf, 'jpg')) throw new BizException(40003, '图片解码失败或非真实图片');
+    const path = saveUploadImage(buf, `bind_${pid}_${now}.jpg`);
+    const r = await q(
+      `INSERT INTO ai_samples (store_id, product_id, image_path, source, annotation, status)
+       VALUES ($1,$2,$3,$4,$5,'待审核') RETURNING id`,
+      [user.storeId, pid, path, source, JSON.stringify({ kind, scene: b.scene || 'intake', boundBy: user.sub, boundAt: new Date().toISOString() })]);
+    AiController.bindThrottle.set(key, now);
+    await audit(user.storeId, user.sub, 'AI', 'ai.samples.bind', 'ai_samples', Number(r[0].id), { productId: pid, kind });
+    return { ok: true, sampleId: Number(r[0].id) };
   }
 }
 

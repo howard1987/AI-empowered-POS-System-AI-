@@ -1585,22 +1585,23 @@ class PurchaseController {
   async reconPreview(@Query('supplierId') supplierId: string, @Query('from') from?: string, @Query('to') to?: string) {
     const sid = Number(supplierId);
     if (!sid) throw new BizException(40003, 'supplierId 必填');
-    const f = from || today().slice(0, 4) + '-' + today().slice(4, 6) + '-01';
-    const t = to || today().slice(0, 4) + '-' + today().slice(4, 6) + '-' + today().slice(6, 8);
+    // V5.0.8b：日期默认为空时不按区间约束（取极宽范围，含未来日期避免漏单）
+    const f = from || '1970-01-01';
+    const t = to || '2999-12-31';
     return tx(async c => {
       const inbounds = await cx(c,
-        `SELECT id, inbound_no AS doc_no, created_at::date AS doc_date, audited_at::date AS audit_date, total_amount AS amount, status
+        `SELECT id, inbound_no AS doc_no, created_at::date AS doc_date, audited_at::date AS audit_date, total_amount AS amount, status, remark
            FROM inbound_orders
           WHERE supplier_id=$1 AND status IN ('未审核','已审核') AND recon_id IS NULL
             AND created_at::date BETWEEN $2::date AND $3::date ORDER BY id`, [sid, f, t]);
       const returns = await cx(c,
-        `SELECT r.id, r.return_no AS doc_no, r.created_at::date AS doc_date, r.audited_at::date AS audit_date, r.total_amount AS amount, r.status
+        `SELECT r.id, r.return_no AS doc_no, r.created_at::date AS doc_date, r.audited_at::date AS audit_date, r.total_amount AS amount, r.status, r.remark
            FROM purchase_returns r
           WHERE r.supplier_id=$1 AND r.status IN ('待审核','待审核','已审核')
             AND NOT EXISTS (SELECT 1 FROM reconciliation_items ri WHERE ri.doc_type='return' AND ri.doc_id=r.id)
             AND r.created_at::date BETWEEN $2::date AND $3::date ORDER BY r.id`, [sid, f, t]);
       const fees = await cx(c,
-        `SELECT f.id, f.fee_no AS doc_no, f.created_at::date AS doc_date, f.created_at::date AS audit_date, f.amount,
+        `SELECT f.id, f.fee_no AS doc_no, f.created_at::date AS doc_date, f.created_at::date AS audit_date, f.amount, f.remark,
                 COALESCE(f.direction, t.direction) AS direction, t.name AS fee_type
            FROM supplier_fees f JOIN supplier_fee_types t ON t.id = f.fee_type_id
           WHERE f.supplier_id=$1 AND f.status='已审核'
@@ -1613,7 +1614,7 @@ class PurchaseController {
       const feePay = fees.filter(x => x.direction === '付').reduce((s, x) => s + Number(x.amount), 0);
       return { from: f, to: t,
                inbounds, returns,
-               fees: fees.map((x: any) => ({ id: x.id, docNo: x.doc_no, audit_date: x.audit_date, amount: Number(x.amount), direction: x.direction, feeType: x.fee_type })),
+               fees: fees.map((x: any) => ({ id: x.id, docNo: x.doc_no, audit_date: x.audit_date, remark: x.remark || '', amount: Number(x.amount), direction: x.direction, feeType: x.fee_type })),
                goodsTotal: r2(goods), feeIncomeTotal: r2(feeIncome), feePayTotal: r2(feePay),
                payableTotal: r2(goods + feePay - feeIncome) };
     });

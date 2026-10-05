@@ -128,7 +128,7 @@ export async function render(view) {
           <button class="btn sm" id="rcPrintA5">🖨 打印结算单 A5</button>
         </div>
         <div class="doc-head" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr))">
-          <div class="fld"><label>单据日期</label><input id="qFrom" type="date" value="${monthStart}"><span style="color:var(--ink-3)">~</span><input id="qTo" type="date" value="${today}"></div>
+          <div class="fld"><label>单据日期</label><input id="qFrom" type="date"><span style="color:var(--ink-3)">~</span><input id="qTo" type="date"></div>
           <div class="fld"><label>审核状态</label><span id="qStat" style="display:flex;gap:2px">
             <button class="btn sm segbtn" data-v="待审核">待审核</button>
             <button class="btn sm segbtn" data-v="已审核">已审核</button>
@@ -190,8 +190,7 @@ export async function render(view) {
   let suppliers = [], feeTypes = [], curSup = 0, curRecon = null, reconAll = [];
   let rcPage = 1, stPage = 1, agPage = 1, fePage = 1, lgPage = 1, pvPage = 1;
   const d0 = new Date(); d0.setDate(1);
-  view.querySelector('#cFrom').value = d0.toISOString().slice(0, 10);
-  view.querySelector('#cTo').value = today;
+  // V5.0.8b：日期默认为空——首屏不按日期约束，点「加载待对账单据」时若未选日期则由后端兜底
   view.querySelector('#agStart').value = d0.toISOString().slice(0, 10);
 
   /* ── 打印列配置（图一：默认 8 列，勾选联动 A5 预览） ── */
@@ -276,6 +275,7 @@ export async function render(view) {
         <td><a style="cursor:pointer;color:var(--info);font-family:var(--mono)" data-doc="${dtype}" data-docid="${docId}" data-no="${esc(x.doc_no || x.docNo || '')}">${esc(x.doc_no || x.docNo || '')}</a></td>
         <td>${type}</td>
         <td class="num" ${amtCls}>${amtTxt}</td>
+        <td style="max-width:220px;white-space:normal">${esc(x.remark || '—')}</td>
         <td>${aud
           ? `<span class="pill g">已审核</span>` + (isFee ? `<span class="pill b">${x.direction === '收' ? '周期自动' : '费用'}</span>` : '')
           : `<span class="pill r">未审核 · 不可纳入</span> <button class="btn sm" data-doc="${dtype}" data-docid="${docId}" data-no="${esc(x.doc_no || x.docNo || '')}" data-auditgo="1">去审核</button>`}</td>
@@ -296,7 +296,7 @@ export async function render(view) {
       && pv.fees.every(x => picked.fees.has(x.id))
       && (pv.inbounds.some(x => audited(x)) || pv.returns.some(x => audited(x)) || pv.fees.length > 0);
     box.innerHTML = allRows.length ? `
-      <table style="margin-top:10px"><thead><tr><th style="width:34px"><input type="checkbox" id="pvChkAll" ${allPicked ? 'checked' : ''} title="全选/取消全选（已审核单据）"></th><th class="seq">序号</th><th>审核日期</th><th>原始单号</th><th>类型</th><th class="num">金额</th><th>状态</th></tr></thead>
+      <table style="margin-top:10px"><thead><tr><th style="width:34px"><input type="checkbox" id="pvChkAll" ${allPicked ? 'checked' : ''} title="全选/取消全选（已审核单据）"></th><th class="seq">序号</th><th>审核日期</th><th>原始单号</th><th>单据类型</th><th class="num">单据金额</th><th>备注</th><th>状态</th></tr></thead>
       <tbody>${pg.slice.join('')}</tbody></table>${pg.bar}` : '<div class="empty" style="padding:18px">该区间无匹配单据（或单据已被对账单吸收）</div>';
     view.querySelector('#rcPay').textContent = money(pvSum(true).pay); // 本期应付=全部已审核单据合计
     // V4.9.7 修复复选框：勾选只更新汇总与 A5 预览，不整表重绘（勾选状态不再丢失）

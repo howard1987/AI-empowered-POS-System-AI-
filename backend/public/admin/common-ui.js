@@ -189,8 +189,18 @@ export function docTable({ cols, rows, empty = '暂无数据', foot = '', cls = 
   const td = c => (typeof c === 'object' && c !== null)
     ? `<td${c.cls ? ` class="${c.cls}"` : ''}${c.style ? ` style="${c.style}"` : ''}${c.colspan ? ` colspan="${c.colspan}"` : ''}>${c.h}</td>`
     : (typeof c === 'string' && /^<td[\s>]/i.test(c) ? c : `<td>${c}</td>`);
+  /* V5.0.11h 修复「所有表格行双击弹详情失效」：
+   * 原写法 `<tr${r.attrs || ''}>` 在 attrs 非空时拼出 `<trdata-in="50" ...>` ——
+   * **tr 后面少了一个空格**。HTML 解析器会把标签名读成 `trdata-in` 这个未知元素，
+   * 在 <tbody> 里直接丢弃（in-table 插入模式忽略不认识的标签），
+   * 随后遇到的第一个 <td> 触发「隐式创建 tr」，
+   * 于是表格看起来渲染正常，但**每一行都是隐式 tr、属性全丢**。
+   * 后果：全站 `querySelectorAll('[data-xxx]')` 命中 0 → 双击/单击处理器一个都绑不上，
+   * 而页面看着完全正常，极难定位（V5.0.11 真机联调时发现）。
+   * 修法：补空格，并对空 attrs 做处理，避免生成 `<tr >` 这种多余空格。 */
+  const trAttrs = r => (r && typeof r.attrs === 'string') ? r.attrs.trim() : '';
   const body = rows.length
-    ? rows.map(r => `<tr${r.attrs || ''}>${r.cells.map(td).join('')}</tr>`).join('')
+    ? rows.map(r => { const a = trAttrs(r); return `<tr${a ? ' ' + a : ''}>${r.cells.map(td).join('')}</tr>`; }).join('')
     : `<tr><td colspan="${cols.length}" class="empty">${empty}</td></tr>`;
   return `<table${cls ? ` class="${cls}"` : ''}${style ? ` style="${style}"` : ''}><thead><tr>${th}</tr></thead><tbody>${body}</tbody>${foot ? `<tfoot>${foot}</tfoot>` : ''}</table>`;
 }
@@ -206,15 +216,33 @@ let __fitBound = false;
 export function fitFillPanes(view) {
   __fitViews.add(view);
   const adjust = () => {
-    __fitViews.forEach(v => (v.querySelectorAll?.('.fill-pane, .split-rows, .fill-card') || []).forEach(el => {
-      // 只量「顶层」元素：嵌在其它定高面板里的交给 flex 分配
-      if (el.parentElement?.closest?.('.fill-pane, .split-rows')) return;
-      const r = el.getBoundingClientRect();
-      if (!r.height && !r.width) return;   // display:none
-      // 46 ≈ #view 底部留白 40 + 呼吸；量不到（异常）就不动
-      const h = Math.max(320, window.innerHeight - r.top - 46);
-      el.style.height = h + 'px';
-    }));
+    __fitViews.forEach(v => {
+      /* V5.0.11c 修复（V5.0.7c 判据的真正落地点）：原先这里对**每一张** .fill-card /
+       * .fill-pane / .split-rows 无条件设 height = innerHeight - top - 46，导致
+       * 「授权管理」这类一屏 3 张表的页面每张卡都被撑成一屏高 —— 正是 scanFillCards
+       * 上方注释里警告的「页面变成 N 屏长」。且 r.top 为负（卡片已滚到视口上方）时
+       * 算出的高度会超过视口（实测 1598px > 1105px），高度又会写进 style 粘住不放。
+       * 现在按 V5.0.7c 的原意执行：只有「独立主表格屏」（顶层卡片 ≤2 张）才铺满视口，
+       * 多卡工作流屏保持自然高度，并**显式清除**先前写入的高度。 */
+      const allTop = [...(v.querySelectorAll?.('.card') || [])]
+        .filter(c => !c.parentElement?.closest?.('.card'));
+      const standalone = allTop.length > 0 && allTop.length <= 2;
+      (v.querySelectorAll?.('.fill-pane, .split-rows, .fill-card') || []).forEach(el => {
+        // 只量「顶层」元素：嵌在其它定高面板里的交给 flex 分配
+        if (el.parentElement?.closest?.('.fill-pane, .split-rows')) return;
+        if (!standalone) {          // 多卡屏：自然高度 + 清掉历史残留
+          el.style.height = '';
+          return;
+        }
+        const r = el.getBoundingClientRect();
+        if (!r.height && !r.width) return;   // display:none
+        // 46 ≈ #view 底部留白 40 + 呼吸；量不到（异常）就不动
+        // r.top 可能为负（卡片已滚到视口上方），此时按 innerHeight-top-46 会算出超过视口的高度，
+        // 需夹在视口内，否则页面会出现"空白一屏还点不到底"。
+        const h = Math.min(Math.max(320, window.innerHeight - r.top - 46), window.innerHeight);
+        el.style.height = h + 'px';
+      });
+    });
   };
   adjust();
   if (!__fitBound) {
@@ -277,12 +305,24 @@ function scanFillCards(view) {
       if (foot) foot.style.margin = '0';
     });
   });
-  // 视口定高（fill-pane）：仅独立主表格屏启用
+  /* 视口定高（fill-pane）：仅「独立主表格屏」启用。
+   * V5.0.11c 修复：判定基数原本是 entries（**只含带分页条的卡片**）。像「授权管理」这种
+   * 一屏 3 张表的页面，其中「授权设备」表没有分页条 → 不计入 → 基数被算成 2 →
+   * 误判为独立表屏 → 每张卡都被撑成一屏高（用户反馈「签字授权容器太高」）。
+   * 正确做法是统计**所有顶层卡片**，与页面上给人的视觉观感一致。 */
+  const allTop = [...view.querySelectorAll('.card')]
+    .filter(c => !c.parentElement?.closest?.('.card'));      // 排除嵌套在别的卡片里的
   const topCards = entries
     .filter(({ card }) => !card.closest('.fill-pane, .split-rows') || card.closest('.fill-pane, .split-rows') === card);
-  if (topCards.length > 0 && topCards.length <= 2) {
-    topCards.forEach(({ card }) => card.classList.add('fill-pane'));   // 顶层卡片自行定高
-  }
+  const standalone = allTop.length > 0 && allTop.length <= 2;   // 一屏只有 1~2 张卡 = 独立表屏
+  topCards.forEach(({ card }) => {
+    if (standalone) card.classList.add('fill-pane');             // 顶层卡片自行定高
+    else {
+      // 多卡工作流屏：撤掉定高，走自然高度（否则每张卡一屏高，页面变成 N 屏长）
+      card.classList.remove('fill-pane');
+      card.style.height = '';
+    }
+  });
 }
 
 /** 全站主表格自动接管：把「含 <table> 且含分页条」的卡片改造为 fill 布局——
@@ -302,12 +342,9 @@ export function autoFillTables(view) {
       clearTimeout(t);
       t = setTimeout(() => {
         scanFillCards(view);
-        view.querySelectorAll?.('.fill-pane, .split-rows, .fill-card').forEach(el => {
-          if (el.parentElement?.closest?.('.fill-pane, .split-rows')) return;
-          const r = el.getBoundingClientRect();
-          if (!r.height && !r.width) return;
-          el.style.height = Math.max(320, window.innerHeight - r.top - 46) + 'px';
-        });
+        // 高度计算统一交给 fitFillPanes（V5.0.11c：那里才是真正设 height 的地方，
+        // 且已带「独立表屏 ≤2 张卡」判据 + 多卡屏清除残留 + 高度夹在视口内）
+        fitFillPanes(view);
       }, 120);
     }).observe(view, { childList: true, subtree: true });
   }
