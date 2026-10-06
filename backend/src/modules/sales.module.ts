@@ -701,7 +701,12 @@ export class SalesService {
           amountCents = payableCents - paidCents;
           if (!(amountCents > 0)) continue;
         }
-        if (!(amountCents > 0)) throw new BizException(40003, '支付金额必须大于 0');
+        if (amountCents < 0) throw new BizException(40003, '支付金额不能为负数');
+        // V5.0.15 QA 发现：抹零后应收可能为 0（如抹元规则下 0.99 元商品被抹到 0），
+        // 此时收银台会提交 amount=0 的现金单，沿用「必须大于 0」会直接 40003 卡住收银。
+        // 应收为 0 时允许 0 元支付；应收 >0 时仍要求每笔为正，
+        // 「Σ支付 = 应收」的强校验在下方 50031 兜底，不会因此放过金额不符。
+        if (amountCents === 0 && payableCents > 0) throw new BizException(40003, '支付金额必须大于 0');
         // ── V4.13.2 通道成功应答校验：带 gatewayOutTradeNo 的支付必须对上网关 SUCCESS 且金额逐分一致的单，
         //    防止店员谎报到账/截图造假（成熟做法的等价保障：只有真通道应答才能落单）──
         let gatewayTxnId: string | null = null;

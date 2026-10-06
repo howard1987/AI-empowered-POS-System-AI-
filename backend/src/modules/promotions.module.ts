@@ -98,12 +98,16 @@ function validateRules(kind: string, rules: any) {
   if (rules.memberOnly !== undefined && rules.memberOnly !== null && typeof rules.memberOnly !== 'boolean') {
     throw new BizException(40003, 'rules.memberOnly 须为布尔值（true=会员专享）');
   }
+  // V5.0.15 QA-P0 修复：此处原本是一个【独立的】if (kind==='满件折扣') … else throw，
+  // 与上面的 else-if 链并不相连 —— 结果无论传哪种促销类型（满减/折扣/特价/第二件半价/定时打折/
+  // 捆绑销售/消费后奖励）都会落进 else 抛「暂不支持的促销类型」，
+  // 也就是说**生产上根本无法创建任何促销**，结账时促销永不命中（应收恒等于原价）。
+  // 修法：把「满件折扣」并入上面的 else-if 链，删掉这段多余的 else 抛错。
+  // 类型合法性已由 create() 的 PROMO_KINDS.includes() 把关（promotions.module.ts:506）。
   if (kind === '满件折扣') {
     if (!(Number(rules.minQty) >= 2)) throw new BizException(40003, '满件折扣需 rules.minQty ≥ 2（满多少件）');
     const rate = Number(rules.rate);
     if (!(rate > 0 && rate < 1)) throw new BizException(40003, '满件折扣需 rules.rate ∈ (0,1)，如 0.8 = 8 折');
-  } else {
-    throw new BizException(40003, `暂不支持的促销类型：${kind}（一期支持 满减/折扣/特价/第二件半价）`);
   }
 }
 

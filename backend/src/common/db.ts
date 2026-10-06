@@ -17,9 +17,15 @@ if (!DATABASE_URL) {
 }
 export const pool = new Pool({
   connectionString: DATABASE_URL,
-  max: 10,
-  // 连接超时 5s：DB 未就绪时快速失败，避免业务请求/健康检查被挂死；pg-pool 会自动重建连接。
-  connectionTimeoutMillis: 5000,
+  // V5.0.15 QA-P1 修复：原 max=10，在多收银台并发结账 + 高峰期叠加查询时连接被抢光，
+  // 后续请求 5s 拿不到连接即 `timeout exceeded when trying to connect` → 用户看到「系统错误」。
+  // 实测 10 个并发 checkout 就能复现（2 单失败）。超市高峰（3~8 台收银机 + 会员/库存查询）
+  // 瞬时并发可达数十，故默认放宽到 40，可用 POS_PG_POOL_MAX 覆盖（PG 默认 max_connections=100）。
+  max: Math.max(10, Number(process.env.POS_PG_POOL_MAX || 40)),
+  // 连接超时 5s → 15s：高峰期宁可排队也不要直接失败（结账是长事务，多等几秒远好过报系统错误）
+  connectionTimeoutMillis: Math.max(5000, Number(process.env.POS_PG_POOL_TIMEOUT_MS || 15000)),
+  // 空闲连接及时回收，避免长期占用 PG 的 max_connections
+  idleTimeoutMillis: 30000,
   // 统一会话时区（本地部署单店为中国门店）：CURRENT_DATE / ::date / now() 均按东八区，
   // 避免 UTC 集群下凌晨时段「今日」落到昨天的口径漂移
   options: '-c TimeZone=Asia/Shanghai',

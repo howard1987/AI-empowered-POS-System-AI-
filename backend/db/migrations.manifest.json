@@ -155,8 +155,11 @@
   "154_v5115b_qweather_secret.sql": "7b22c3abbf203253d8e949122b1b8c53a0b6d2967555cd84fbf44b2dc61dee4e",
   "155_v5114_cashier_stock_perms.sql": "8dd3d19f237e11faf139b25685de2577ecfe36c61d64922dea3c304af4f75825",
   "156_v5014_dividend_zero_grant_expire.sql": "ce595f8d491bf6995c1ae154e97050731d0e0cf11865996043114f8a6c79bee6",
-  "157_supplier_qualifications.sql": "8686C3AD533A6A9EE166F96FBD299177D94601C16CCBF1B22A66A92F2845824A",
-  "158_ai_ocr_engine.sql": "AAA7BD5534EEA52A7A4A830733D13A3BB10BDB683E98E512610B3EC69E7B7FC9",
-  "159_t5_guest_phone.sql": "F2967DAC65BA6BC5A40867DF4D82116CC3CB865D4A59FDF1850920D989F12AE3",
-  "160_v5015_partial_unique_indexes.sql": "dbd935ec14e96c6f189fb94fce5d7bcccca58f2c9556d80cedf136082f1b6ba6"
+  "157_supplier_qualifications.sql": "8686c3ad533a6a9ee166f96fbd299177d94601c16ccbf1b22a66a92f2845824a",
+  "158_ai_ocr_engine.sql": "befdc53d7c2ae4861bec5106f8fc961d5c9f26d94157c20c5852154152a5dc35",
+  "159_t5_guest_phone.sql": "f2967dac65ba6bc5a40867df4d82116cc3cb865d4a59fdf1850920d989f12ae3",
+  "160_v5015_partial_unique_indexes.sql": "dbd935ec14e96c6f189fb94fce5d7bcccca58f2c9556d80cedf136082f1b6ba6",
+  "151_v5113_loopback_bypass.sql": "a3846cf277154d15241dc1b4b8f840bd41879abc5c1033396d3545e0e90ce9b2",
+  "152_v5114_device_name_backfill.sql": "df1be10dc74741806036f18beea5d13a70982eb72bffec2eb7e18637e585dc6a",
+  "153_v5115_sensitive_settings.sql": "6db57b0597f9ddec339decc73145aaed0a0d4ffbf4b8bed293ac179c25f23d88"
 }

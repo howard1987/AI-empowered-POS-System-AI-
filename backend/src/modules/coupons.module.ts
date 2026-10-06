@@ -158,13 +158,21 @@ export async function applyCoupons(
     } else {
       chosen = sel; // 全部可叠加：直接累加
     }
-    if (requestedMcIds?.length && !chosen.length) throw new BizException(50042, '所选优惠券均不可用（门槛/范围不满足或叠加规则冲突）');
   } else { // auto：系统自动组合最优
     const nonStack = scored.filter(x => x.mc.stackable === false).sort((a, b) => b.amount - a.amount)[0];
     const nonStackAmt = nonStack ? nonStack.amount : -1;
     const stackables = scored.filter(x => x.mc.stackable !== false);
     const stackSum = stackables.reduce((s, x) => s + x.amount, 0);
     chosen = stackSum >= nonStackAmt ? stackables : (nonStack ? [nonStack] : []);
+  }
+
+  // V5.0.15 QA-P0 修复：原来这条「所选券均不可用」的拦截只写在 manual 分支里，
+  // 而 coupon.mode 默认可能是 single/auto —— 那两种模式下收银员明明勾了券、
+  // 系统却因门槛不足/范围不符/已过期而静默忽略（catch { amt = 0 }），
+  // 顾客没享受到优惠、收银员毫不知情，是典型客诉来源。
+  // 现在对所有模式统一：显式传了券 id 却一张都没用上 → 明确报错，不静默吞掉。
+  if (requestedMcIds?.length && !chosen.length) {
+    throw new BizException(50042, '所选优惠券均不可用（门槛/范围不满足、已过期或叠加规则冲突）');
   }
 
   const amount = r2(chosen.reduce((s, x) => s + x.amount, 0));
