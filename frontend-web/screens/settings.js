@@ -1170,8 +1170,13 @@ export async function render(view) {
           <table style="width:100%;margin:0;border:none">
           <thead><tr><th>备份时间</th><th>大小</th><th>操作</th></tr></thead>
           <tbody>${items.map(it => `<tr><td>${esc(it.name.replace(/_/g, ' '))}</td><td>${Math.round(it.size / 1024)} KB</td>
-            <td><a data-bk="${esc(it.name)}" style="cursor:pointer;color:var(--pri);text-decoration:underline">下载</a></td></tr>`).join('')}</tbody></table></div>`;
+            <td>
+              <a data-bk="${esc(it.name)}" style="cursor:pointer;color:var(--pri);text-decoration:underline">下载</a>
+              &nbsp;|&nbsp;
+              <a data-rs="${esc(it.name)}" style="cursor:pointer;color:#c62828;text-decoration:underline">恢复</a>
+            </td></tr>`).join('')}</tbody></table></div>`;
         list.querySelectorAll('[data-bk]').forEach(a => a.onclick = () => downloadBackup(a.dataset.bk));
+        list.querySelectorAll('[data-rs]').forEach(a => a.onclick = () => restoreBackup(a.dataset.rs));
       } catch (e) { list.innerHTML = '<div class="muted" style="padding:6px 18px">列表加载失败</div>'; }
     }
   }
@@ -1186,6 +1191,21 @@ export async function render(view) {
       a.click();
       URL.revokeObjectURL(a.href);
     } catch (e) { toast('下载失败：' + (e.message || ''), false); }
+  }
+
+  async function restoreBackup(name) {
+    const ok = await confirmBox({
+      title: '从备份恢复数据库',
+      html: `即将把数据库恢复到 <b>${esc(name)}</b> 的状态，<b>当前所有数据将被覆盖且不可撤销</b>。<br><br>系统会先自动备份当前库作为保险，恢复失败或误操作均可从保险快照回退。确认继续？`,
+      okText: '确认恢复',
+      okClass: 'danger',
+    });
+    if (!ok) return;
+    try {
+      const r = await must(post(`/admin/backup/restore/${encodeURIComponent(name)}`));
+      toast(`✅ 已恢复至 ${r.name}（用时 ${r.tookMs}ms；保险备份：${r.backupName}）`, true);
+      loadList();
+    } catch (e) { toast('❌ 恢复失败：' + (e.msg || e.message || ''), false); }
   }
 
   async function loadInitPreview() {

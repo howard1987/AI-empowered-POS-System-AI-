@@ -7,6 +7,7 @@
  *   - POST /admin/backup/now          立即备份（手动触发，受 sys.data.backup 权限控制）
  *   - GET  /admin/backup/list         列出最近备份（同名权限）
  *   - GET  /admin/backup/download/:name 下载某个备份（同名权限，防路径穿越）
+ *   - POST /admin/backup/restore/:name 从某个备份恢复（同名权限；恢复前自动备份当前库作保险）
  *   - 自动备份：进程内 setInterval 每分钟检查，到达 ops.backup_hour 所设时刻（且当日未跑）即备份，
  *     保留最近 POS_BACKUP_RETAIN_DAYS（默认 14）天，过期目录自动清理。
  *
@@ -38,6 +39,17 @@ function locatePgDump(): string {
   ];
   for (const c of candidates) if (fs.existsSync(c)) return c;
   return 'pg_dump' + ext; // 回退 PATH（如已装入系统 PostgreSQL）
+}
+
+/** 定位 pg_restore：与 pg_dump 同源（vendor 优先，回退 PATH） */
+function locatePgRestore(): string {
+  const ext = process.platform === 'win32' ? '.exe' : '';
+  const candidates = [
+    path.join(process.cwd(), 'vendor', 'pg-tools', 'bin', 'pg_restore' + ext),
+    path.join(process.cwd(), 'pg-tools', 'bin', 'pg_restore' + ext),
+  ];
+  for (const c of candidates) if (fs.existsSync(c)) return c;
+  return 'pg_restore' + ext;
 }
 
 /** 文件系统安全的时间戳目录名：YYYYMMDD_HHmmss */
@@ -92,6 +104,38 @@ function doBackup(): { name: string; file: string; size: number; tookMs: number;
   const tookMs = Date.now() - t0;
   const removed = cleanupOld();
   return { name, file: path.join(name, 'database.dump'), size, tookMs, removed };
+}
+
+/**
+ * 从指定备份恢复整个业务库。
+ *  1) 先用 doBackup() 给「恢复前的当前库」拍一张保险快照，误操作也能回退；
+ *  2) 再用 pg_restore --clean --if-exists 把目标备份的 schema+data 整体还原。
+ * 注：恢复会 drop 并重建全部对象，当前活跃业务连接若持有旧对象可能短暂报错，
+ * 属于一次性手动运维操作，操作期间请勿进行其它写库动作。
+ */
+function doRestore(name: string): { name: string; size: number; tookMs: number; backupName: string } {
+  if (!DATABASE_URL) throw new BizException(50000, '缺少 DATABASE_URL 环境变量，无法执行恢复');
+  const f = path.join(BACKUP_ROOT, name, 'database.dump');
+  if (!fs.existsSync(f)) throw new BizException(40404, '备份不存在或已被清理');
+  // ① 保险快照：先备份当前库，便于误恢复后找回
+  const safe = doBackup();
+  // ② 恢复
+  const restore = locatePgRestore();
+  const t0 = Date.now();
+  const r = spawnSync(restore, ['--clean', '--if-exists', '--no-owner', '--no-privileges',
+    '--format=custom', '--dbname', DATABASE_URL, f], {
+    cwd: process.cwd(),
+    timeout: 10 * 60_000,
+    maxBuffer: 200 * 1024 * 1024,
+    windowsHide: true,
+  });
+  if (r.status !== 0) {
+    const err = String(r.stderr || r.stdout || r.error?.message || 'pg_restore 执行失败');
+    // 恢复失败：保险快照已生成，提示用户可从 safe.name 回退
+    throw new BizException(50000, '数据库恢复失败（已自动备份当前库为 ' + safe.name + '）：' + err.slice(-500));
+  }
+  const tookMs = Date.now() - t0;
+  return { name, size: fs.statSync(f).size, tookMs, backupName: safe.name };
 }
 
 /** 列出备份目录（按修改时间倒序） */
@@ -151,6 +195,17 @@ export class AdminBackupController {
     const f = path.join(BACKUP_ROOT, name, 'database.dump');
     if (!fs.existsSync(f)) throw new BizException(40404, '备份不存在或已被清理');
     res.download(f, `pos-backup-${name}.dump`);
+  }
+
+  /** 从某个备份恢复整个数据库（危险操作；恢复前自动备份当前库作保险） */
+  @Post('restore/:name')
+  @RequirePerms('sys.data.backup')
+  async restore(@Param('name') name: string, @CurrentUser() user: AuthUser) {
+    if (!/^[A-Za-z0-9_-]+$/.test(name || '')) throw new BizException(40003, '非法的备份名称');
+    const r = doRestore(name);
+    await audit(user.storeId, user.sub, '系统', '数据库恢复', 'restore', null,
+      { name: r.name, size: r.size, tookMs: r.tookMs, backupName: r.backupName }).catch(() => { });
+    return { ok: true, ...r };
   }
 }
 
