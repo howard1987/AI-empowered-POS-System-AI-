@@ -45,10 +45,21 @@ class ShiftService {
               COALESCE(SUM(CASE WHEN type='取出' THEN amount END), 0)::float8 AS cash_out,
               COUNT(*)::int AS flow_count
          FROM cashbox_flows WHERE shift_id=$1`, [shiftId]);
+    // V5.0.15 修复：现金充值也必须计入钱箱应答。
+    //   会员充值收款（pos.module.ts collectRecharge）只更新 member_accounts + balance_flows，
+    //   既不写 sale_payments 也不写 cashbox_flows —— 于是这笔现金「进了钱箱却没有出处」，
+    //   交班时实点现金会比应答凭空多出充值金额，收银员被迫填虚假差异原因。
+    //   这里按 shift_id 汇总本班「已入账 + 现金」的充值本金（赠送金不是真金白银，不计）。
+    const rc = await q1<any>(
+      `SELECT COALESCE(SUM(principal), 0)::float8 AS recharge_cash,
+              COUNT(*)::int AS recharge_count
+         FROM recharge_orders
+        WHERE shift_id=$1 AND status='已入账' AND pay_channel='现金'`, [shiftId]);
     const floatAmt = r2(Number(sh?.opening_float) || 0);
     const cashTotal = r2((sales?.cash_sales ?? 0) - (refunds?.refund_cash ?? 0)); // 现金收入 = 现销 - 现金退款
-    // 应答金额（钱箱里「应该有」的现金）= 备用金 + 现金收入 ± 存取（§13 B3 交接班应答）
-    const cashboxTotal = r2(floatAmt + cashTotal + (cb?.cash_in ?? 0) - (cb?.cash_out ?? 0));
+    // 应答金额（钱箱里「应该有」的现金）= 备用金 + 现金收入 + 现金充值 ± 存取（§13 B3 交接班应答）
+    const cashboxTotal = r2(floatAmt + cashTotal + (rc?.recharge_cash ?? 0)
+      + (cb?.cash_in ?? 0) - (cb?.cash_out ?? 0));
     return {
       openingFloat: floatAmt,
       orderCount: sales?.order_count ?? 0,
@@ -60,6 +71,8 @@ class ShiftService {
       refundCount: refunds?.refund_count ?? 0,
       refundCash: r2(refunds?.refund_cash ?? 0),
       cashTotal,
+      rechargeCash: r2(rc?.recharge_cash ?? 0),
+      rechargeCount: rc?.recharge_count ?? 0,
       cashboxIn: r2(cb?.cash_in ?? 0),
       cashboxOut: r2(cb?.cash_out ?? 0),
       cashboxFlows: cb?.flow_count ?? 0,
