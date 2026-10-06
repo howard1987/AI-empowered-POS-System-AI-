@@ -37,7 +37,7 @@
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^22.5.0",
     "@types/pg": "^8.11.6",
-    "embedded-postgres": "^18.4.0-beta.17",
+    "embedded-postgres": "18.4.0-beta.17",
     "typescript": "^5.5.4"
   },
   "overrides": {

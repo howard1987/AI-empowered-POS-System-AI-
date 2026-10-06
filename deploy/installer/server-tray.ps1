@@ -256,6 +256,44 @@ $timer.add_Tick({
     default   { $icon.Icon = [System.Drawing.SystemIcons]::Information; $icon.Text = "超市收银系统 服务端 · $st" }
   }
 })
+# ── 数据库升级待处理提示（PG 大版本变更时由 server-up.mjs 写入）──
+$WorkDir = $env:ProgramData
+if (Test-Path $EnvFile) {
+  foreach ($line in Get-Content $EnvFile -ErrorAction SilentlyContinue) {
+    if ($line -match '^\s*POS_DATA_DIR\s*=\s*(.+?)\s*$' -and $line -notmatch '^\s*#') { $WorkDir = $Matches[1].Trim('"') }
+  }
+}
+$pending = Join-Path $WorkDir 'PG_UPGRADE_REQUIRED.txt'
+if (Test-Path $pending) {
+  $txt = Get-Content $pending -Raw -ErrorAction SilentlyContinue
+  $ans = [System.Windows.Forms.MessageBox]::Show(
+    "检测到数据库需要升级才能启动服务端：`n`n$txt`n`n是否立即升级？`n（升级前会自动备份，任何失败都会自动回滚，数据不丢失）",
+    '数据库升级', 'YesNo', 'Question')
+  if ($ans -eq 'Yes') {
+    $node = Join-Path $RootDir 'runtime\node.exe'
+    if (-not (Test-Path $node)) { $node = 'node.exe' }
+    $up = Join-Path $BackendDir 'scripts\server-up.mjs'
+    Show-Tip '正在升级数据库，请稍候…（视数据量可能需要几分钟）'
+    try {
+      $out = Join-Path $WorkDir 'pg-upgrade.out.log'
+      $err = Join-Path $WorkDir 'pg-upgrade.err.log'
+      $p = Start-Process -FilePath $node -ArgumentList @('"' + $up + '"', 'upgrade') -Wait -PassThru -NoNewWindow `
+           -RedirectStandardOutput $out -RedirectStandardError $err
+      if ($p.ExitCode -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show('✅ 数据库升级成功，正在启动服务端…', '数据库升级', 'OK', 'Information')
+        Invoke-SvcAction 'Start'
+      } else {
+        $detail = Get-Content $err -Raw -ErrorAction SilentlyContinue
+        [System.Windows.Forms.MessageBox]::Show("❌ 升级失败，已自动回滚，数据未丢失。`n详情：$WorkDir`n`n$detail", '数据库升级', 'OK', 'Error')
+      }
+    } catch {
+      [System.Windows.Forms.MessageBox]::Show('升级过程出错：' + $_.Exception.Message, '数据库升级', 'OK', 'Error')
+    }
+  } else {
+    [System.Windows.Forms.MessageBox]::Show('已暂缓升级。服务端将保持停止，直到您手动升级（重新打开「服务端管理器」将再次提示，或执行 node scripts/server-up.mjs upgrade）。', '数据库升级', 'OK', 'Information')
+  }
+}
+
 $timer.Start()
 $icon.ShowBalloonTip(3000, '服务端管理器已启动', '双击图标打开管理后台；右键可打开各端页面、修改端口、启停服务。', [System.Windows.Forms.ToolTipIcon]::Info)
 $icon.add_DoubleClick({ Start-Process "http://localhost:$(Get-Port)/admin/" })

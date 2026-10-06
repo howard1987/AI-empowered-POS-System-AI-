@@ -228,6 +228,17 @@ if (-not (Test-Path (Join-Path $pgNative 'bin\initdb.exe'))) {
 RC @($pgNative, (Join-Path $SRV 'pg'), '/E')
 Ok 'pg/ 便携数据库就绪（首次启动自动释放到纯 ASCII 路径）'
 
+# ── 5b. PostgreSQL 客户端迁移工具（pg_dump / pg_dumpall / psql / pg_restore）──
+#     大版本升级时需要它们做逻辑迁移；随包内置，离线安装也能升级。
+Step '内嵌 PostgreSQL 客户端迁移工具'
+$pqTools = Join-Path $BACKEND 'vendor\pg-tools\bin'
+if (Test-Path $pqTools) {
+  RC @($pqTools, (Join-Path $SRV 'pg\bin'), '/E')
+  Ok 'pg/bin 客户端迁移工具就绪（pg_dump/psql…）'
+} else {
+  Warn "未找到 $pqTools（跳过；将来大版本升级需手动提供 pg_dump/psql）"
+}
+
 # ── 6. 部署文件 ──
 Step 6 '写入 .env.example · start-server.bat · stop-server.bat · README-SERVER.md'
 foreach ($f in @('env.example', 'start-server.bat', 'stop-server.bat', 'README-SERVER.md')) {
