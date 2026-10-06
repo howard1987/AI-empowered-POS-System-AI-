@@ -51,6 +51,14 @@ export async function render(view) {
     </div>
 
     <div class="card">
+      <h3>散客转化（T5）
+        <span class="muted" style="font-weight:400;margin-left:8px">近 <input id="gDays" type="number" value="90" style="width:60px"> 天·消费≥ <input id="gMin" type="number" value="3" style="width:48px"> 次达标</span>
+        <button class="btn" id="gGo" style="margin-left:8px">查询</button></h3>
+      <div id="gList" class="tbl-min" style="max-height:300px;overflow:auto"></div>
+      <div class="doc-tip" style="margin:8px 18px 0">💡 仅统计<b>留有手机号</b>的散客（线上订单收货电话 / 收银台结账「留资」录入）。达标可一键转会员，历史散客订单自动归集到该会员（频次·金额计入画像）。未留手机直接付款走的散客，请引导其扫小票二维码自助注册（二维码兜底）。</div>
+    </div>
+
+    <div class="card">
       <h3>断网挂账 
         <button class="btn sm" id="offGo" style="margin-left:12px">刷新</button></h3>
       <div id="offSum" class="muted" style="margin:6px 0"></div>
@@ -86,6 +94,33 @@ export async function render(view) {
       mask.remove();
     };
   };
+
+  /* ── T5 散客转化：聚合留资散客 → 一键转会员（历史散客订单归集） ── */
+  async function guestList() {
+    const days = view.querySelector('#gDays').value.trim() || 90;
+    const min = view.querySelector('#gMin').value.trim() || 3;
+    const d = await must(get('/members/guest-aggregate?days=' + encodeURIComponent(days) + '&minVisits=' + encodeURIComponent(min)));
+    const items = d.items || [];
+    view.querySelector('#gList').innerHTML = items.length ? `
+      <table><thead><tr><th>手机号</th><th class="num">消费次数</th><th class="num">累计金额</th><th>首单</th><th>末次</th><th>状态</th><th></th></tr></thead>
+      <tbody>${items.map(g => `<tr>
+        <td style="font-family:var(--mono)">${esc(g.phone)}</td>
+        <td class="num">${g.visits}</td>
+        <td class="num">${money(g.totalAmount)}</td>
+        <td>${g.firstOrderAt ? String(g.firstOrderAt).slice(0, 10) : '—'}</td>
+        <td>${g.lastOrderAt ? String(g.lastOrderAt).slice(0, 10) : '—'}</td>
+        <td>${g.alreadyMember ? '<span class="tag g">已是会员</span>' : '<span class="tag b">待转化</span>'}</td>
+        <td>${g.alreadyMember ? '' : `<button class="btn sm pri" data-gconv="${esc(g.phone)}">转为会员</button>`}</td>
+      </tr>`).join('')}</tbody></table>`
+      : '<div class="empty">近 ' + days + ' 天无达标的留资散客</div>';
+    view.querySelectorAll('[data-gconv]').forEach(b => b.onclick = async () => {
+      if (!confirm('确认将手机号 ' + b.dataset.gconv + ' 的散客消费转化为会员？历史散客订单将归集到该会员。')) return;
+      const r = await must(post('/members/convert-guest', { phone: b.dataset.gconv }), '已转为会员');
+      toast('已转为会员，归集订单 ' + (r.linkedOrders ?? 0) + ' 笔', true);
+      guestList();
+    });
+  }
+  view.querySelector('#gGo').onclick = guestList;
 
   /* ── 会员列表（每页 10 条，双击行弹详情） ── */
   let lastPage = 0;

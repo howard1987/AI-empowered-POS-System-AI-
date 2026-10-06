@@ -83,7 +83,7 @@ export class MemberAppController {
   @MemberPublic()
   @Post('register')
   async register(@Body() b: { phone?: string; password?: string; name?: string; privacyAgreed?: boolean;
-                              birthday?: string; securityQuestions?: { question: string; answer: string }[] }) {
+                              birthday?: string; securityQuestions?: { question: string; answer: string }[]; linkOrderId?: number }) {
     // VQA-D3：门户总闸 + 自助注册开关（member.h5.enabled / member.h5.allow_register 此前为死键，现服务端消费）
     if (!(await sOn('member.h5.enabled'))) throw PORTAL_OFF;
     if (!(await sOn('member.h5.allow_register')))
@@ -123,6 +123,7 @@ export class MemberAppController {
         return rows[0];
       });
       await audit(curStore(), null, '会员', 'member.h5.register', 'member', Number(m.id), { cardNo: created.cardNo, channel: 'H5', chain: true });
+      if (b.linkOrderId) await this.linkGuestOrder(Number(m.id), b.phone, Number(b.linkOrderId));
       return { token: memberToken(m), member: { id: Number(m.id), cardNo: created.cardNo, name: b.name ?? null, phone: b.phone } };
     }
     const m = await tx(async c => {
@@ -138,7 +139,16 @@ export class MemberAppController {
       return rows[0];
     });
     await audit(curStore(), null, '会员', 'member.h5.register', 'member', Number(m.id), { cardNo: m.card_no, channel: 'H5' });
+    if (b.linkOrderId) await this.linkGuestOrder(Number(m.id), b.phone, Number(b.linkOrderId));
     return { token: memberToken(m), member: { id: Number(m.id), cardNo: m.card_no, name: m.name, phone: m.phone } };
+  }
+
+  /** T5：H5 自助注册时把指定散客订单（及同手机号历史散客单）归集到新会员 */
+  private async linkGuestOrder(memberId: number, phone: string, orderId: number) {
+    await q(
+      `UPDATE sales_orders SET member_id=$2, updated_at=now()
+        WHERE member_id IS NULL AND (id=$3 OR receiver_phone=$1 OR guest_phone=$1)`,
+      [phone, memberId, orderId]);
   }
 
   /** 登录（手机号+密码；连错 5 次锁 30 分） */

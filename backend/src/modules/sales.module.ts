@@ -609,13 +609,13 @@ export class SalesService {
                                    goods_amount, promo_amount, coupon_amount, payable_amount, cost_amount,
                                    profit_amount, member_discount, round_amount, shift_id, promo_id, coupon_id,
                                    remark, delivery_fee, client_ref, order_discount, pay_status, pay_paid_at, table_id,
-                                   coupon_ids)
-         VALUES ($1,$2,$3,$4,$5,$6,'已完成',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,'paid',now(),$22,$23) RETURNING id`,
+                                   coupon_ids, guest_phone)
+         VALUES ($1,$2,$3,$4,$5,$6,'已完成',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,'paid',now(),$22,$23,$24) RETURNING id`,
         [user.storeId, orderNo, dto.channel || '收银台', !!dto.isEmergency, dto.memberId ?? null, operatorId,
          goodsAmount, promo.promoAmount, couponAmount, payable, costTotal, profit, levelDiscountTotal,
          roundAmount, shiftId, promo.orderPromoId, couponIdUsed, dto.remark ?? null, deliveryFee,
          dto.clientRef ?? null, orderDiscountCents / 100, tableId,
-         couponIdsUsed.length ? JSON.stringify(couponIdsUsed) : null]);
+         couponIdsUsed.length ? JSON.stringify(couponIdsUsed) : null, dto.guestPhone ?? null]);
       const orderId = order[0].id;
       if (tableId) {
         // 落单即占用（预留/空闲 → 使用中；使用中幂等无碍）

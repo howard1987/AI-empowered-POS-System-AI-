@@ -166,6 +166,68 @@ class MembersController {
     });
   }
 
+  /** T5 散客聚合：按手机号（线上 receiver_phone / 线下 guest_phone）聚合未挂会员的消费，
+   *  返回近 days 天内次数≥minVisits 的散客，及是否已成为会员，供后台「散客转化」列表 */
+  @Get('guest-aggregate')
+  async guestAggregate(
+    @CurrentUser() user: AuthUser,
+    @Query('days') daysQ?: string,
+    @Query('minVisits') mvQ?: string,
+  ) {
+    const days = Math.max(1, Number(daysQ) || 90);
+    const minVisits = Math.max(1, Number(mvQ) || 3);
+    const rows = await q<any>(
+      `SELECT COALESCE(so.receiver_phone, so.guest_phone) AS phone,
+              count(*)::int AS visits,
+              ROUND(COALESCE(SUM(so.payable_amount), 0), 2) AS total_amount,
+              max(so.created_at) AS last_order_at,
+              min(so.created_at) AS first_order_at
+         FROM sales_orders so
+        WHERE so.store_id=$1 AND so.member_id IS NULL
+          AND (so.receiver_phone IS NOT NULL AND so.receiver_phone <> ''
+               OR so.guest_phone IS NOT NULL AND so.guest_phone <> '')
+          AND so.created_at >= now() - ($2::int || ' days')::interval
+        GROUP BY COALESCE(so.receiver_phone, so.guest_phone)
+       HAVING count(*) >= $3
+        ORDER BY visits DESC, last_order_at DESC`,
+      [user.storeId, days, minVisits]);
+    const phones = rows.map((r: any) => r.phone);
+    const existing = phones.length
+      ? await q<any>(`SELECT phone FROM members WHERE phone = ANY($1) AND deleted_at IS NULL`, [phones])
+      : [];
+    const have = new Set(existing.map((m: any) => m.phone));
+    return {
+      days, minVisits,
+      items: rows.map((r: any) => ({
+        phone: r.phone,
+        visits: Number(r.visits),
+        totalAmount: Number(r.total_amount),
+        firstOrderAt: r.first_order_at,
+        lastOrderAt: r.last_order_at,
+        alreadyMember: have.has(r.phone),
+      })),
+    };
+  }
+
+  /** T5 散客转化：把某手机号的散客消费归集为会员（已存在则直接归集，不存在则按「散客转化」渠道建档） */
+  @RequirePerms('member.register')
+  @Post('convert-guest')
+  async convertGuest(@Body() b: { phone?: string }, @CurrentUser() user: AuthUser) {
+    const phone = String(b.phone || '').trim();
+    if (!/^1\d{10}$/.test(phone)) throw new BizException(40003, '手机号格式不正确');
+    let m: any = await q1(`SELECT id, card_no FROM members WHERE phone=$1 AND deleted_at IS NULL`, [phone]);
+    if (!m) {
+      const reg: any = await this.register({ phone, registerChannel: '散客转化', privacyAgreed: false }, user);
+      m = { id: reg.id };
+    }
+    const linked = await q<any>(
+      `UPDATE sales_orders SET member_id=$2, updated_at=now()
+        WHERE store_id=$3 AND member_id IS NULL AND (receiver_phone=$1 OR guest_phone=$1)
+       RETURNING id`,
+      [phone, m.id, user.storeId]);
+    return { memberId: m.id, linkedOrders: linked.length };
+  }
+
   /** 管理员重置会员密码（V4.14.0 M2：生成随机临时密码返回一次，首次登录后会员可自行改） */
   @RequirePerms('member.manage')
   @Post(':id/reset-password')

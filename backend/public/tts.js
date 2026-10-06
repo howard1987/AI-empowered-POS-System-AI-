@@ -141,12 +141,16 @@ const PwaTTS = (() => {
           : (typeof currentApiBase === 'function' ? String(currentApiBase() || '') : ''));
       const r = await fetch(base + '/tts/synthesize', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ text: String(text), rate }) });
       if (!r.ok) throw new Error('HTTP ' + r.status);
+      /* V5.0.15：片段拼接的音频按片段库语速（rate=1）生成，服务端用 x-tts-engine-rate 回带；
+       * 这里用 playbackRate 补偿到请求的语速——纯播放端变速，不改音高、无额外推理延迟。 */
+      const engRate = (() => { try { return Number(r.headers.get('x-tts-engine-rate')) || rate; } catch { return rate; } })();
       const blob = await r.blob();
       /* V5.0.14e：基址为空时请求会打到 APK 壳本地服务器，SPA 回退返回 HTML（HTTP 200 但不是音频）
        * —— 旧版把它当音频喂给 Audio → NotSupportedError → 无声回落。这里显式识别非音频响应。 */
       if (!blob || !blob.size || (blob.type && !/audio|octet|binary/i.test(blob.type))) throw new Error('非音频响应（' + (blob && blob.type || 'empty') + '）');
       if (audioEl) { try { audioEl.pause(); } catch { /* 忽略 */ } }
       audioEl = new Audio(URL.createObjectURL(blob));
+      try { audioEl.playbackRate = Math.min(2, Math.max(0.5, rate / (engRate || rate))); } catch { /* 不支持变速的设备忽略 */ }
       audioEl.onended = () => { try { if (audioEl) URL.revokeObjectURL(audioEl.src); } catch { /* 忽略 */ } };
       await audioEl.play();
     } catch {
@@ -195,7 +199,7 @@ const PwaTTS = (() => {
   }
   function normSpeechText(t) {
     let s = String(t || '');
-    s = s.replace(/(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})日?/g, (m, y, mo, d) => cnDigits(y) + '年' + cnInt(+mo) + '月' + cnInt(+d) + '日');
+    s = s.replace(/(\d{4})[.\-/年](\d{1,2})[.\-/月](\d{1,2})日?/g, (m, y, mo, d) => cnDigits(y) + '年' + cnInt(+mo) + '月' + cnInt(+d) + '日');
     s = s.replace(/(\d{1,2}):(\d{2})(?::(\d{2}))?/g, (m, h, mi, sec) => cnInt(+h) + '点' + cnInt(+mi) + '分' + (sec ? cnInt(+sec) + '秒' : ''));
     s = s.replace(/(\d+(?:\.\d+)?)\s*元/g, (m, a) => cnAmount(a));
     s = s.replace(/\d{5,}/g, m => cnDigits(m));

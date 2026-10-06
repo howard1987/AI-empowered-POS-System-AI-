@@ -32,6 +32,8 @@ export async function render(view) {
   // ── 差异单 ──
   let vsRows = [], vsPage = 1, vsTotal = 0, vsDash = null;
   let dlg = null;                // { mode:'audit'|'action'|'detail', ... }
+  // ── 供应商退货(HQ) · R10 谁的货谁管 ──
+  let prRows = [], prPage = 1, prTotal = 0, prStatus = '';
 
   view.innerHTML = `
     <style>
@@ -67,6 +69,9 @@ export async function render(view) {
     } else if (tab === 'ledger') {
       const d = normItems(await must(get('/hq/ledger' + (ledOnlyPending ? '?status=pending' : ''))).catch(e => { toast(e.message, 'err'); return { items: [] }; }));
       ledRows = Array.isArray(d.items) ? d.items : []; ledPending = d.pendingAmount ?? 0; ledTotal = ledRows.length; ledPage = 1;
+    } else if (tab === 'preturn') {
+      const d = normItems(await must(get('/hq/purchase-returns' + (prStatus ? '?status=' + encodeURIComponent(prStatus) : ''))).catch(e => { toast(e.message, 'err'); return { items: [] }; }));
+      prRows = Array.isArray(d.items) ? d.items : []; prTotal = prRows.length; prPage = 1;
     } else {
       const d = normItems(await must(get('/hq/variances')).catch(e => { toast(e.message, 'err'); return { items: [], dashboard: null }; }));
       vsRows = Array.isArray(d.items) ? d.items : []; vsDash = d.dashboard ?? null; vsTotal = vsRows.length; vsPage = 1;
@@ -77,6 +82,7 @@ export async function render(view) {
   function paint() {
     if (tab === 'return') paintReturn();
     else if (tab === 'ledger') paintLedger();
+    else if (tab === 'preturn') paintPreturn();
     else paintVariance();
   }
 
@@ -163,6 +169,84 @@ export async function render(view) {
     });
     $pager.innerHTML = pg.bar;
     bindPager($pager, p => { ledPage = p; paint(); });
+  }
+
+  /* ═══════════ ④ 供应商退货(HQ) · R10 谁的货谁管 ═══════════ */
+  function prDerived(r) {
+    if (r.status === '待审核') return ['待审核', '#c47f00'];
+    if (r.status === '已驳回') return ['已驳回', '#c0392b'];
+    if (r.status === '已作废') return ['已作废', '#888'];
+    if (!r.ship_at)          return ['已审核·待发货', '#3a7bd5'];
+    if (!r.settle_type)      return ['已发货·待结清', '#7a4fd0'];
+    return ['已结清', '#1e8e4e'];
+  }
+  function paintPreturn() {
+    $extra.innerHTML = `<select id="htPrFilter" style="padding:5px 8px;border:1px solid var(--line,#e5e1d8);border-radius:8px">
+      <option value="">全部状态</option>
+      <option value="待审核">待审核</option>
+      <option value="已审核">已审核（含发货/结清）</option>
+    </select>`;
+    view.querySelector('#htPrFilter').onchange = e => { prStatus = e.target.value; load(); };
+    const pg = paginate(prRows, prPage, SIZE);
+    const rows = pg.slice;
+    $body.innerHTML = `
+      <div class="sec-t">供应商退货（总部）· 货从门店出、总部结清（R10）</div>
+      ${rows.length ? `<table><thead><tr>
+        <th class="seq">序号</th>
+        <th>退厂单号</th><th>门店</th><th>供应商</th><th>金额</th>
+        <th>状态</th><th>发货时间</th><th>结清方式</th><th>操作</th>
+      </tr></thead><tbody>${rows.map((r, i) => {
+        const st = prDerived(r);
+        return `
+        <tr>
+          <td class="seq">${(prPage - 1) * SIZE + i + 1}</td>
+          <td>${esc(r.return_no)}</td>
+          <td>${esc(r.store_name ?? '')}</td>
+          <td>${esc(r.supplier_name ?? '')}</td>
+          <td><b>${money(r.total_amount)}</b></td>
+          <td><span style="color:${st[1]};font-weight:600">${st[0]}</span></td>
+          <td>${r.ship_at ? dt(r.ship_at) : '—'}</td>
+          <td>${esc(r.settle_type ?? '—')}</td>
+          <td>${r.status === '已审核' && !r.ship_at ? `<button class="btn sm" data-ship="${r.id}">发货确认</button>`
+            : (r.ship_at && !r.settle_type) ? `<button class="btn sm" data-pay="${r.id}">结清</button>` : '—'}</td>
+        </tr>`; }).join('')}</tbody></table>` : noResult('暂无供应商退厂单（门店审核通过的退厂单会出现在这里）')}
+    `;
+    $body.querySelectorAll('[data-ship]').forEach(b => {
+      b.onclick = async () => {
+        if (!confirm('确认货已从门店发出？将记「供应商退货货值转移」至总部往来。')) return;
+        try { await must(post(`/hq/purchase-returns/${b.dataset.ship}/ship`, {})); toast('已发货确认', 'ok'); load(); }
+        catch (e) { toast(e.message, 'err'); }
+      };
+    });
+    $body.querySelectorAll('[data-pay]').forEach(b => { b.onclick = () => openSettle(Number(b.dataset.pay)); });
+    $pager.innerHTML = pg.bar;
+    bindPager($pager, p => { prPage = p; paint(); });
+  }
+
+  /** 供应商退货结清弹窗（settleType 必填；可填结算单号与备注） */
+  function openSettle(id) {
+    openDetailModal('供应商退货结清（总部）', `
+      <div class="fgroup"><label>结清方式（必填）</label>
+        <select id="htPrType" style="width:100%">
+          <option value="冲应付">冲应付</option>
+          <option value="供应商退款">供应商退款</option>
+          <option value="换货">换货</option>
+        </select></div>
+      <div class="fgroup"><label>结算单号 / 凭证号（选填）</label>
+        <input id="htPrRef" style="width:100%" placeholder="供应商收款或换货凭证号" maxlength="32"></div>
+      <div class="fgroup"><label>备注（选填）</label>
+        <textarea id="htPrRemark" rows="2" style="width:100%"></textarea></div>
+      <div style="text-align:right;margin-top:10px"><button class="btn" id="htPrOk">确认结清</button></div>
+    `);
+    view.querySelector('#htPrOk').onclick = async () => {
+      const settleType = view.querySelector('#htPrType').value;
+      const settleRef = view.querySelector('#htPrRef').value.trim();
+      const remark = view.querySelector('#htPrRemark').value.trim();
+      try {
+        await must(post(`/hq/purchase-returns/${id}/settle`, { settleType, settleRef, remark }));
+        toast('已结清，往来台账同步更新', 'ok'); load();
+      } catch (e) { toast(e.message, 'err'); }
+    };
   }
 
   /* ═══════════ ③ 进价差异单 ═══════════ */
@@ -289,6 +373,7 @@ export async function render(view) {
   view.querySelector('#htSeg').innerHTML = segHtml([
     { k: 'return',   t: '跨店退货' },
     { k: 'ledger',   t: '门店往来' },
+    { k: 'preturn',  t: '供应商退货' },
     { k: 'variance', t: '进价差异单' },
   ], tab);
   bindSeg(view.querySelector('#htSeg'), v => { tab = v; load(); });

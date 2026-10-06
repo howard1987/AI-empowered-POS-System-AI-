@@ -53,6 +53,9 @@ export async function render(view) {
       <!-- V4.26.4：.pg-host 让分页条固定在此容器底部（表格内部滚动），不再吸附到页面底边浮动 -->
       <div id="chgList" class="pg-host" style="padding:0 18px">加载中…</div>
     </div>
+    </div><!-- /sListView -->
+
+
 
     <div class="modal-mask" id="sModal" style="display:none">
       <div class="modal">
@@ -68,6 +71,15 @@ export async function render(view) {
           <div class="fld" style="grid-column:1/-1"><label>地址</label><input id="nAddr" placeholder="供应商地址（选填）"></div>
           <div class="fld" style="grid-column:1/-1"><label>备注</label><input id="nRemark"></div>
         </div>
+        <div id="supQualWrap" style="display:none;margin-top:12px;border-top:1px dashed var(--line);padding-top:10px">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <b>📄 资质与合同</b>
+            <label class="muted" style="font-size:12px"><input type="checkbox" id="sQExp"> 仅临期/过期</label>
+            <button class="btn sm pri" id="sQNew">➕ 新增资质</button>
+            <span class="muted" id="sQWarn" style="color:#c0392b"></span>
+          </div>
+          <div id="supQualList" style="max-height:240px;overflow:auto"></div>
+        </div>
         <div class="doc-tip">💡 联营扣点 = 联营供应商销售商品毛利的百分比（整数，如 15 = 15%），仅「联营」可填；购销供应商该行锁定。费用（陈列/返利等）默认不计入分红池基数。</div>
         <div class="doc-foot">
           <button class="btn" id="nToggle" style="display:none">停用</button>
@@ -78,7 +90,36 @@ export async function render(view) {
           <button class="btn pri" id="nSave">💾 保存</button>
         </div>
       </div>
-    </div>`;
+    </div>
+    <div class="modal-mask" id="qModal" style="display:none">
+      <div class="modal">
+        <h3 id="qModalTitle">➕ 新增资质</h3>
+        <div class="doc-head" style="grid-template-columns:1fr 1fr;border:1px dashed var(--line);border-radius:10px;padding:14px 16px">
+          <div class="fld"><label class="req">类型</label><select id="qnType">
+            <option>营业执照</option><option>食品经营许可证</option><option>开户许可证</option><option>质检报告</option><option>供货合同</option><option>其他</option></select></div>
+          <div class="fld"><label>编号</label><input id="qnNo" placeholder="证照编号"></div>
+          <div class="fld"><label>名称/标题</label><input id="qnTitle" placeholder="如 2026年度供货合同"></div>
+          <div class="fld"><label>发证机构</label><input id="qnIssuer"></div>
+          <div class="fld"><label>发证日期</label><input id="qnIssue" type="date"></div>
+          <div class="fld"><label>有效期至</label><input id="qnExp" type="date"><span class="muted" style="font-size:11px">留空=长期</span></div>
+          <div class="fld" style="grid-column:1/-1"><label>备注</label><input id="qnRemark"></div>
+          <div class="fld" style="grid-column:1/-1">
+            <label>资质图像（合同/证照照片，可选）</label>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <button class="btn sm" id="qnAttBtn" type="button">📷 上传图片</button>
+              <input type="file" id="qnAttFile" accept="image/*" style="display:none">
+              <span id="qnAttPrev"></span>
+            </div>
+          </div>
+        </div>
+        <div class="doc-foot">
+          <button class="btn" id="qCancel">取消</button>
+          <span style="flex:1"></span>
+          <button class="btn pri" id="qSave">💾 保存</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
 
   function gysCode(id) { return 'GYS' + String(id).padStart(4, '0'); }
 
@@ -256,6 +297,9 @@ export async function render(view) {
     // V5.0.6 删除：仅停用且满 90 天可删
     view.querySelector('#nDelete').style.display = editId && canDeleteSupplier(s) ? '' : 'none';
     syncRateLock();
+    const qw = view.querySelector('#supQualWrap');
+    qw.style.display = editId ? '' : 'none';
+    if (editId) loadSupQual(editId); else view.querySelector('#supQualList').innerHTML = '';
     modal.style.display = 'flex';
     view.querySelector('#nName').focus();
   }
@@ -374,6 +418,126 @@ export async function render(view) {
   view.querySelector('#sKw').addEventListener('keydown', e => { if (e.key === 'Enter') apply(); });
 
   await load();
+
+  /* T3：资质与合同直接集成进供应商编辑/明细弹窗 */
+
+  async function loadSupQual(sid) {
+    const wrap = view.querySelector('#supQualWrap');
+    const list = view.querySelector('#supQualList');
+    const warn = view.querySelector('#sQWarn');
+    if (!sid) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    try {
+      const exp = view.querySelector('#sQExp').checked;
+      const d = await get('/purchase/supplier-qualifications?supplierId=' + sid + (exp ? '&expireSoon=90' : ''));
+      const items = d.items || [];
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const expiring = items.filter(q => q.expire_date && (new Date(q.expire_date) - today) / 86400000 <= 30).length;
+      warn.textContent = expiring ? `⚠ ${expiring} 项资质将在 30 天内过期/已过期，请及时续办` : '';
+      if (!items.length) { list.innerHTML = '<div class="empty">该供应商暂无资质/合同/证照记录</div>'; return; }
+      list.innerHTML = `<table><thead><tr><th>类型</th><th>名称/标题</th><th>编号</th><th>发证机构</th><th>发证日期</th><th>有效期至</th><th>状态</th><th>备注</th><th>附件</th><th>操作</th></tr></thead><tbody>
+        ${items.map(q => {
+          const days = q.expire_date ? (new Date(q.expire_date) - today) / 86400000 : Infinity;
+          const st = !q.expire_date ? '<span class="tag g">长期</span>'
+            : days < 0 ? '<span class="tag r">已过期</span>'
+            : days <= 30 ? '<span class="tag y">临期</span>'
+            : '<span class="tag g">有效</span>';
+          return `<tr data-qid="${q.id}">
+            <td>${esc(q.cert_type)}</td><td>${esc(q.title || '—')}</td><td>${esc(q.cert_no || '—')}</td>
+            <td>${esc(q.issuer || '—')}</td><td>${esc(q.issue_date || '—')}</td><td>${esc(q.expire_date || '长期')}</td>
+            <td>${st}</td>            <td class="muted" style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${esc(q.remark || '')}</td>
+            <td>${q.attachment_url ? `<a href="${location.origin}${q.attachment_url.startsWith('/') ? '/' + q.attachment_url : q.attachment_url}" target="_blank"><img src="${location.origin}${q.attachment_url.startsWith('/') ? '/' + q.attachment_url : q.attachment_url}" style="height:30px;border-radius:4px;vertical-align:middle"></a>` : '—'}</td>
+            <td style="white-space:nowrap"><button class="btn sm" data-qedit="${q.id}">编辑</button> <button class="btn sm" data-qdel="${q.id}" style="color:#c0392b;border-color:#e6b0aa">删除</button></td>
+          </tr>`;
+        }).join('')}</tbody></table>`;
+      list.querySelectorAll('[data-qedit]').forEach(b => b.onclick = () => {
+        const q = items.find(x => x.id === Number(b.dataset.qedit));
+        openQual(Number(b.dataset.qedit), q);
+      });
+      list.querySelectorAll('[data-qdel]').forEach(b => b.onclick = async () => {
+        if (!await confirmBox({ title: '删除资质', html: '确认删除该资质记录？删除后不可恢复。' })) return;
+        try { await must(del('/purchase/supplier-qualifications/' + b.dataset.qdel)); toast('已删除'); loadSupQual(editId); }
+        catch (e) { toast(e.msg || e.message, false); }
+      });
+    } catch (e) { toast(e.msg || e.message, false); }
+  }
+  view.querySelector('#sQNew').onclick = () => openQual();
+  view.querySelector('#sQExp').onchange = () => loadSupQual(editId);
+  let qnAttUrl = '';
+  view.querySelector('#qnAttBtn').onclick = () => view.querySelector('#qnAttFile').click();
+  view.querySelector('#qnAttFile').onchange = async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    const fr = new FileReader();
+    fr.onload = async () => {
+      try {
+        const d = await must(post('/upload', { image: fr.result }), '');
+        qnAttUrl = d.path; renderQnAtt();
+        // T3 增强：上传成功后自动 OCR 识别并回填字段（不覆盖已填内容）
+        try {
+          const r = await post('/purchase/supplier-qualifications/recognize', { image: fr.result, type: view.querySelector('#qnType').value });
+          if (r && r.ok) {
+            fillQualIfEmpty('#qnNo', r.certNo);
+            fillQualIfEmpty('#qnTitle', r.title || r.name);
+            fillQualIfEmpty('#qnIssuer', r.issuer);
+            fillQualIfEmpty('#qnIssue', r.issueDate);
+            fillQualIfEmpty('#qnExp', r.expireDate);
+            toast('已自动识别并填充，请核对', true);
+          } else if (r && r.note) {
+            toast(r.note, false);
+          }
+        } catch { /* 识别失败不阻断上传保存 */ }
+      } catch (err) { toast(err.msg || err.message, false); }
+    };
+    fr.readAsDataURL(f); e.target.value = '';
+  };
+  function fillQualIfEmpty(sel, val) {
+    if (!val) return;
+    const el = view.querySelector(sel);
+    if (el && !el.value.trim()) el.value = val;
+  }
+  function renderQnAtt() {
+    const box = view.querySelector('#qnAttPrev');
+    if (!qnAttUrl) { box.innerHTML = ''; return; }
+    const u = location.origin + (qnAttUrl.startsWith('/') ? qnAttUrl : '/' + qnAttUrl);
+    box.innerHTML = `<img src="${u}" style="height:40px;border-radius:4px;vertical-align:middle"> <button class="btn sm" id="qnAttDel" type="button" style="color:#c0392b;border-color:#e6b0aa">移除</button>`;
+    box.querySelector('#qnAttDel').onclick = () => { qnAttUrl = ''; renderQnAtt(); };
+  }
+
+  function openQual(q) {
+    const isEdit = !!(q && q.id);
+    view.querySelector('#qModalTitle').textContent = isEdit ? '✏️ 编辑资质' : '➕ 新增资质';
+    view.querySelector('#qModal').dataset.editId = (q && q.id) || '';
+    const setV = (s, v) => { const e = view.querySelector(s); if (e) e.value = v || ''; };
+    setV('#qnType', q?.cert_type || '营业执照');
+    setV('#qnNo', q?.cert_no); setV('#qnTitle', q?.title); setV('#qnIssuer', q?.issuer);
+    setV('#qnIssue', (q?.issue_date || '').slice(0, 10)); setV('#qnExp', (q?.expire_date || '').slice(0, 10));
+    setV('#qnRemark', q?.remark);
+    qnAttUrl = q?.attachment_url || ''; renderQnAtt();
+    view.querySelector('#qModal').style.display = 'flex';
+    view.querySelector('#qnType').focus();
+  }
+  view.querySelector('#qCancel').onclick = () => view.querySelector('#qModal').style.display = 'none';
+  view.querySelector('#qSave').onclick = async () => {
+    if (!editId) return toast('请先保存供应商后再添加资质', false);
+    const body = {
+      supplierId: Number(editId),
+      certType: view.querySelector('#qnType').value,
+      certNo: view.querySelector('#qnNo').value.trim() || undefined,
+      title: view.querySelector('#qnTitle').value.trim() || undefined,
+      issuer: view.querySelector('#qnIssuer').value.trim() || undefined,
+      issueDate: view.querySelector('#qnIssue').value || undefined,
+      expireDate: view.querySelector('#qnExp').value || undefined,
+      remark: view.querySelector('#qnRemark').value.trim() || undefined,
+      attachmentUrl: qnAttUrl || undefined,
+      };
+    const editingId = view.querySelector('#qModal').dataset.editId;
+    try {
+      if (editingId) await must(put('/purchase/supplier-qualifications/' + editingId, body), '已更新');
+      else await must(post('/purchase/supplier-qualifications', body), '已新增');
+      view.querySelector('#qModal').style.display = 'none';
+      loadSupQual(editId);
+    } catch (e) { toast(e.msg || e.message, false); }
+  };
 
   /* ── V4.14.1 供应商变更单：调进价/售价/主供应商，即时生效全留痕（GYSBG 工单号） ── */
   async function openChange() {

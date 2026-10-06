@@ -422,7 +422,7 @@ class PosController {
   @Post('held/:id/checkout')
   async checkoutHeld(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { payments: { channel: string; amount: number; externalNo?: string }[]; couponId?: number; shiftId?: number },
+    @Body() body: { payments: { channel: string; amount: number; externalNo?: string }[]; couponId?: number; shiftId?: number; guestPhone?: string },
     @CurrentUser() user: AuthUser,
   ) {
     // P2-M4：先 CAS 认领（挂单中→结账中），并发双击/双端取单时后到者立即失败，结账异常则回置
@@ -449,6 +449,7 @@ class PosController {
       couponId: body.couponId,
       shiftId: body.shiftId,
       remark: `挂单#${id}取单结账`,
+      guestPhone: body.guestPhone,
     }); } catch (e) {
       await q(`UPDATE held_orders SET status='挂单中' WHERE id=$1 AND status='结账中'`, [id]); // 失败回置可重取
       throw e;
@@ -458,6 +459,54 @@ class PosController {
       `UPDATE held_orders SET status='已取单', picked_at=now(), picked_order_id=$2
         WHERE id=$1 AND status='结账中' RETURNING id`, [id, result.orderId]);
     return { heldId: Number(up?.id ?? id), ...result };
+  }
+
+  /** T6 本店配送调度：门店查看进行中的配送/外卖订单 */
+  @RequirePerms('pos.sell')
+  @Get('deliveries')
+  async deliveryList(@Query('mode') mode: string, @CurrentUser() user: AuthUser) {
+    const modes = mode === '外卖' ? ['外卖'] : ['配送', '外卖'];
+    const rows = await q<any>(
+      `SELECT so.id, so.order_no, so.created_at, so.payable_amount, so.pickup_mode,
+              so.receiver, so.receiver_phone, so.receiver_address, so.dispatched_at, so.delivery_code,
+              so.status, m.name AS member_name, m.phone AS member_phone
+         FROM sales_orders so
+         LEFT JOIN members m ON m.id = so.member_id
+        WHERE so.store_id=$1 AND so.pickup_mode = ANY($2)
+          AND so.status NOT IN ('已取消','已退款','已撤销','已完成')
+        ORDER BY (so.dispatched_at IS NULL) DESC, so.created_at ASC`,
+      [user.storeId, modes]);
+    return { items: rows.map((r: any) => ({
+      id: Number(r.id), orderNo: r.order_no, createdAt: r.created_at,
+      payable: Number(r.payable_amount), pickupMode: r.pickup_mode,
+      receiver: r.receiver, receiverPhone: r.receiver_phone, receiverAddress: r.receiver_address,
+      dispatchedAt: r.dispatched_at, deliveryCode: r.delivery_code, status: r.status,
+      memberName: r.member_name, memberPhone: r.member_phone,
+    })) };
+  }
+
+  /** T6 出车：本店配送员出发，标记 dispatched_at + 状态=配送中 */
+  @RequirePerms('pos.sell')
+  @Post('deliveries/:id/dispatch')
+  async deliveryDispatch(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
+    const o = await q1<any>(`SELECT id, store_id, pickup_mode, status, dispatched_at FROM sales_orders WHERE id=$1`, [id]);
+    if (!o || Number(o.store_id) !== Number(user.storeId)) throw new BizException(40404, '订单不存在', 404);
+    if (o.pickup_mode === '自提') throw new BizException(40003, '自提订单无需配送');
+    if (o.dispatched_at) throw new BizException(40003, '该订单已出车');
+    await q(`UPDATE sales_orders SET dispatched_at=now(), status='配送中', updated_at=now() WHERE id=$1`, [id]);
+    return { ok: true, dispatchedAt: new Date().toISOString() };
+  }
+
+  /** T6 送达核销：核验收货码（若有）后标记已完成 + delivered_at */
+  @RequirePerms('pos.sell')
+  @Post('deliveries/:id/complete')
+  async deliveryComplete(@Param('id', ParseIntPipe) id: number, @Body() b: { code?: string }, @CurrentUser() user: AuthUser) {
+    const o = await q1<any>(`SELECT id, store_id, pickup_mode, status, delivery_code FROM sales_orders WHERE id=$1`, [id]);
+    if (!o || Number(o.store_id) !== Number(user.storeId)) throw new BizException(40404, '订单不存在', 404);
+    if (o.delivery_code && b.code && String(b.code).trim() !== String(o.delivery_code))
+      throw new BizException(40003, '核销码不符，请核对顾客出示的配送码');
+    await q(`UPDATE sales_orders SET status='已完成', delivered_at=now(), updated_at=now() WHERE id=$1`, [id]);
+    return { ok: true, deliveredAt: new Date().toISOString() };
   }
 
   /** V4.13.9 B1：单独销单（取出后进购物车编辑再结账的流程，结账成功后由前端调用；幂等：已取单直接返回成功） */

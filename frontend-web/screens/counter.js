@@ -1,3 +1,4 @@
+import qrcode from '../vendor/qrcode.mjs';
 import { get, post, del, must, money, esc, dt, toast } from '../api.js';
 
 /** 挂单/取单 + 价目表新鲜度（V4.15.4：单据号/刷新/查询/时间筛选/复选框批量取消/详情弹窗/10s 自动刷新） */
@@ -140,6 +141,9 @@ export async function render(view) {
       <div style="height:8px"></div>
       <label class="muted">金额（以服务端重新计价为准，可先填 0 触发提示）</label>
       <input id="pkAmt" type="number" step="0.01" style="width:140px">
+      <div style="height:8px"></div>
+      <label class="muted">散客手机号（选填·留资后可积分/转会员）</label>
+      <input id="pkPhone" placeholder="11位手机号" style="width:160px" maxlength="11">
       <div class="bar" style="margin-top:14px">
         <button class="btn pri" id="pkGo">结账</button>
       </div>
@@ -149,13 +153,27 @@ export async function render(view) {
     mask.querySelector('#pkGo').onclick = async () => {
       const ch = mask.querySelector('#pkCh').value;
       const amt = Number(mask.querySelector('#pkAmt').value);
+      const phone = (mask.querySelector('#pkPhone').value || '').trim();
       try {
         const d = await must(post(`/pos/held/${id}/checkout`, {
           payments: amt > 0 ? [{ channel: ch, amount: amt }] : [],
+          guestPhone: phone || undefined,
         }));
+        // 会员 H5 入口：优先用设置的正式域名地址（member.h5.entry_url），未配置则回落当前服务器（联调模式）
+        let h5entry = '';
+        try { const r = await get('/settings/key/member.h5.entry_url'); h5entry = String(r?.value ?? '').replace(/^"|"$/g, '').trim(); } catch { /* 读不到就用当前服务器地址 */ }
+        const base = h5entry ? h5entry.replace(/\/+$/, '') : location.origin + '/member';
+        const h5reg = base + '/?orderId=' + encodeURIComponent(d.orderId);
+        const qr = qrcode(0, 'M');
+        qr.addData(h5reg);
+        qr.make();
+        const qrUrl = qr.createDataURL(4, 8);
         mask.querySelector('#pkTip').innerHTML =
-          `✅ 结账成功：单号 ${esc(d.orderNo)}，应收 ${money(d.payable)}，抹零 ${money(d.roundAmount)}`;
-        setTimeout(() => { mask.remove(); list(); }, 1200);
+          `✅ 结账成功：单号 ${esc(d.orderNo)}，应收 ${money(d.payable)}，抹零 ${money(d.roundAmount)}` +
+          `<div style="margin-top:10px"><div style="font-weight:600;margin-bottom:6px">📱 扫码自助注册会员（本单自动归集）</div>` +
+          `<img src="${qrUrl}" style="width:160px;height:160px;border:6px solid #fff;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.15);background:#fff" alt="注册二维码">` +
+          `<div class="muted" style="font-size:11px;margin-top:4px">顾客微信扫此码注册，散客订单自动转为会员积分</div></div>`;
+        setTimeout(() => { mask.remove(); list(); }, 6000);
       } catch { /* toast 已提示 */ }
     };
   }

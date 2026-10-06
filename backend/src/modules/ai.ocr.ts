@@ -103,6 +103,135 @@ function parseInvoiceLines(text: string): any[] {
   });
 }
 
+/** T3 增强：供应商证照/合同图片 → 结构化字段
+ *  架构：专用 OCR 引擎做主力文本提取（ai.ocr.engine_url）；
+ *        仅当 OCR 未部署/不可达时才回退 Ollama 多模态（ai.ocr.vl_model）看图识字。
+ *        OCR 文本的结构化（→JSON 字段）交由本地文本模型（ai.llm.model），更快更准。 */
+export async function recognizeDocument(imageBase64: string, docType = '证照/合同') {
+  const engineUrl = String(await getSetting('ai.ocr.engine_url', '') || '').trim();
+
+  // —— 主力：专用 OCR 引擎（识别文字，不负责理解）——
+  let ocrText = '';
+  if (engineUrl) {
+    try {
+      const res = await fetch(engineUrl, {
+        method: 'POST', signal: AbortSignal.timeout(20000),
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ image: imageBase64 }),
+      });
+      if (res.ok) {
+        const j: any = await res.json().catch((): any => null);
+        ocrText = String(j?.text || '');
+        if (!ocrText && Array.isArray(j?.lines)) ocrText = j.lines.map((l: any) => (typeof l === 'string' ? l : l.text || '')).join('\n');
+      }
+    } catch { /* OCR 不可达 → 走 Ollama 兜底 */ }
+  }
+
+  if (ocrText && ocrText.trim()) {
+    const byLlm = await parseDocFieldsWithLLM(ocrText, docType);   // 优先：本地文本模型把 OCR 文本结构化
+    if (byLlm) { byLlm.ok = true; return byLlm; }
+    const byRule = parseDocFieldsByRule(ocrText);                  // 兜底：规则提取关键字段（不依赖大模型）
+    if (byRule.certNo || byRule.expireDate || byRule.issueDate) { byRule.ok = true; byRule.note = '已用 OCR + 规则提取关键字段，请核对发证机关/名称等'; return byRule; }
+    return { ok: false, note: 'OCR 已提取文本，但本地大模型未开启无法自动结构化，请开启「本地大模型」或手工填写' };
+  }
+
+  // —— 兜底：Ollama 多模态直接看图（OCR 未部署 / 不可用）——
+  const llmOn = Boolean(await getSetting('ai.llm.enabled', false));
+  if (!llmOn) return { ok: false, note: '未部署 OCR 引擎且本地大模型未开启：请在「系统设置→AI赋能」开启本地大模型，或部署 OCR 引擎（见 backend/tools/ocr-server.py）并填写「OCR引擎地址」；当前请手工填写。' };
+  const base = String(await getSetting('ai.llm.base', DEFAULT_BASE)).replace(/\/$/, '');
+  const model = String(await getSetting('ai.ocr.vl_model', DEFAULT_OCR_MODEL));
+  const prompt = `这是一张${docType}的清晰照片。请从中提取以下字段并以 JSON 输出（字段名固定）：
+title（文档标题/合同名称，没有则空串）、cert_no（证件编号/合同编号/注册号/统一社会信用代码，没有则空串）、issuer（发证机关/甲方/盖章单位，没有则空串）、issue_date（发证或签订日期，格式 YYYY-MM-DD，没有则空串）、expire_date（有效期至或到期日，格式 YYYY-MM-DD；若标注“长期有效”或无到期则空串）、name（持证单位/乙方名称，没有则空串）。
+只输出一个 JSON 对象，不要解释、不要 markdown 代码块、不要多余字符。`;
+  try {
+    const res = await fetch(`${base}/api/generate`, {
+      method: 'POST', signal: AbortSignal.timeout(25000),
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model, prompt, images: [imageBase64], stream: false, format: 'json' }),
+    });
+    if (!res.ok) return { ok: false, note: `识别服务 HTTP ${res.status}（${base}），请手工填写或检查 Ollama` };
+    const j: any = await res.json().catch((): any => null);
+    let raw = String(j?.response || '');
+    let obj: any = {};
+    try { obj = JSON.parse(raw); } catch {
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (m) try { obj = JSON.parse(m[0]); } catch { /* ignore */ }
+    }
+    if (!obj || Object.keys(obj).length === 0) return { ok: false, note: '未能从图片识别出结构化字段，请换角度重拍或部署 OCR 引擎' };
+    const clean = (v: any) => String(v == null ? '' : v).trim();
+    return {
+      ok: true,
+      title: clean(obj.title),
+      certNo: clean(obj.cert_no || obj.certNo),
+      issuer: clean(obj.issuer),
+      issueDate: fmtDocDate(clean(obj.issue_date || obj.issueDate)),
+      expireDate: fmtDocDate(clean(obj.expire_date || obj.expireDate)),
+      name: clean(obj.name),
+    };
+  } catch {
+    return { ok: false, note: `识别服务不可达（${base}）：请确认 Ollama 正在运行（ollama serve）且已拉取 ${model}；当前可手工填写` };
+  }
+}
+
+/** OCR 文本 + 本地文本模型（ai.llm.model，非 VL）→ 结构化字段；模型不可用返回 null */
+async function parseDocFieldsWithLLM(ocrText: string, docType: string): Promise<any> {
+  const llmOn = Boolean(await getSetting('ai.llm.enabled', false));
+  if (!llmOn) return null;
+  const base = String(await getSetting('ai.llm.base', DEFAULT_BASE)).replace(/\/$/, '');
+  const model = String(await getSetting('ai.llm.model', 'qwen2.5:7b'));
+  const prompt = `以下是${docType}图片经 OCR 得到的全部文本：\n"""\n${ocrText}\n"""\n请从中提取以下字段并以 JSON 输出（字段名固定）：
+title（文档标题/合同名称）、cert_no（证件编号/合同编号/统一社会信用代码/注册号）、issuer（发证机关/甲方/盖章单位）、issue_date（发证或签订日期 YYYY-MM-DD，无则空）、expire_date（有效期至 YYYY-MM-DD，长期或无则空）、name（持证单位/乙方名称）。
+只输出一个 JSON 对象，不要解释、不要 markdown 代码块、不要多余字符。`;
+  try {
+    const res = await fetch(`${base}/api/generate`, {
+      method: 'POST', signal: AbortSignal.timeout(20000),
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model, prompt, stream: false, format: 'json' }),
+    });
+    if (!res.ok) return null;
+    const j: any = await res.json().catch((): any => null);
+    let raw = String(j?.response || '');
+    let obj: any = {};
+    try { obj = JSON.parse(raw); } catch {
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (m) try { obj = JSON.parse(m[0]); } catch { /* ignore */ }
+    }
+    if (!obj || !Object.keys(obj).length) return null;
+    const clean = (v: any) => String(v == null ? '' : v).trim();
+    return {
+      title: clean(obj.title),
+      certNo: clean(obj.cert_no || obj.certNo),
+      issuer: clean(obj.issuer),
+      issueDate: fmtDocDate(clean(obj.issue_date || obj.issueDate)),
+      expireDate: fmtDocDate(clean(obj.expire_date || obj.expireDate)),
+      name: clean(obj.name),
+    };
+  } catch { return null; }
+}
+
+/** OCR 文本规则兜底（不依赖大模型）：提取统一社会信用代码 + 日期，尽力而为 */
+function parseDocFieldsByRule(text: string): any {
+  const um = text.match(/(^|[^0-9A-Z])([0-9A-HJ-NPQRTUWXY]{2}\d{6}[0-9A-HJ-NPQRTUWXY]{10})(?=$|[^0-9A-Z])/);
+  const usci = um ? um[2] : '';
+  const dts = (text.match(/\d{4}[-年./]\d{1,2}[-月./]\d{1,2}/g) || [])
+    .map(fmtDocDate).filter(Boolean);
+  const issueDate = dts.length > 1 ? dts[0] : '';
+  const expireDate = dts.length ? dts[dts.length - 1] : '';
+  return { title: '', certNo: usci, issuer: '', issueDate, expireDate, name: '' };
+}
+
+/** 把“2026年10月05日 / 2026.10.05 / 2026/10/05”等归一成 YYYY-MM-DD */
+function fmtDocDate(s: string): string {
+  if (!s) return '';
+  const m = String(s).match(/(\d{4})\s*[-年./]\s*(\d{1,2})\s*[-月./]\s*(\d{1,2})/);
+  if (m) {
+    const y = +m[1], mo = +m[2], d = +m[3];
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(s))) return String(s);
+  return '';
+}
+
 @Controller('ai/ocr-invoice')
 export class AiOcrController {
   /**

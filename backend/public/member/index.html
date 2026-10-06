@@ -320,10 +320,11 @@ function bindRegister() {
       question: $('.sq-q', d).value.trim(), answer: $('.sq-a', d).value.trim(),
     })).filter(x => x.question && x.answer);
     try {
+      const linkOrderId = (new URLSearchParams(location.search).get('orderId') || '') || undefined;
       const r = await api('/register', { method: 'POST', body: {
         phone: $('#rPhone').value.trim(), password: $('#rPwd').value,
         name: $('#rName').value.trim() || undefined, birthday: $('#rBirth').value || undefined,
-        privacyAgreed: $('#rAgree').checked, securityQuestions: questions } });
+        privacyAgreed: $('#rAgree').checked, securityQuestions: questions, linkOrderId } });
       setToken(r.token); MB.me = null;
       toast(`注册成功！您的会员卡号：${r.member.cardNo}`);
       nav('#home');

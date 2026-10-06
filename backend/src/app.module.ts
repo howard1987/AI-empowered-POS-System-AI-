@@ -28,6 +28,7 @@ import { DeviceModule } from './modules/device.module';
 import { TablesModule } from './modules/tables.module';
 import { DisplayModule } from './modules/display.module';
 import { BasicModule } from './modules/basic.module';
+import { SupplierQualificationModule } from './modules/supplier-qualification.module';
 import { AdminResetModule } from './modules/admin.reset';
 import { FraudController } from './modules/fraud.module';
 import { MemberProfileController } from './modules/profile.module';
@@ -105,6 +106,7 @@ class HealthController {
     SyncModule,                                       // V5.0.0：同步层 push/pull/对账（批次4A）
     ReturnChainModule,                                // V5.0.0：跨店退货/门店往来/差异单（批次4B）
     MemberChainModule,                                // V5.0.0：会员连锁 跨店资产/镜像/建档（批次5）
+    SupplierQualificationModule,                      // T3：供应商资质/合同/证照
   ],
   controllers: [HealthController, FraudController, MemberProfileController, AiMarketController, AiPricingController, RemoteSignController],
   providers: [
