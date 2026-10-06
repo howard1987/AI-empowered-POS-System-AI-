@@ -652,7 +652,7 @@ window.CashierShell = (function () {
     const st = stockOf(p);
     return { inCart, short: st != null && qty > st - inCart };
   }
-  function tryAdd(p, qty, src, el) {
+  function tryAdd(p, qty, src, el, fromScaleCode) {
     const s = stockShort(p, qty);
     if (s.short && stockOnline) {
       if (stockHard) { toast(`库存硬拦已开启：${p.name} 账面仅剩 ${stockOf(p)}，不能超卖（收银设置可关）`); return; }
@@ -661,13 +661,13 @@ window.CashierShell = (function () {
         { okText: '按负库存继续卖（留痕）' }).then(ok => {
           if (!ok) return;
           negSales.unshift({ t: nowHM(), name: p.name, stock: stockOf(p), had: s.inCart, add: qty });
-          doAdd(p, qty, src, true, el);
+          doAdd(p, qty, src, true, el, fromScaleCode);
         });
       return;
     }
-    doAdd(p, qty, src, false, el);
+    doAdd(p, qty, src, false, el, fromScaleCode);
   }
-  function doAdd(p, qty, src, neg, el) {
+  function doAdd(p, qty, src, neg, el, fromScaleCode) {
     if (neg) toast('已按负库存售卖并留痕（账面 ' + stockOf(p) + '）');
     else {
       const st = stockOf(p);
@@ -678,13 +678,16 @@ window.CashierShell = (function () {
       showDebounceBar(p); flashAdded(p, 0, el); lastScan.id = Number(p.id); lastScan.t = now; return;
     }
     if (src === 'scan') { lastScan.id = Number(p.id); lastScan.t = now; }
+    // 称重商品（非秤码来源）：初始数量置 0，稍后由自动读秤填充
+    const weighted = isW(p) && !fromScaleCode;
+    const addQty = weighted ? 0 : qty;
     const hit = cart.find(l => l.p.id === Number(p.id) && !l.manualPrice);
-    if (hit) hit.qty = Math.round((hit.qty + qty) * 1000) / 1000;   // 价格快照：已加行不受后续调价影响
-    else cart.push({ p: { ...p, id: Number(p.id) }, qty, ...(neg ? { neg: true } : {}) });
-    flashAdded(p, qty, el);
+    if (hit) hit.qty = Math.round((hit.qty + addQty) * 1000) / 1000;   // 价格快照：已加行不受后续调价影响
+    else cart.push({ p: { ...p, id: Number(p.id) }, qty: addQty, ...(neg ? { neg: true } : {}) });
+    flashAdded(p, weighted ? 1 : addQty, el);
     renderCart();
     refreshStock();
-    if (!neg) toast(`已加车：${p.name}`);
+    if (!neg) toast(weighted ? `已加车（称重）：${p.name} · 自动读取秤重…` : `已加车：${p.name}`);
     // V4.18.5 加车即报价；V4.25.7：只播「名称+价格」——库存信息留给「问价」（老板反馈加车报库存太吵）
     try {
       if (ttsOn && productVoiceOn && window.PwaTTS && src !== 'combo') { // VQA-D3：voice.product.enabled 子开关
@@ -692,6 +695,62 @@ window.CashierShell = (function () {
         window.PwaTTS.say(`${p.name}，${price}元`, { rate: 1.08 });
       }
     } catch { }
+    if (weighted) {  // 方案 A：自动轮询串口秤重量填充数量
+      const idx = cart.findIndex(l => l.p.id === Number(p.id) && !l.manualPrice);
+      if (idx >= 0) startWeigh(idx);
+    }
+  }
+  // ── 称重商品自动读秤（方案 A：点选/扫 PLU 自动轮询串口秤重量填充数量，默认 kg，防抖）──
+  let weigh = null;            // {idx, lastKg, timer} 当前正在自动读秤的购物车行
+  let weighAutoTried = false;  // 本次会话是否已尝试过自动连接秤（避免每次点称重都弹串口选择器）
+  function stopWeigh() { if (weigh && weigh.timer) clearTimeout(weigh.timer); weigh = null; }
+  function manualTouch(i) { if (weigh && weigh.idx === i) stopWeigh(); }   // 手动改数量 → 取消该行自动读秤
+  function startWeigh(idx) {
+    if (typeof Scale === 'undefined') { toast('电子秤组件未加载，请手动输入重量'); return; }
+    const begin = () => { stopWeigh(); weigh = { idx, lastKg: null, timer: 0 }; pollWeigh(); };
+    if (Scale.connected && Scale.connected()) { begin(); return; }
+    if (weighAutoTried) { toast('电子秤未连接：点顶栏秤图标连接后即可自动称重，或手动输入重量（kg）'); return; }
+    if (Scale.supported && Scale.supported()) {
+      weighAutoTried = true;
+      Scale.connect().then(begin).catch(e => toast('未连接电子秤：点顶栏秤图标连接后可自动称重，或手动输入重量' + (/后台关闭/.test(e && e.message || '') ? '（后台已关闭自动读重）' : '')));
+    } else {
+      toast('当前环境不支持串口电子秤（需 Chrome/Edge + HTTPS），请手动输入重量（kg）');
+    }
+  }
+  function pollWeigh() {
+    if (!weigh) return;
+    const l = cart[weigh.idx];
+    if (!l || !isW(l.p)) { stopWeigh(); return; }
+    const cur = (Scale && Scale.last) ? Scale.last : null;
+    if (cur && cur.kg != null) {
+      const kg = Math.round(cur.kg * 1000) / 1000;
+      if (weigh.lastKg == null || Math.abs(kg - weigh.lastKg) >= 0.002) {   // 防抖：≥2g 变化才提交，避免抖动刷屏
+        weigh.lastKg = kg;
+        setLineQty(weigh.idx, kg);
+      }
+    }
+    weigh.timer = setTimeout(pollWeigh, 250);
+  }
+  function setLineQty(idx, kg) {
+    const l = cart[idx]; if (!l) return;
+    l.qty = kg;
+    const box = $('#csCart');
+    if (box) {
+      const row = box.querySelector('.cs-crow[data-row="' + idx + '"]');
+      if (row) {
+        const inp = row.querySelector('input[data-q="' + idx + '"]');
+        if (inp && document.activeElement !== inp) inp.value = kg.toFixed(3);
+        const amt = row.querySelector('.cs-amt');
+        if (amt) amt.textContent = '¥' + money(lineAmount(l));
+      }
+    }
+    renderSummary();   // 轻量：本地重算总额 + 客显去抖推送
+    const cntEl = $('#csCnt');
+    if (cntEl) {
+      const cnt = cart.reduce((s, x) => s + x.qty, 0);
+      const txt = cart.length + ' 行 · ' + (Number.isInteger(cnt) ? cnt : cnt.toFixed(3)) + ' 件';
+      if (cntEl.textContent !== txt) { cntEl.textContent = txt; cntEl.classList.remove('cs-bump'); void cntEl.offsetWidth; cntEl.classList.add('cs-bump'); setTimeout(() => cntEl.classList.remove('cs-bump'), 460); }
+    }
   }
   /* V4.26.3 ① 加车视觉反馈：卡片轻缩一下 + 盖一层「✓ 已加入」，0.6s 自动消失。
      触屏收银原来只有按下时的底色变化，松手就没了，店员不确定加没加、容易重复扫。
@@ -748,7 +807,7 @@ window.CashierShell = (function () {
               const p2 = { ...base, id: Number(base.id) };
               cart.push({ p: p2, qty: Number(kg.toFixed(3)), manualPrice: Number((sp.amount / kg).toFixed(3)) });
               renderCart(); refreshStock();
-            } else tryAdd(base, Number(kg.toFixed(3)), 'scan');
+            } else tryAdd(base, Number(kg.toFixed(3)), 'scan', null, true);
             toast(`⚖ 秤码识别${sp.offline ? '（离线）' : ''}：${sp.product.name} ${kg.toFixed(3)}kg`);
             return;
           }
@@ -1220,9 +1279,10 @@ window.CashierShell = (function () {
     $('#csScanBtn').onclick = () => { $('#csSearch').focus(); toast('扫码枪直接对准商品扫即可（全局收码）'); };
     $('#csClear').onclick = async () => {
       if (!cart.length) return;
-      if (await pwaConfirm('清空购物车', '确认清空当前购物车？（可先挂单暂存）')) { cart.length = 0; clearCoupons(); manualRound = 0; renderCart(); }
+      if (await pwaConfirm('清空购物车', '确认清空当前购物车？（可先挂单暂存）')) { stopWeigh(); cart.length = 0; clearCoupons(); manualRound = 0; renderCart(); }
     };
     $('#csUndo').onclick = () => {
+      stopWeigh();
       const l = cart[cart.length - 1];
       if (l) { l.qty = Math.round((l.qty - (isW(l.p) ? 0.05 : 1)) * 1000) / 1000; if (l.qty <= 0) cart.pop(); renderCart(); toast('已撤销 1 件'); }
       $('#csDebounce').style.display = 'none';
@@ -1631,12 +1691,14 @@ window.CashierShell = (function () {
         </div>`;
       }).join('');
       box.querySelectorAll('[data-m]').forEach(b => b.onclick = () => {
+        manualTouch(+b.dataset.m);
         const l = cart[+b.dataset.m];
         l.qty = Math.round((l.qty - Number(b.dataset.st)) * 1000) / 1000;
         if (l.qty <= 0) cart.splice(+b.dataset.m, 1);
         renderCart();
       });
       box.querySelectorAll('[data-p]').forEach(b => b.onclick = () => {
+        manualTouch(+b.dataset.p);
         const i = +b.dataset.p, l = cart[i];
         const nv = Math.round((l.qty + Number(b.dataset.st)) * 1000) / 1000;
         const st = stockOf(l.p);
@@ -1651,7 +1713,10 @@ window.CashierShell = (function () {
         }
         l.qty = nv; renderCart();
       });
-      box.querySelectorAll('[data-q]').forEach(inp => inp.onchange = () => {
+      box.querySelectorAll('[data-q]').forEach(inp => {
+        inp.onfocus = () => manualTouch(+inp.dataset.q);
+        inp.onchange = () => {
+        manualTouch(+inp.dataset.q);
         const l = cart[+inp.dataset.q];
         let v = Number(inp.value);
         if (!v || v <= 0) { renderCart(); return; }
@@ -1667,6 +1732,7 @@ window.CashierShell = (function () {
           return;
         }
         l.qty = v; renderCart();
+        }
       });
       box.querySelectorAll('[data-e]').forEach(s => s.onclick = () => { curIdx = +s.dataset.e; priceEdit(+s.dataset.e); });
       // V4.25.3：单品折扣按钮（快捷键 D 同效）
@@ -1680,7 +1746,7 @@ window.CashierShell = (function () {
       }));
       box.querySelectorAll('[data-g]').forEach(b => b.onclick = () => { curIdx = +b.dataset.g; giftEdit(+b.dataset.g); });
       box.querySelectorAll('[data-r]').forEach(b => b.onclick = () => remarkEdit(+b.dataset.r));
-      box.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { cart.splice(+b.dataset.d, 1); renderCart(); });
+      box.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { stopWeigh(); cart.splice(+b.dataset.d, 1); renderCart(); });
     }
     const cnt = cart.reduce((s, l) => s + l.qty, 0);
     // V4.26.3：件数有变化才跳动（避免每次重绘都闪）
@@ -2525,6 +2591,7 @@ window.CashierShell = (function () {
 
   async function openPay() {
     if (!cart.length) { toast('购物车为空'); return; }
+    stopWeigh();
     if (payInFlight) return;
     // V5.0.11g：结账前询问会员（选「有会员」会中止本次结账去挂会员）
     if (!(await askMemberAtCheckout())) return;
@@ -4338,6 +4405,7 @@ window.CashierShell = (function () {
     const doLogout = () => {
       // V4.25.8：退出前先清空副屏（避免下次登录显示上次购物车/会员缓存）
       try { pushDisplay({ status: 'idle', items: [], payable: 0, saved: 0, member: null, guide: '欢迎光临' }, true); } catch { }
+      stopWeigh();
       active = false;
       document.body.classList.remove('cashier-mode');
       clearInterval(window.__csClock);
@@ -4468,6 +4536,7 @@ window.CashierShell = (function () {
       await openExitWizard();
       return;
     }
+    stopWeigh();
     active = false;
     document.body.classList.remove('cashier-mode');
     clearInterval(window.__csClock);

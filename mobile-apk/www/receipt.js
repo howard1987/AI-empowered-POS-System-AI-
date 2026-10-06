@@ -153,6 +153,17 @@
       && Array.isArray(tpl.content.hp.panels) && tpl.content.hp.panels[0]
       && (tpl.content.hp.panels[0].printElements || []).length;
     const html = isV3 ? receiptHTMLv3(snap, cfg.width, tpl) : receiptHTML(snap, cfg.width);
+    // V5.0.16：散客小票（snap.regUrl 存在）在票尾追加「扫码注册会员」二维码（浏览器打印通道画 PNG 图）
+    if (snap.regUrl) {
+      try {
+        const mod = await import('./vendor/qrcode.mjs');
+        const qrcode = mod.default || mod.qrcode;
+        const qr = qrcode(0, 'M'); qr.addData(snap.regUrl); qr.make();
+        const dataUrl = qr.createDataURL(4, 8);
+        const regBlock = `<div style="text-align:center;margin-top:10px"><div style="font-weight:700;font-size:12px">扫码注册会员</div><img src="${dataUrl}" style="width:120px;height:120px;margin:4px auto;display:block"><div style="font-size:10px;color:#333">扫码注册，本单自动积分</div></div>`;
+        html = html.replace('</body>', regBlock + '</body>');
+      } catch { /* 二维码生成失败不影响小票打印 */ }
+    }
     // V4.20.0 P16：EXE 端走 Electron 隐藏窗口静默打印（无预览弹窗）；浏览器端仍 iframe（弹预览属正常）
     if (window.DesktopShell && window.DesktopShell.silentPrintHtml) {
       try { return await window.DesktopShell.silentPrintHtml(html, { widthMm: cfg.width }); } catch { /* 失败落回 iframe */ }

@@ -144,6 +144,12 @@
       else if (a === 'right') text(padL(col - dispW(s)) + s);
       else text(padL((Number(el.x) || 0) * col / wmm) + s);
     }
+    if (snap.regUrl) {   // V5.0.16：散客小票追加「扫码注册会员」二维码（ESC/POS 直驱，v2/v3 版式）
+      raw(ESC, 0x61, 1);
+      text('扫码注册会员');
+      qrBytes(raw, gbkBytes, String(snap.regUrl));
+      raw(ESC, 0x61, 0);
+    }
     if (stub) {
       text('-'.repeat(col));
       text(kv('大写', rmbCapital(snap.payable), col));
@@ -250,6 +256,12 @@
     raw(ESC, 0x61, 1);                       // 居中脚注
     if (F('thanks')) text('谢谢惠顾 · 退换货请凭小票');
     text('****' + String(snap.orderNo || '').slice(-4) + '****');
+    if (snap.regUrl) {   // V5.0.16：散客小票追加「扫码注册会员」二维码
+      raw(ESC, 0x61, 1);
+      text('扫码注册会员');
+      qrBytes(raw, gbkBytes, String(snap.regUrl));
+      raw(ESC, 0x61, 0);
+    }
     raw(0x0A, 0x0A, 0x0A);
     if (optCut) raw(GS, 0x56, 0x42, 0x00);   // 走纸切刀（模版可关）
     return new Uint8Array(out);

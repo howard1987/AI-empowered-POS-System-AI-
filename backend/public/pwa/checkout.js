@@ -208,12 +208,18 @@ View.checkout = function (v, opt) {
     box.innerHTML = cats.map(c => `<div class="ck-cat ${String(c.id) === String(curCat) ? 'on' : ''}" data-cat="${c.id}">${esc(c.name)}</div>`).join('');
     box.querySelectorAll('.ck-cat').forEach(el => el.onclick = () => { curCat = el.dataset.cat; renderCats(); renderGrid(); });
   }
+  /** V5.0.16：生鲜双码模型——只显示「有固定一维条码」的生鲜商品。
+   *  纯称重/PLU 生鲜（isWeighted 且无固定条码）不入点选网格，避免误按「份」入车；
+   *  它们仍可被条码秤标签扫码（/products/scale-parse）按重量入车。 */
+  const isFreshScaleOnly = it => !!(it.isWeighted && !it.barcode);
   function renderGrid() {
     const box = $('#ckGrid'); if (!box) return;
-    const list = Pricebook.items.filter(it => String(curCat) === '全部' || String(it.categoryId ?? 0) === String(curCat));
+    const list = Pricebook.items.filter(it =>
+      (String(curCat) === '全部' || String(it.categoryId ?? 0) === String(curCat)) && !isFreshScaleOnly(it));
     if (!list.length) { box.innerHTML = '<div class="hint" style="grid-column:1/-1;text-align:center;padding:40px 0">该分类未添加商品!</div>'; return; }
     box.innerHTML = list.map(p => `
       <div class="ck-card" data-add="${p.id}">
+        ${stockBadge(p)}
         <div class="n">${esc(p.name)}</div>
         <div class="p">¥${money(p.sellPrice ?? p.sell_price ?? 0)}</div>
         ${p.memberPrice ? `<div class="m">会员 ¥${money(p.memberPrice)}</div>` : ''}
@@ -223,6 +229,7 @@ View.checkout = function (v, opt) {
       const p = Pricebook.items.find(x => Number(x.id) === Number(el.dataset.add));
       if (p) { addCart(p); renderCart(); toast('已加入：' + p.name); }
     });
+    refreshStock(list.map(p => Number(p.id)));
   }
   function ensureStyle() {
     if (document.getElementById('ckSilverStyle')) return;
@@ -234,13 +241,16 @@ View.checkout = function (v, opt) {
       .ck-cat{padding:13px 6px;text-align:center;font-size:12.5px;color:var(--ink-2);cursor:pointer;border-bottom:1px solid var(--paper-2);word-break:break-all;line-height:1.35;}
       .ck-cat.on{background:var(--paper);color:var(--pri);font-weight:800;box-shadow:inset 3px 0 0 var(--pri);}
       .ck-right{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;}
-      .ck-grid{flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(2,1fr);grid-auto-rows:min-content;gap:8px;padding:8px;align-content:start;-webkit-overflow-scrolling:touch;-webkit-text-size-adjust:100%;text-size-adjust:100%;}
-      .ck-card{position:relative;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 9px;cursor:pointer;}
+      .ck-grid{flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:min-content;gap:8px;padding:8px;align-content:start;-webkit-overflow-scrolling:touch;-webkit-text-size-adjust:100%;text-size-adjust:100%;}
+      .ck-card{position:relative;min-width:0;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 9px;cursor:pointer;overflow:hidden;}
       .ck-card:active{background:var(--green-soft);transform:scale(.98);}
-      .ck-card .n{font-size:13.5px;font-weight:700;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+      .ck-card .n{font-size:13.5px;font-weight:700;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;padding-right:56px;word-break:break-word;}
       .ck-card .p{font-size:15px;font-weight:800;color:var(--pri);margin-top:4px;}
       .ck-card .m{font-size:11px;color:var(--ink-3);}
       .ck-card .barcode{font-size:10px;color:var(--ink-3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .ck-stockpill{position:absolute;top:6px;right:7px;font-size:10px;border-radius:8px;padding:1px 7px;background:var(--paper-2);color:var(--ink-2);font-weight:600;}
+      .ck-stockpill.low{background:#fdf3d8;color:#b07207;}
+      .ck-stockpill.out{background:#ffe0e0;color:#c00;}
       .ck-topbar{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
       .ck-topbar span{font-weight:800;color:var(--pri);font-size:15px;}
       .ck-pbstate{font-size:12px;color:var(--ink-3);margin-left:auto;}
@@ -315,6 +325,10 @@ View.checkout = function (v, opt) {
             <button data-ch="现金" class="on">现金</button>
             <button data-ch="扫码">扫码</button>
             <button data-ch="余额">余额</button>
+          </div>
+          <div class="ck-optrow" id="ckDiscRow" style="display:flex;align-items:center;gap:8px;margin:6px 0">
+            <span style="font-size:13px;color:var(--ink-2);flex:none">整单折扣</span>
+            <span id="ckDiscSlot" style="display:flex;gap:6px;flex-wrap:wrap;flex:1;justify-content:flex-end"></span>
           </div>
           <div class="total-bar" style="margin:8px 0">
             <span>合计</span><span class="money" id="ckTotal">¥0.00</span>
@@ -416,7 +430,7 @@ View.checkout = function (v, opt) {
       const box = $('#ckResults');
       if (!kw || isDigits(kw)) { box.classList.add('hidden'); return; }   // 条码不进联想
       const list = Pricebook.ready
-        ? Pricebook.items.filter(it => (it.name || '').toLowerCase().includes(kw.toLowerCase())).slice(0, 6)
+        ? Pricebook.items.filter(it => (it.name || '').toLowerCase().includes(kw.toLowerCase()) && !isFreshScaleOnly(it)).slice(0, 6)
         : await searchProducts(kw);
       if (!list.length) { box.classList.add('hidden'); return; }
       box.classList.remove('hidden');
@@ -473,7 +487,7 @@ View.checkout = function (v, opt) {
         chosen.forEach(it => {
           const p = Pricebook.items.find(x => Number(x.id) === Number(it.productId)) ||
                     { id: it.productId, name: it.name, sellPrice: 0, barcode: '', spec: '' };
-          addQty(p, it.count);   // 统一入口：id 归一化 + 同商品合并（价格表 id 是字符串，必须 Number 化后比较）
+          addCart(p, it.count);   // 统一入口：id 归一化 + 同商品合并 + 库存预警（价格表 id 是字符串，必须 Number 化后比较）
         });
         renderCart();
         toast(`已加入 ${chosen.length} 种商品`);
@@ -555,7 +569,8 @@ View.checkout = function (v, opt) {
         if (!member) { toast('余额支付请先选择会员'); return; }
         const bal = Math.round(Number(member.balance || 0) * 100) / 100;
         const valid = cart.filter(l => l.qty > 0);
-        const total = valid.reduce((s, l) => s + l.qty * (l.manualPrice ?? l.p.sellPrice ?? l.p.sell_price ?? 0), 0);
+        const goodsAmt0 = valid.reduce((s, l) => s + l.qty * linePrice(l), 0);
+        const total = orderDisc ? Math.round(goodsAmt0 * orderDisc.rate / 100 * 100) / 100 : goodsAmt0;
         if (bal >= total || !(total > 0)) { checkout(); return; }
         if (bal <= 0) { toast('会员余额不足（¥0.00）：请改用现金/扫码收款（不赊账）'); return; }
         openBalanceCombo(total, bal);
@@ -615,8 +630,9 @@ View.checkout = function (v, opt) {
   function openMicropay(amountOverride, presetPays) {
     const valid = cart.filter(l => l.qty > 0);
     if (!valid.length) { toast('购物车为空'); return; }
-    const total = amountOverride != null ? amountOverride
-      : valid.reduce((s, l) => s + l.qty * (l.manualPrice ?? l.p.sellPrice ?? l.p.sell_price ?? 0), 0);
+    const goodsAmt2 = valid.reduce((s, l) => s + l.qty * linePrice(l), 0);
+    const discTotal2 = orderDisc ? Math.round(goodsAmt2 * orderDisc.rate / 100 * 100) / 100 : goodsAmt2;
+    const total = amountOverride != null ? amountOverride : discTotal2;
     mpPreset = Array.isArray(presetPays) && presetPays.length ? presetPays : null;   // P2-3
     mpAmount = total;                                                                 // P2-3
     const m = document.createElement('div');
@@ -794,7 +810,8 @@ View.checkout = function (v, opt) {
   function confirmScanPay() {
     const valid = cart.filter(l => l.qty > 0);
     if (!valid.length) { toast('购物车为空'); return; }
-    const total = valid.reduce((s, l) => s + l.qty * (l.manualPrice ?? l.p.sellPrice ?? l.p.sell_price ?? 0), 0);
+    const goodsAmt1 = valid.reduce((s, l) => s + l.qty * linePrice(l), 0);
+    const total = orderDisc ? Math.round(goodsAmt1 * orderDisc.rate / 100 * 100) / 100 : goodsAmt1;
     const m = document.createElement('div');
     m.className = 'modal';
     m.innerHTML = `<div class="sheet">
@@ -823,7 +840,12 @@ View.checkout = function (v, opt) {
     };
   }
 
-  /** 统一加购入口：id 归一化（价格表 id 为字符串）+ 同商品合并数量 */
+  /** 统一加购入口：id 归一化（价格表 id 为字符串）+ 同商品合并数量。
+   *  库存预警：低于等于 5 件 toast 提示；超卖（含已车量）弹「负库存售卖确认」，开启硬拦则直接拒。 */
+  let stockHard = false;                 // 库存硬拦（后台 pos.cashier.stock_hard）
+  let negSales = [];                     // 本班负库存清单（盘点线索）
+  const nowHM = () => { const d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+  const stockOf2 = p => (p.id in stockMap) ? Number(stockMap[p.id]) : null;
   function addQty(p, n) {
     const id = Number(p.id);
     const hit = cart.find(l => l.p.id === id);
@@ -831,8 +853,204 @@ View.checkout = function (v, opt) {
     else cart.push({ p: { ...p, id }, qty: n });
     renderCart();
   }
+  function stockShort(p, qty) {
+    const hit = cart.find(l => l.p.id === Number(p.id));
+    const inCart = hit ? hit.qty : 0;
+    const st = stockOf2(p);
+    return { inCart, short: st != null && qty > st - inCart };
+  }
+  function tryAdd(p, qty) {
+    qty = Math.max(1, Number(qty) || 1);
+    const s = stockShort(p, qty);
+    if (s.short) {
+      if (stockHard) { toast(`库存硬拦已开启：${p.name} 账面仅剩 ${stockOf2(p)}，不能超卖（收银设置可关）`); return; }
+      pwaConfirm('负库存售卖确认',
+        `<b>${esc(p.name)}</b> 账面库存 ${stockOf2(p)}（已在车 ${s.inCart}），本次要加 <b>${qty}</b>，将超出账面 <b style="color:var(--bad)">${qty + s.inCart - stockOf2(p)}</b> 件。<br>账实不符常见于未及时入库/退货未清点；确认后按负库存成交并留痕，进「本班负库存清单」。`,
+        { okText: '按负库存继续卖（留痕）' }).then(ok => {
+          if (!ok) return;
+          negSales.unshift({ t: nowHM(), name: p.name, stock: stockOf2(p), had: s.inCart, add: qty });
+          doAdd(p, qty, true);
+        });
+      return;
+    }
+    doAdd(p, qty, false);
+  }
+  function doAdd(p, qty, neg) {
+    if (neg) toast('已按负库存售卖并留痕（账面 ' + stockOf2(p) + '）');
+    else {
+      const st = stockOf2(p);
+      if (st != null && st > 0 && st <= 5) toast(`库存偏低：${p.name} 仅剩 ${st}`);
+    }
+    addQty(p, qty);
+  }
+  function addCart(p, qty) { tryAdd(p, qty); }
 
-  function addCart(p, qty) { addQty(p, Math.max(1, Number(qty) || 1)); }
+  // ── V5.0.16：购物车折扣 / 赠送（与桌面收银同口径；后端 /sales/checkout 已支持 gift/discRate/整单折扣） ──
+  let priceAuth = null;            // 店长授权票据 {ticket, exp, name, empNo}
+  let authReuse = 'batch';         // batch=120s 复用 / once=每次弹窗
+  let authSelf = false;            // 店长本人免输授权码
+  let orderDisc = null;            // 整单折扣 {rate,name,amount,custom,reason}
+  let discPresets = [];            // 整单折扣预设（后台 pos.discount.presets）
+  function priceAuthValid() { return priceAuth && priceAuth.exp > Date.now(); }
+  const lineBasePrice = l => Number(l.manualPrice ?? l.p.sellPrice ?? l.p.sell_price ?? 0);
+  const linePrice = l => {
+    if (l.gift) return 0;
+    if (l.discRate != null) return Math.round(lineBasePrice(l) * l.discRate / 100 * 100) / 100;
+    return lineBasePrice(l);
+  };
+  const cartSubtotal = () => cart.reduce((s, l) => s + l.qty * linePrice(l), 0);
+  function ensurePriceAuth(scene) {
+    if (authSelf && hasPerm('pos.price.authorize')) {
+      return (async () => {
+        if (priceAuthValid()) return true;
+        try {
+          const r = await call('POST', '/auth/authorize-self', {});
+          priceAuth = { ticket: r.ticket, exp: Date.now() + (Number(r.expiresIn) || 120) * 1000,
+                        name: r.authorizer?.name || '', empNo: r.authorizer?.empNo || '' };
+          return true;
+        } catch (e) { toast(e.message || '自授权失败'); return false; }
+      })();
+    }
+    if (authReuse === 'batch' && priceAuthValid()) return Promise.resolve(true);
+    return new Promise(resolve => {
+      const m = document.createElement('div'); m.className = 'modal';
+      m.innerHTML = `<div class="sheet" style="width:min(430px,92vw)"><h3>🔐 店长授权</h3>
+        <div class="hint">「<b>${esc(scene)}</b>」需店长现场授权。<b>仅授权本次价格操作，不会切换当前收银员身份</b>；授权后 120 秒内有效，可连续改价/打折。</div>
+        <div class="field"><label>店长工号</label><input id="csAzNo" placeholder="店长工号" autocomplete="off"></div>
+        <div class="field"><label>店长授权码</label><input id="csAzCode" type="password" inputmode="numeric" placeholder="4~8 位数字（非登录密码）" autocomplete="off"></div>
+        <div class="hint" id="csAzHint">未设置授权码？请老板在后台「员工与角色」中为店长工号设置授权码。</div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn ghost" id="csAzX" style="flex:1">取消</button>
+          <button class="btn ok" id="csAzGo" style="flex:1">授权</button></div></div>`;
+      document.body.appendChild(m);
+      const close = ok => { m.remove(); resolve(ok); };
+      m.querySelector('#csAzX').onclick = () => close(false);
+      const go = async () => {
+        const empNo = m.querySelector('#csAzNo').value.trim();
+        const code = m.querySelector('#csAzCode').value.trim();
+        if (!empNo || !code) { toast('请填写店长工号与授权码'); return; }
+        const btn = m.querySelector('#csAzGo'); btn.disabled = true; btn.textContent = '验证中…';
+        try {
+          const r = await call('POST', '/auth/authorize', { empNo, authCode: code });
+          priceAuth = { ticket: r.ticket, exp: Date.now() + (Number(r.expiresIn) || 120) * 1000,
+                        name: r.authorizer?.name || '', empNo: r.authorizer?.empNo || '' };
+          toast(`✅ 店长 ${priceAuth.name} 已授权（120 秒内有效）`);
+          close(true);
+        } catch (e) {
+          m.querySelector('#csAzHint').innerHTML = `<span style="color:var(--bad)">${esc(e.message || '授权失败')}</span>`;
+          btn.disabled = false; btn.textContent = '授权';
+          m.querySelector('#csAzCode').select();
+        }
+      };
+      m.querySelector('#csAzGo').onclick = go;
+      ['#csAzNo', '#csAzCode'].forEach(sel => m.querySelector(sel).addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); go(); } }));
+      setTimeout(() => m.querySelector('#csAzNo').focus(), 60);
+    });
+  }
+  function discEdit(i) {
+    const l = cart[i]; if (!l || l.custom) return;
+    if (l.gift) { toast('赠品行已是 0 元，无需打折'); return; }
+    if (!hasPerm('pos.price.manual')) { toast('单品折扣需改价权限（pos.price.manual）'); return; }
+    const m = document.createElement('div'); m.className = 'modal';
+    const base = lineBasePrice(l);
+    m.innerHTML = `<div class="sheet"><h3>💢 单品折扣</h3>
+      <div class="hint">${esc(l.p.name)} · 原价 ¥${money(base)}</div>
+      <div class="field"><label>折扣（折，如 88 = 88 折）</label><input id="csDcIn" type="number" step="1" placeholder="输入折数 1~100"></div>
+      <div id="csDcHint"></div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn ghost" id="csDcX" style="flex:1">取消</button>
+        <button class="btn ok" id="csDcOk" style="flex:1">确定</button></div></div>`;
+    document.body.appendChild(m);
+    m.querySelector('#csDcX').onclick = () => m.remove();
+    m.querySelector('#csDcOk').onclick = async () => {
+      const r = Number(m.querySelector('#csDcIn').value);
+      if (!(r > 0 && r <= 100)) { toast('请输入 1~100 的折数'); return; }
+      const newP = Math.round(base * r / 100 * 100) / 100;
+      const minP = l.p.minPrice != null && l.p.minPrice !== '' ? Number(l.p.minPrice) : 0;
+      const minD = Number(l.p.minDiscountRate || l.p.min_discount_rate || 0);
+      const badDisc = minD > 0 && r < minD;
+      const badPrice = newP < minP;
+      if (badDisc || badPrice) {
+        if (!hasPerm('pos.emergency.manual')) { m.querySelector('#csDcHint').innerHTML = `<span style="color:var(--bad)">${badDisc ? `低于本商品最低折扣 ${minD} 折` : `折后 ¥${money(newP)} 低于最低售价 ¥${money(minP)}`}，已拒绝（需店长放行）</span>`; return; }
+        if (!(await pwaConfirm('店长放行', `低于${badDisc ? `最低折扣 ${minD} 折` : `最低售价 ¥${money(minP)}`}，确认放行并留痕？`, { okText: '店长放行' }))) return;
+      }
+      if (!(await ensurePriceAuth('单品折扣'))) return;
+      delete l.manualPrice; l.discRate = r; m.remove(); renderCart(); toast(`已按 ${r} 折销售（店长已授权）`);
+    };
+  }
+  function giftEdit(i) {
+    const l = cart[i]; if (!l || l.custom) return;
+    if (!hasPerm('pos.price.manual')) { toast('手工赠品需改价权限（pos.price.manual）'); return; }
+    if (l.gift) { l.gift = false; delete l.manualPrice; l.remark = ''; renderCart(); toast('已撤销赠品，恢复原价'); return; }
+    const m = document.createElement('div'); m.className = 'modal';
+    m.innerHTML = `<div class="sheet"><h3>🎁 设为赠品</h3>
+      <div class="warn-bar">0 元出库·库存照扣·需店长授权留痕</div>
+      <div class="field"><label>赠品原因（选填）</label><input id="csGfRm" placeholder="如：试吃 / 客诉补偿"></div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn ghost" id="csGfX" style="flex:1">取消</button>
+        <button class="btn ok" id="csGfOk" style="flex:1">设为赠品</button></div></div>`;
+    document.body.appendChild(m);
+    m.querySelector('#csGfX').onclick = () => m.remove();
+    m.querySelector('#csGfOk').onclick = async () => {
+      if (!(await ensurePriceAuth('手工赠品（0 元出库）'))) return;
+      l.gift = true; l.manualPrice = 0; l.remark = m.querySelector('#csGfRm').value.trim();
+      m.remove(); renderCart(); toast('该行已设为赠品（0 元·店长已授权）');
+    };
+  }
+  function renderDiscSlot() {
+    const slot = $('#ckDiscSlot'); if (!slot) return;
+    if (!discPresets.length && !hasPerm('pos.discount.custom')) { slot.innerHTML = '<span class="pill gray">未配置</span>'; return; }
+    let html = discPresets.map(p => `<button class="mini-btn${orderDisc && orderDisc.rate === p.rate ? ' ok' : ''}" data-rate="${p.rate}" data-name="${esc(p.name || '')}">${esc(p.name || (p.rate + '折'))}</button>`).join('');
+    if (hasPerm('pos.discount.custom')) html += `<button class="mini-btn${orderDisc && orderDisc.custom ? ' ok' : ''}" id="ckDiscCustom">自定义</button>`;
+    if (orderDisc) html += `<button class="mini-btn" id="ckDiscClear">取消</button>`;
+    slot.innerHTML = html;
+    slot.querySelectorAll('[data-rate]').forEach(b => b.onclick = () => applyOrderDisc(Number(b.dataset.rate), b.dataset.name, false, ''));
+    const cu = $('#ckDiscCustom'); if (cu) cu.onclick = openOrderDiscCustom;
+    const cl = $('#ckDiscClear'); if (cl) cl.onclick = () => { orderDisc = null; renderCart(); };
+  }
+  async function applyOrderDisc(rate, name, custom, reason) {
+    const total = cartSubtotal();
+    const amount = Math.round(total * (1 - rate / 100) * 100) / 100;
+    const offenders = [];
+    for (const l of cart) {
+      const bp = lineBasePrice(l);
+      const minP = l.p.minPrice != null && l.p.minPrice !== '' ? Number(l.p.minPrice) : 0;
+      const minD = Number(l.p.minDiscountRate || l.p.min_discount_rate || 0);
+      const newP = Math.round(bp * rate / 100 * 100) / 100;
+      if (minD > 0 && rate < minD) offenders.push(l.p.name);
+      else if (newP < minP) offenders.push(l.p.name);
+    }
+    if (offenders.length) {
+      if (!hasPerm('pos.emergency.manual')) { toast(`整单折扣 ${rate} 折越线：${offenders.slice(0, 3).join('、')}${offenders.length > 3 ? ` 等 ${offenders.length} 项` : ''}，已拒绝（需店长放行）`); return; }
+      if (!(await pwaConfirm('店长放行', `以下商品低于最低折扣/售价：${offenders.slice(0, 3).join('、')}\n确认放行并留痕？`, { okText: '店长放行' }))) return;
+    }
+    if (!(await ensurePriceAuth('整单折扣'))) return;
+    orderDisc = { rate, name, amount, custom, reason };
+    renderCart(); toast(`已套用整单折扣：${name} ${rate} 折（结账时服务端校验留痕）`);
+  }
+  function openOrderDiscCustom() {
+    const m = document.createElement('div'); m.className = 'modal';
+    m.innerHTML = `<div class="sheet"><h3>💢 自定义整单折扣</h3>
+      <div class="field"><label>折扣（折，如 90 = 9 折）</label><input id="ckOdIn" type="number" step="1" placeholder="1~100"></div>
+      <div class="field"><label>折扣原因（选填）</label><input id="ckOdRm" placeholder="如：会员日 / 店庆"></div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn ghost" id="ckOdX" style="flex:1">取消</button>
+        <button class="btn ok" id="ckOdOk" style="flex:1">确定</button></div></div>`;
+    document.body.appendChild(m);
+    m.querySelector('#ckOdX').onclick = () => m.remove();
+    m.querySelector('#ckOdOk').onclick = () => {
+      const r = Number(m.querySelector('#ckOdIn').value);
+      if (!(r > 0 && r <= 100)) { toast('请输入 1~100 的折数'); return; }
+      const rm = m.querySelector('#ckOdRm').value.trim();
+      m.remove(); applyOrderDisc(r, '自定义 ' + r + ' 折', true, rm);
+    };
+  }
+  async function loadCashierSettings() {
+    try { const r = await call('GET', '/settings/key/pos.cashier.stock_hard'); stockHard = !!(r && (r.value === true || String(r.value) === 'true' || Number(r.value) === 1)); } catch {}
+    try { const r = await call('GET', '/settings/key/pos.price.auth_self'); authSelf = !!(r && (r.value === true || String(r.value) === 'true' || Number(r.value) === 1)); } catch {}
+    try { const r = await call('GET', '/settings/key/pos.price.auth_reuse'); authReuse = (r && r.value === 'once') ? 'once' : 'batch'; } catch {}
+    try { const r = await call('GET', '/settings/key/pos.discount.presets'); if (r && r.value) { const v = typeof r.value === 'string' ? JSON.parse(r.value) : r.value; if (Array.isArray(v)) discPresets = v; } } catch {}
+  }
 
   // ── V4.13.9 B1：左右手习惯（后台 mobile.hand 设置）+ 挂单/取单（/pos/held）──
   let HAND = localStorage.getItem('pwa_hand') || '';
@@ -934,6 +1152,43 @@ View.checkout = function (v, opt) {
     } catch (e) { toast(e.message); }
   }
 
+  // ── V5.0.16：H5 注册入口域名缓存 + 商品网格库存角标（与桌面收银 /pos/stock 同口径） ──
+  let _h5entryCache;
+  async function getH5Entry() {
+    if (_h5entryCache !== undefined) return _h5entryCache;
+    try {
+      const r = await call('GET', '/settings/key/member.h5.entry_url');
+      _h5entryCache = String(r?.value ?? '').replace(/^"|"$/g, '').trim();
+    } catch { _h5entryCache = ''; }
+    return _h5entryCache;
+  }
+  // 库存角标：按当前商品网格可见商品 id 拉取实时库存（刻意不缓存进价目表；易变数据）
+  let stockMap = {};          // productId -> stockQty
+  const stockAsked = new Set();
+  async function refreshStock(ids) {
+    if (!navigator.onLine) return;
+    const list = (ids || (Pricebook.items || []).map(p => Number(p.id))).filter(Boolean).slice(0, 500);
+    const need = list.filter(id => !stockAsked.has(id));
+    if (!need.length) return;
+    need.forEach(id => stockAsked.add(id));
+    try {
+      const d = await call('GET', '/pos/stock?ids=' + need.join(','));
+      for (const r of (d.items || [])) stockMap[r.productId] = Number(r.stockQty) || 0;
+      for (const it of (Pricebook.items || [])) {
+        const id = Number(it.id);
+        if (!(id in stockMap) && need.includes(id)) stockMap[id] = 0;   // 无库存记录=0（未进货）
+      }
+      renderGrid();   // 拉到库存后重渲染商品网格以显示角标（stockAsked 已记入，不会重复请求）
+    } catch { /* 库存查询失败不影响收银 */ }
+  }
+  function stockBadge(p) {
+    const st = stockMap[p.id];
+    if (st == null) return '';
+    const out = st <= 0;
+    const low = !out && st <= 5;
+    return `<span class="ck-stockpill${low ? ' low' : ''}${out ? ' out' : ''}">${out ? '库存 0' : (low ? '仅剩 ' + st : '库存 ' + st)}</span>`;
+  }
+
   function renderCart() {
     const box = $('#ckCart');
     if (!box) return;
@@ -945,15 +1200,27 @@ View.checkout = function (v, opt) {
         const w = isW(l);
         const qtyTxt = w ? Number(l.qty).toFixed(3) + ' kg' : l.qty;
         const step = w ? 0.05 : 1;
+        const price = linePrice(l);
+        const base = lineBasePrice(l);
+        const tags = []
+          + (l.gift ? '<span class="pill green">赠品</span>' : '')
+          + (l.discRate != null ? `<span class="pill orange">${l.discRate}折</span>` : '')
+          + (l.manualPrice != null && l.discRate == null && !l.gift ? '<span class="pill orange">手输 ¥' + money(l.manualPrice) + '</span>' : '')
+          + (w ? '<span class="pill blue">称重</span>' : '');
+        const unit = w ? 'kg' : (l.p.baseUnit || l.p.base_unit || '件');
+        const priceTxt = l.gift ? '¥0.00（赠）' : (l.discRate != null ? `¥${money(price)}<small style="color:var(--ink-3)"> /¥${money(base)}</small>` : `¥${money(price)}`);
+        const canPrice = hasPerm('pos.price.manual');
         return `
         <div class="row">
           <div class="grow">
-            <div class="t">${esc(l.p.name)} ${l.manualPrice ? '<span class="pill orange">手输 ¥' + money(l.manualPrice) + '</span>' : ''}${w ? '<span class="pill blue">称重</span>' : ''}</div>
-            <div class="s">¥${money(l.manualPrice ?? l.p.sellPrice ?? l.p.sell_price ?? 0)}/${w ? 'kg' : (l.p.baseUnit || l.p.base_unit || '件')} × ${qtyTxt}</div>
+            <div class="t">${esc(l.p.name)} ${tags}</div>
+            <div class="s">${priceTxt}/${unit} × ${qtyTxt}</div>
           </div>
           <div class="qty">
             ${w ? `<button data-w="${i}" style="width:34px;height:34px;border-radius:9px;background:#e8f4f8;font-size:15px">⚖</button>` : ''}
             ${w ? `<button data-sl="${i}" style="width:34px;height:34px;border-radius:9px;background:#fdf6e8;font-size:15px" title="打印秤贴">🏷</button>` : ''}
+            ${canPrice ? `<button class="mini-btn" data-f="${i}" title="单品折扣" style="padding:6px 8px">折</button>` : ''}
+            ${canPrice ? `<button class="mini-btn" data-g="${i}" title="赠品" style="padding:6px 8px">${l.gift ? '撤赠' : '赠'}</button>` : ''}
             <button data-m="${i}" data-st="${step}">−</button><span>${qtyTxt}</span><button data-p="${i}" data-st="${step}">＋</button>
           </div>
           <button class="mini-btn danger" data-d="${i}">删</button>
@@ -986,6 +1253,8 @@ View.checkout = function (v, opt) {
         toast(`已读重 ${kg.toFixed(3)} kg：${l.p.name}`);
       });
       box.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { cart.splice(+b.dataset.d, 1); renderCart(); });
+      box.querySelectorAll('[data-f]').forEach(b => b.onclick = () => discEdit(+b.dataset.f));
+      box.querySelectorAll('[data-g]').forEach(b => b.onclick = () => giftEdit(+b.dataset.g));
       // 🏷 即时秤贴（V4.15.7 P2）：称重行读重/改量后一键出秤贴（品名/单价/重量/金额/条码/时间），走标签机
       box.querySelectorAll('[data-sl]').forEach(b => b.onclick = async () => {
         const l = cart[+b.dataset.sl];
@@ -1010,12 +1279,13 @@ View.checkout = function (v, opt) {
         finally { b.textContent = '🏷'; }
       });
     }
-    const total = cart.reduce((s, l) => s + l.qty * (l.manualPrice ?? l.p.sellPrice ?? l.p.sell_price ?? 0), 0);
+    const total = cartSubtotal();
     const totalQty = cart.reduce((s, l) => s + l.qty, 0);
     $('#ckCnt').textContent = `${cart.length} 种 · 共 ${Number.isInteger(totalQty) ? totalQty : totalQty.toFixed(3)} 件`;
     $('#ckTotal').textContent = '¥' + money(total);
     const ckInfoTotal = $('#ckInfoTotal'); if (ckInfoTotal) ckInfoTotal.textContent = '¥' + money(total);
     const ckInfoCnt = $('#ckInfoCnt'); if (ckInfoCnt) ckInfoCnt.textContent = (Number.isInteger(totalQty) ? totalQty : totalQty.toFixed(3)) + ' 件';
+    renderDiscSlot();
   }
 
   /* V5.0.11i：会员入口。
@@ -1204,7 +1474,8 @@ View.checkout = function (v, opt) {
   async function checkout(presetPays) {
     const valid = cart.filter(l => l.qty > 0);
     if (!valid.length) { toast('购物车为空'); return; }
-    const total = valid.reduce((s, l) => s + l.qty * (l.manualPrice ?? l.p.sellPrice ?? l.p.sell_price ?? 0), 0);
+    const goodsAmt = valid.reduce((s, l) => s + l.qty * linePrice(l), 0);
+    const total = orderDisc ? Math.round(goodsAmt * orderDisc.rate / 100 * 100) / 100 : goodsAmt;
     if (payChannel === '余额' && !member && !presetPays) { toast('余额支付请先选择会员'); return; }
     // V4.13.2：扫码通道走通道扣款时，真实渠道取通道识别结果（微信/支付宝），挂通道流水号供服务端校验
     const effChannel = (payChannel === '扫码' && gatewayChannel) ? gatewayChannel : payChannel;
@@ -1218,9 +1489,13 @@ View.checkout = function (v, opt) {
       items: valid.map(l => ({
         productId: l.p.id, qty: l.qty,
         ...(l.manualPrice !== undefined ? { unitPrice: l.manualPrice, manualEntry: true, manualBarcode: l.manualBarcode } : {}),
+        ...(l.discRate != null ? { discRate: l.discRate } : {}),
+        ...(l.gift ? { gift: true } : {}),
+        ...(l.remark ? { lineRemark: l.remark } : {}),
       })),
       payments,
       ...(member ? { memberId: member.id } : {}),
+      ...(orderDisc ? { discountRate: orderDisc.rate, discountReason: orderDisc.name + (orderDisc.reason ? ('·' + orderDisc.reason) : '') } : {}),
       isEmergency: emergency,
       remark: `移动收银${emergency ? '·应急' : ''}`,
       clientRef: 'M' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), // 幂等单号：防双击 + 离线补传去重
@@ -1231,19 +1506,44 @@ View.checkout = function (v, opt) {
     try {
       const d = await call('POST', '/sales/checkout', payload);
       // V4.13.4 成熟收银闭环钩子：落单成功 → 打印小票 + 开钱箱（设置可关；失败不影响交易本身）
+      // V5.0.16：散客（未挂会员）小票带注册二维码；已挂会员不需要
+      const _h5 = await getH5Entry();
+      const regUrl = member ? '' : ((_h5 ? _h5.replace(/\/+$/, '') : location.origin + '/member') + '/?orderId=' + encodeURIComponent(d.orderId));
       const snap = { orderNo: d.orderNo, payable: d.payable, roundAmount: d.roundAmount,
         lines: valid.map(l => ({ name: l.p.name || l.p.name2 || '商品', qty: l.qty,
-          price: l.manualPrice ?? l.p.sellPrice ?? l.p.sell_price ?? 0 })),
+          price: linePrice(l) })),
         channel: effChannel, member: member ? (member.name || member.phone || `会员#${member.id}`) : null,
-        time: new Date() };
+        time: new Date(), regUrl };
       const doneMsg = emergency ? '⚡ 应急单据已留痕，恢复后自动并入日报/进销存'
         : '小票打印中，见收银台';   // V4.15.6 打印通道由 PwaPrinters 决定（直驱/网口/浏览器兜底）
-      const nz = $('#ckNotice'); nz && nz.insertAdjacentHTML('beforeend', `
-        <div class="ok-bar" id="ckDone">
-          ✅ 结账成功 <b>${esc(d.orderNo)}</b> 应收 <b>¥${money(d.payable)}</b><br>
-          <span style="font-size:12.5px">${doneMsg}
-            <a href="#" id="ckReprint" style="text-decoration:underline">补打小票</a></span>
-        </div>`);
+      const nz = $('#ckNotice');
+      if (nz) {
+        const mem = member;  // 捕获：下方结账收尾会 member=null，二维码异步生成时需沿用本单会员信息
+        const bar = document.createElement('div');
+        bar.className = 'ok-bar'; bar.id = 'ckDone';
+        bar.innerHTML = `✅ 结账成功 <b>${esc(d.orderNo)}</b> 应收 <b>¥${money(d.payable)}</b><br>` +
+          (mem ? `<div style="margin-top:6px">👤 ${esc(mem.name || '会员')} · ${esc(mem.phone || mem.card_no || '')}</div>` : '') +
+          `<span style="font-size:12.5px">${doneMsg} <a href="#" id="ckReprint" style="text-decoration:underline">补打小票</a></span>` +
+          `<div class="ck-qr-wrap"></div>`;
+        nz.appendChild(bar);
+        const qrWrap = bar.querySelector('.ck-qr-wrap');
+        // V5.0.16：仅散客（未挂会员）展示注册二维码；已挂会员显示会员信息、不显示二维码（避免重复注册）
+        if (!mem && qrWrap) {
+          (async () => {
+            try {
+              const base = _h5 ? _h5.replace(/\/+$/, '') : location.origin + '/member';
+              const h5reg = base + '/?orderId=' + encodeURIComponent(d.orderId);
+              const mod = await import('./vendor/qrcode.mjs');
+              const qrcode = mod.default || mod.qrcode;
+              const qr = qrcode(0, 'M'); qr.addData(h5reg); qr.make();
+              const qrUrl = qr.createDataURL(4, 8);
+              qrWrap.innerHTML = `<div style="font-weight:600;margin:8px 0 6px">📱 顾客扫码自助注册会员（本单自动归集）</div>` +
+                `<img src="${qrUrl}" style="width:160px;height:160px;border:6px solid #fff;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.15);background:#fff" alt="注册二维码">` +
+                `<div class="muted" style="font-size:11px;margin-top:4px">微信扫此码注册，散客订单自动转为会员积分</div>`;
+            } catch { /* 二维码生成失败不影响结账成功提示 */ }
+          })();
+        }
+      }
       try {
         if (!emergency) {
           // V4.15.6 P1：指令级直驱优先（串口/网口，pos.print.auto 总开关+联数），无直驱回落浏览器打印
@@ -1296,7 +1596,8 @@ View.checkout = function (v, opt) {
   ensureStyle();
   ensureCategories();
   render();
-  ensurePricebook().then(() => { if (document.body.contains(v)) { ensureCategories(); render(); } }).catch(() => {});
+  loadCashierSettings().catch(() => {});
+  ensurePricebook().then(() => { if (document.body.contains(v)) { ensureCategories(); render(); renderDiscSlot(); } }).catch(() => {});
 };
 
 // ── 小工具 ──

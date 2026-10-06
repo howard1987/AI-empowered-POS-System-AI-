@@ -32,6 +32,7 @@ import * as models from './screens/models.js';
 import * as pricing from './screens/pricing.js';
 import * as fraud from './screens/fraud.js';
 import * as profiles from './screens/profiles.js';
+import * as delivery from './screens/delivery.js';
 
 /** 菜单（三级树：分组 → 一级 → 二级 → 三级；叶子挂屏；title 为面包屑名） */
 const MENU = [
@@ -39,6 +40,7 @@ const MENU = [
   { key: 'home', title: '后台首页', icon: '🏠', mod: home },
   { key: 'dashboard', title: '经营看板', icon: '📊', mod: dashboard },
   { key: 'report', title: '报表中心', icon: '📈', mod: report },
+  { key: 'deliveries', title: '本店配送', icon: '🛵', mod: delivery },
   { grp: '商品与库存' },
   { key: 'products', title: '商品档案', icon: '📦', mod: products },
   { key: 'suppliers', title: '供应商管理', icon: '🏭', mod: suppliers },
