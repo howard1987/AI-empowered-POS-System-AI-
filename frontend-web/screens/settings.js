@@ -67,6 +67,8 @@ export async function render(view) {
     </div>
     <div class="card" id="initCard" style="display:none"><h3>🏗️ 开业初始化 </h3>
       <div id="initBody"></div></div>
+    <div class="card" id="backupCard" style="display:none"><h3>💾 数据备份 </h3>
+      <div id="backupBody"></div></div>
     <div class="card"><h3>变更留痕 </h3>
       <div class="bar" style="margin:0 18px 8px">
         <input id="chgFrom" type="date" title="起始日期" style="width:140px">
@@ -82,6 +84,7 @@ export async function render(view) {
   let curGroup = '';   // V4.13.9：当前选中分组（''=全部）；保存后重绘留在本页，不再跳回「全部」
   let scopeFilter = '';   // V4.27.8：作用域筛选（''=全部 | hq=通用（总部）| store=门店级）
   let initPermOk = false, initLoaded = false;   // V4.16.4：开业初始化卡状态（声明上移防 TDZ）
+  let backupPermOk = false, backupLoaded = false;   // V5.0.15：数据备份卡状态
 
   async function loadGroups() {
     const all = await must(get('/settings'));
@@ -99,6 +102,7 @@ export async function render(view) {
       view.querySelectorAll('#gTabs .btn').forEach(x => x.classList.toggle('pri', x === b));
       applyFilters();
       syncInitCard();   // V4.14.8：开业初始化仅在「系统初始化」页签显示
+      syncBackupCard(); // V5.0.15：数据备份卡仅在「通用设置」页签显示
       renderDevCard();  // V4.21.2：收银机授权列表仅在「设备管理」页签显示
     });
     // 恢复当前分组高亮（保存后重进不再落回「全部」）
@@ -1037,6 +1041,7 @@ export async function render(view) {
   await loadGroups();
   await loadChanges(1);
   renderInitCard();
+  renderBackupCard();   // V5.0.15：数据备份卡
 
   /* ── V4.14.6 会员 H5 入口二维码（复用后端 vendor 的 zxing，离线生成，无外网依赖）── */
   renderH5Card();
@@ -1118,6 +1123,69 @@ export async function render(view) {
     if (!perms.includes('sys.data.backup') && !perms.includes('*')) return; // 无权限不显示
     initPermOk = true;
     syncInitCard();
+  }
+
+  /* ── V5.0.15 数据备份卡：手动「立即备份」+ 最近备份列表/下载（受 sys.data.backup 权限）── */
+  function syncBackupCard() {
+    const shown = backupPermOk && curGroup === '通用设置';
+    view.querySelector('#backupCard').style.display = shown ? '' : 'none';
+    if (shown && !backupLoaded) { backupLoaded = true; renderBackupBody(); }
+  }
+  function renderBackupCard() {
+    const perms = API.user?.perms || [];
+    if (!perms.includes('sys.data.backup') && !perms.includes('*')) return; // 无权限不显示
+    backupPermOk = true;
+    syncBackupCard();
+  }
+  async function renderBackupBody() {
+    const body = view.querySelector('#backupBody');
+    body.innerHTML = `
+      <div class="doc-tip" style="margin:0 18px 12px;line-height:1.7">
+        点击「立即备份」会用 <code>pg_dump</code> 把整个业务库导出为逻辑备份（database.dump），可随时用
+        <code>pg_restore</code> 恢复到任意 PostgreSQL 实例。<br>
+        系统会在上方「<b>每日备份时间</b>」所设时刻（默认 02:30）自动备份一次，保留 14 天，过期自动清理。
+        <br><span class="muted">注：仅备份数据库；商品图片 / AI 模型请用服务器上的 deploy/backup 脚本另行打包。</span>
+      </div>
+      <div class="bar" style="margin:0 18px 12px">
+        <button class="btn pri" id="bkNow">💾 立即备份数据库</button>
+        <span id="bkMsg" class="muted"></span>
+      </div>
+      <div id="bkList"></div>`;
+    body.querySelector('#bkNow').onclick = async () => {
+      const msg = body.querySelector('#bkMsg');
+      msg.textContent = '备份中…';
+      try {
+        const r = await must(post('/admin/backup/now'));
+        msg.textContent = `✅ 已备份：${r.name}（${Math.round(r.size / 1024)} KB，${r.tookMs}ms）`;
+        loadList();
+      } catch (e) { msg.textContent = '❌ ' + (e.msg || e.message || '备份失败'); }
+    };
+    loadList();
+    async function loadList() {
+      const list = body.querySelector('#bkList');
+      try {
+        const { items } = await must(get('/admin/backup/list'));
+        if (!items.length) { list.innerHTML = '<div class="muted" style="padding:6px 18px">暂无备份记录</div>'; return; }
+        list.innerHTML = `<div style="margin:0 18px 14px;max-height:280px;overflow:auto;border:1px solid var(--line-2);border-radius:6px">
+          <table style="width:100%;margin:0;border:none">
+          <thead><tr><th>备份时间</th><th>大小</th><th>操作</th></tr></thead>
+          <tbody>${items.map(it => `<tr><td>${esc(it.name.replace(/_/g, ' '))}</td><td>${Math.round(it.size / 1024)} KB</td>
+            <td><a data-bk="${esc(it.name)}" style="cursor:pointer;color:var(--pri);text-decoration:underline">下载</a></td></tr>`).join('')}</tbody></table></div>`;
+        list.querySelectorAll('[data-bk]').forEach(a => a.onclick = () => downloadBackup(a.dataset.bk));
+      } catch (e) { list.innerHTML = '<div class="muted" style="padding:6px 18px">列表加载失败</div>'; }
+    }
+  }
+  async function downloadBackup(name) {
+    try {
+      const r = await fetch(`${API.base}/admin/backup/download/${encodeURIComponent(name)}`, { headers: { Authorization: 'Bearer ' + API.token } });
+      if (!r.ok) { toast('下载失败（' + r.status + '）', false); return; }
+      const blob = await r.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `pos-backup-${name}.dump`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (e) { toast('下载失败：' + (e.message || ''), false); }
   }
 
   async function loadInitPreview() {

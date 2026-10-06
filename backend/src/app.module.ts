@@ -30,6 +30,7 @@ import { DisplayModule } from './modules/display.module';
 import { BasicModule } from './modules/basic.module';
 import { SupplierQualificationModule } from './modules/supplier-qualification.module';
 import { AdminResetModule } from './modules/admin.reset';
+import { AdminBackupModule } from './modules/admin.backup';   // V5.0.15：数据库备份（手动 + 自动）
 import { FraudController } from './modules/fraud.module';
 import { MemberProfileController } from './modules/profile.module';
 import { AiMarketController } from './modules/ai.market';
@@ -97,6 +98,7 @@ class HealthController {
     DisplayModule,
     BasicModule,
     AdminResetModule,
+    AdminBackupModule,                                // V5.0.15：数据库备份（手动立即备份 + ops.backup_hour 自动备份）
     FinanceReconModule,
     AiAntileakModule,
     PayGatewayModule,

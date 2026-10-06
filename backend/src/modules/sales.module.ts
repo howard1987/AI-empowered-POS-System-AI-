@@ -39,6 +39,7 @@ interface CheckoutDto {
   discountReason?: string;    // 折扣原因（如：员工折扣/会员日/审批人），必须填写
   tableId?: number;           // V4.21.0 P16 批2 台位档案：堂食落单挂台位（自动转「使用中」）
   priceAuthTicket?: string;   // V4.25.5 店长授权票据（改价/折扣/赠品的现场授权，POST /auth/authorize 换取，120 秒有效）
+  guestPhone?: string;        // V5.0.15 挂单/外卖顾客联系电话
 }
 
 /** 金额元 → 整数分（V4.13.1 支付边界统一：杜绝浮点 0.1+0.2 类错账；对外口径仍为元） */
