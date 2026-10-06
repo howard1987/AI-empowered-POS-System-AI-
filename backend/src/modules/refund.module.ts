@@ -17,6 +17,9 @@ const toCents = (yuan: number | string): number => Math.round(Number(yuan) * 100
  *            金额 ≤ 免审限额（sales.refund.limit）→ 事务内直接执行；超过 → 「待审核」
  *   execute  退款执行（创建直退与审核通过共用）：
  *            1) restock → 按原销售批次回加（sale_item_batches 反向 + batches.remain_qty + stock_flows return_sale）
+ *               ＋成本回冲（V5.0.15）：按「退回批次数量 × 该批次单位成本」同步冲减
+ *               sale_items.line_cost/line_profit 与 sales_orders.cost_amount/profit_amount，
+ *               并在 sale_refunds.cost_amount 留痕；不回冲会让退货后毛利虚高、分红基数失真
  *            2) 支付原路退：余额回加（本金/赠送按原流水比例拆分）/ 分红抵扣冲回 / 积分抵扣回加 / 现金扫码留痕（班次 refund_cash 冲减）
  *            3) 会员积分按退款比例扣回（消费所得积分）
  *            4) 有效消费窗口冲减（未达标窗口 valid_total 扣减，堵「退款保活跃」漏洞 5.1.16）
@@ -101,12 +104,17 @@ export class RefundService {
     // 1) 回库存：按原销售批次逐批回加（sale_item_batches 为原行批次消耗，按行销量比例拆回各批次）
     if (rf.restock) {
       const items = await cx(c,
-        `SELECT ri.sale_item_id, ri.qty, sib.batch_id, sib.qty AS orig_qty, si.qty AS line_qty
+        `SELECT ri.sale_item_id, ri.qty, sib.batch_id, sib.qty AS orig_qty, sib.unit_cost, si.qty AS line_qty
            FROM sale_refund_items ri
            JOIN sale_items si ON si.id = ri.sale_item_id
            JOIN sale_item_batches sib ON sib.sale_item_id = si.id
           WHERE ri.refund_id=$1`, [refundId]);
       const touched = new Set<number>();
+      // V5.0.15 QA-P0：退货成本回冲。此前只回加库存、不回冲成本，导致退货后
+      //   sale_items.line_cost / sales_orders.cost_amount 原封不动 → 毛利虚高，
+      //   而毛利同时驱动「销售明细报表(行级)」「日报/AI 脑(单级快照)」与「分红基数」，口径全部失真。
+      //   这里按与回库存完全相同的分摊口径（退回批次数量 × 该批次单位成本）累计，保证两者一致。
+      const costByLine = new Map<number, number>();
       for (const it of items) {
         // 该批次原消耗占行销量比例 × 退款量 = 回加量
         const backQty = r3(Number(it.line_qty) > 0
@@ -121,6 +129,30 @@ export class RefundService {
            VALUES ($1,$2,$3,'入库',$4,'return_sale',$5,$6,$7)`,
           [bRow.store_id, bRow.product_id, it.batch_id, backQty, refundId, it.sale_item_id, user.sub]);
         touched.add(it.batch_id);
+        // 成本回冲累计到行（同一 sale_item 可能横跨多个批次）
+        const backCost = r3(backQty * Number(it.unit_cost));
+        if (backCost > 0) {
+          const sid = Number(it.sale_item_id);
+          costByLine.set(sid, r3((costByLine.get(sid) || 0) + backCost));
+        }
+      }
+      // 1.1) 行级：line_cost 冲减、line_profit 重算（口径与 checkout 一致：line_amount − line_cost）
+      for (const [sid, backCost] of costByLine) {
+        await cx(c,
+          `UPDATE sale_items
+              SET line_cost = GREATEST(COALESCE(line_cost,0) - $2, 0),
+                  line_profit = line_amount - GREATEST(COALESCE(line_cost,0) - $2, 0)
+            WHERE id=$1`, [sid, backCost]);
+      }
+      // 1.2) 单级：cost_amount 冲减、profit_amount 重算（口径与 checkout 一致：payable − cost）
+      const totalBack = r3(Array.from(costByLine.values()).reduce((s, x) => s + x, 0));
+      if (totalBack > 0) {
+        await cx(c,
+          `UPDATE sales_orders
+              SET cost_amount = GREATEST(COALESCE(cost_amount,0) - $2, 0),
+                  profit_amount = payable_amount - GREATEST(COALESCE(cost_amount,0) - $2, 0)
+            WHERE id=$1`, [rf.order_id, totalBack]);
+        await cx(c, `UPDATE sale_refunds SET cost_amount=$2 WHERE id=$1`, [refundId, totalBack]);
       }
       // 汇总即时库存（按本次涉及商品重算）
       await cx(c,
