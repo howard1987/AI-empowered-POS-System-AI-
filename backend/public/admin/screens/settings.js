@@ -1143,14 +1143,24 @@ export async function render(view) {
       <div class="doc-tip" style="margin:0 18px 12px;line-height:1.7">
         点击「立即备份」会用 <code>pg_dump</code> 把整个业务库导出为逻辑备份（database.dump），可随时用
         <code>pg_restore</code> 恢复到任意 PostgreSQL 实例。<br>
+        「导入备份文件」可把别处（如移动硬盘 / 另一台服务器）拷来的 <code>.dump</code> 上传到本机备份列表，
+        再点该行「恢复」生效。<br>
         系统会在上方「<b>每日备份时间</b>」所设时刻（默认 02:30）自动备份一次，保留 14 天，过期自动清理。
         <br><span class="muted">注：仅备份数据库；商品图片 / AI 模型请用服务器上的 deploy/backup 脚本另行打包。</span>
       </div>
       <div class="bar" style="margin:0 18px 12px">
         <button class="btn pri" id="bkNow">💾 立即备份数据库</button>
+        <button class="btn" id="bkUp">⬆️ 导入备份文件</button>
+        <input type="file" id="bkUpFile" accept=".dump,.sql" style="display:none">
         <span id="bkMsg" class="muted"></span>
       </div>
       <div id="bkList"></div>`;
+    body.querySelector('#bkUp').onclick = () => body.querySelector('#bkUpFile').click();
+    body.querySelector('#bkUpFile').onchange = async (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (f) uploadBackup(f);
+    };
     body.querySelector('#bkNow').onclick = async () => {
       const msg = body.querySelector('#bkMsg');
       msg.textContent = '备份中…';
@@ -1194,6 +1204,33 @@ export async function render(view) {
       a.click();
       URL.revokeObjectURL(a.href);
     } catch (e) { toast('下载失败：' + (e.message || ''), false); }
+  }
+
+  /** 导入备份文件：二进制直传（不用 multipart，后端按流落盘），导入后需点该行「恢复」才生效 */
+  async function uploadBackup(file) {
+    const ok = await confirmBox({
+      title: '导入备份文件',
+      html: `即将上传 <b>${esc(file.name)}</b>（${Math.round(file.size / 1024)} KB）到本机备份列表。<br><br>
+        上传本身<b>不会改动数据库</b>，需要在列表中点该备份的「恢复」才会覆盖当前数据（届时会自动先做保险快照）。确认上传？`,
+      okText: '确认上传',
+      okClass: 'pri',
+    });
+    if (!ok) return;
+    const msg = view.querySelector('#bkMsg');
+    msg.textContent = `上传中…（${Math.round(file.size / 1024)} KB，请勿关闭页面）`;
+    try {
+      const r = await fetch(`${API.base}/admin/backup/upload`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + API.token, 'Content-Type': 'application/octet-stream' },
+        body: file,
+      });
+      const j = await r.json().catch(() => ({}));
+      const d = j && j.data !== undefined ? j.data : j;
+      if (!r.ok) throw new Error(d.msg || ('HTTP ' + r.status));
+      const tip = `✅ 已导入：${d.name}（${Math.round(d.size / 1024)} KB，${d.kind}），点列表该行「恢复」生效`;
+      renderBackupBody(); // 重建卡片（内部会重新拉列表），随后把提示写进新的 #bkMsg
+      setTimeout(() => { const m = view.querySelector('#bkMsg'); if (m) m.textContent = tip; }, 0);
+    } catch (e) { msg.textContent = '❌ 上传失败：' + (e.msg || e.message || ''); }
   }
 
   async function restoreBackup(name) {

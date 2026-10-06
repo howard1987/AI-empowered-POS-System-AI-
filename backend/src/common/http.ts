@@ -11,6 +11,28 @@ export class BizException extends HttpException {
   }
 }
 
+/**
+ * V5.0.15 极限测试发现：所有写接口都缺「长度/范围」校验，用户输入超长或越界值时
+ * 由 PostgreSQL 抛 22xxx/23xxx 错误 → 一律被当成 500「系统错误」，用户只看到一句
+ * 无意义的提示，既不知哪里超了、也不知道上限是多少。
+ * 这里把「可由用户输入直接触发」的数据库错误统一映射成 4xx + 可操作的中文提示，
+ * 真正的服务端故障仍走 500。映射表按 PG SQLSTATE 分类，详情仍落服务端日志。
+ */
+const PG_USER_ERRORS: { re: RegExp; code: number; msg: (m: RegExpMatchArray) => string }[] = [
+  { re: /value too long for type character varying\((\d+)\)/i, code: 40004, msg: m => `内容超长：该字段最多 ${m[1]} 个字符，请精简后再保存` },
+  { re: /value too long for type (\w+)/i, code: 40004, msg: m => `内容超出字段容量（${m[1]}），请缩短后再保存` },
+  { re: /numeric field overflow|value out of range:.*numeric/i, code: 40005, msg: () => '数值超出允许范围（超出该字段的数值上限），请核对后重试' },
+  { re: /integer out of range/i, code: 40005, msg: () => '整数超出允许范围（上限约 21 亿），请核对后重试' },
+  { re: /smallint out of range/i, code: 40005, msg: () => '整数超出允许范围（上限 32767），请核对后重试' },
+  { re: /division by zero/i, code: 40006, msg: () => '除数为 0，无法计算，请核对输入' },
+  { re: /invalid input syntax for type (\w+)/i, code: 40007, msg: m => `格式不正确：${m[1]} 类型无法解析该输入` },
+  { re: /null value in column "([^"]+)" of relation "([^"]+)" violates not-null constraint/i, code: 40008, msg: m => `缺少必填信息：${m[1]} 不能为空` },
+  { re: /duplicate key value violates unique constraint "([^"]+)"/i, code: 40009, msg: m => `已存在重复记录（${m[1]}），请勿重复提交` },
+  { re: /foreign key constraint "([^"]+)" is not satisfied|violates foreign key constraint/i, code: 40010, msg: () => '关联数据不存在或已被删除，请刷新后重试' },
+  { re: /new row violates check constraint "([^"]+)"/i, code: 40011, msg: m => `不符合业务规则（${m[1]}），请核对后重试` },
+  { re: /cannot insert multiple commands into a prepared statement/i, code: 40012, msg: () => '参数不合法，请检查后重试' },
+];
+
 /** 统一响应包：{ code, msg, data }（成功由拦截器包装，失败由过滤器包装） */
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -41,6 +63,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
       if (tooLarge) {
         res.status(413).json({ code: 41300, msg: '文件过大：请压缩后再上传（单张上限约 15MB）', data: null });
         return;
+      }
+      // V5.0.15：用户输入导致的数据库错误（超长/越界/重复/外键/非空）→ 4xx 可操作提示，不当 500
+      for (const r of PG_USER_ERRORS) {
+        const m = String(detail).match(r.re);
+        if (m) {
+          res.status(400).json({ code: r.code, msg: r.msg(m), data: null });
+          return;
+        }
       }
       // 数据库连接类异常给部署者友好提示（不透出连接串/表结构细节）
       const isDbDown = /ECONNREFUSED|connection terminated|password authentication|DATABASE_URL/i.test(detail);

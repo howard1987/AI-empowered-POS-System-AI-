@@ -120,6 +120,11 @@ class MembersController {
     // 决策②：会员主档统一归总部（member.hq_store_id，默认 1）；消费/流水按交易门店动态记账，会员查询本就跨店共享
     const hqStore = await new SettingsService().getNum('member.hq_store_id', 1);
     if (!b.phone && !b.name) throw new BizException(40003, '手机号与姓名至少填一项');
+    // V5.0.15 极限测试：建档传 points 会被静默忽略（积分必须走流水入账），
+    // 用户以为设了初始积分。这里显式说明改用积分调整，避免「静默失败」。
+    if (Number(b.points || 0) > 0) {
+      throw new BizException(40003, '建档不支持直接设置初始积分（积分须走「积分调整」入账并留流水），请建档后单独调整');
+    }
     if (b.phone) {
       const dup = await q1(`SELECT id FROM members WHERE phone=$1 AND deleted_at IS NULL`, [b.phone]);
       if (dup) throw new BizException(50050, '该手机号已注册');

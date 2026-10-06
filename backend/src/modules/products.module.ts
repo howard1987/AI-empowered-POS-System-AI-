@@ -12,6 +12,32 @@ import { hqStoreId, chainEnabled, crossStore, assertStoreAllowed } from '../comm
 import { enqueueSync, publish, nodeIdentity } from '../common/outbox';  // V5.0.0 批次4A：双向同步 + 节点身份
 import { SyncStoreService } from './sync-store.service';      // V5.0.0：事件触发立即推送
 
+/**
+ * V5.0.15 极限测试：camelCase ↔ snake_case 字段别名映射。
+ * 此前建档接口只对 base_unit / sell_price 两个字段做了 snake 兼容，
+ * 其余字段传 snake_case 会被「静默忽略」（用户以为设置成功，实际落库 NULL）；
+ * 而 sell_price 反过来又因 INSERT 读 camelCase 导致 500。建档/改档统一按本表双向补齐。
+ */
+const SNAKE_ALIASES: [string, string][] = [
+  ['baseUnit', 'base_unit'], ['sellPrice', 'sell_price'], ['memberPrice', 'member_price'],
+  ['memberDiscount', 'member_discount'], ['wholesalePrice', 'wholesale_price'],
+  ['minStock', 'min_stock'], ['maxStock', 'max_stock'], ['trackInventory', 'track_inventory'],
+  ['photoPath', 'photo_path'], ['supplierDefaultId', 'supplier_default_id'], ['bizMode', 'biz_mode'],
+  ['minPrice', 'min_price'], ['minDiscountRate', 'min_discount_rate'], ['isWeighted', 'is_weighted'],
+  ['keepDays', 'keep_days'], ['shortName', 'short_name'], ['goodsNo', 'goods_no'],
+  ['categoryId', 'category_id'], ['pinyinCode', 'pinyin_code'], ['costPrice', 'cost_price'],
+  ['standardCost', 'standard_cost'], ['isNew', 'is_new'], ['productId', 'product_id'],
+];
+
+/** 把请求体里两种命名风格的同义字段互相补齐（只补 undefined，不覆盖已显式传入的值） */
+function fillSnakeAliases(b: any) {
+  for (const [camel, snake] of SNAKE_ALIASES) {
+    if (b[camel] === undefined && b[snake] !== undefined) b[camel] = b[snake];
+    if (b[snake] === undefined && b[camel] !== undefined) b[snake] = b[camel];
+  }
+  return b;
+}
+
 // ─── V4.9.11 条码大数据自动填充（建档输码 → 自动带出名称/规格/预估价等，填错可改） ───
 // 数据源链：①本店商品库（products/product_barcodes/product_units）
 //          ②mxnzp 在线条码库（国内最全，需在系统设置配置 barcode.lookup.mxnzp.app_id / app_secret，免费自助申请）
@@ -557,11 +583,21 @@ class ProductsController {
   @RequirePerms('product.manage')
   @Post()
   async create(@Body() b: any) {
-    // 兼容 camelCase（接口约定）与 snake_case 两种传参
-    b.base_unit = b.base_unit ?? b.baseUnit;
-    b.sell_price = b.sell_price ?? b.sellPrice;
+    // 兼容 camelCase（接口约定，前端在用）与 snake_case 两种传参。
+    // V5.0.15 极限测试发现两处真实缺陷：
+    //   ① 原先只把 sell_price 回填给校验层，而 INSERT 读的是 b.sellPrice
+    //      → 「传 snake_case」这条路径必然 500（sell_price not-null 违例）；
+    //   ② 其余 camelCase 字段（min_discount_rate 等）压根没做兼容，
+    //      传 snake_case 会被「静默忽略」——用户以为设置成功，实际落库 NULL。
+    // 现在按映射表双向补齐，两种写法都能真正生效。
+    fillSnakeAliases(b);
     if (!b.name || !b.base_unit || b.sell_price === undefined) {
       throw new BizException(40003, 'name / base_unit / sell_price 必填');
+    }
+    // V5.0.15 极限测试：负售价会直接落库（sell_price=-5 建档成功），收银时产生负金额。
+    // 零价可能是「赠品/样品」，予以放行；负数一律拒绝。
+    if (Number(b.sell_price) < 0) {
+      throw new BizException(40003, `售价不能为负数（当前 ${Number(b.sell_price)}），请核对后重试`);
     }
     if (b.is_weighted && (b.keep_days === undefined || b.keep_days === null) && b.categoryRequiresKeepDays) {
       throw new BizException(50041, '食品类商品建档保质期必填（V4.3.6）');
@@ -669,6 +705,10 @@ class ProductsController {
   @RequirePerms('product.manage')
   @Put(':id')
   async update(@Param('id', ParseIntPipe) id: number, @Body() b: any, @CurrentUser() user: AuthUser) {
+    fillSnakeAliases(b);   // V5.0.15：改档同样支持 snake_case，避免字段被静默忽略
+    if (b.sellPrice != null && Number(b.sellPrice) < 0) {
+      throw new BizException(40003, `售价不能为负数（当前 ${Number(b.sellPrice)}），请核对后重试`);
+    }
     const row = await q1<any>(`SELECT id FROM products WHERE id=$1 AND deleted_at IS NULL`, [id]);
     if (!row) throw new BizException(40404, '商品不存在', 404);
     // V4.25.3：最低卖价 / 最低折扣率 属价格红线，纳入改价权限与留痕口径

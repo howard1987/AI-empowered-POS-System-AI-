@@ -8,6 +8,7 @@
  *   - GET  /admin/backup/list         列出最近备份（同名权限）
  *   - GET  /admin/backup/download/:name 下载某个备份（同名权限，防路径穿越）
  *   - POST /admin/backup/restore/:name 从某个备份恢复（同名权限；恢复前自动备份当前库作保险）
+ *   - POST /admin/backup/upload       导入外部备份文件（二进制直传，落盘后需点「恢复」生效）
  *   - 自动备份：进程内 setInterval 每分钟检查，到达 ops.backup_hour 所设时刻（且当日未跑）即备份，
  *     保留最近 POS_BACKUP_RETAIN_DAYS（默认 14）天，过期目录自动清理。
  *
@@ -17,18 +18,23 @@
  *  3) 备份目录固定为 cwd/backups，绝不接受客户端传入路径；
  *  4) pg_dump 连接串取自服务端 DATABASE_URL（与业务库一致），密码不落盘、不回显。
  */
-import { Controller, Get, Injectable, Module, OnModuleDestroy, OnModuleInit, Param, Post, Query, Res } from '@nestjs/common';
+import { Controller, Get, Injectable, Module, OnModuleDestroy, OnModuleInit, Param, Post, Query, Req, Res } from '@nestjs/common';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { BizException } from '../common/http';
 import { q1, audit } from '../common/db';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomBytes } from 'crypto';
 import { spawnSync } from 'child_process';
+import { Transform } from 'stream';
+import { pipeline } from 'stream/promises';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const BACKUP_ROOT = path.resolve(process.cwd(), 'backups');
 const RETAIN_DAYS = Math.max(1, Number(process.env.POS_BACKUP_RETAIN_DAYS || 14));
 const DEFAULT_HOUR = '02:30';
+/** 上传体积上限 8GB（流式计数，超限即中断并删除半成品） */
+const MAX_UPLOAD = 8 * 1024 * 1024 * 1024;
 
 /** 定位 pg_dump：优先仓库自带 vendor 工具，否则回退系统 PATH 上的 pg_dump */
 function locatePgDump(): string {
@@ -105,6 +111,53 @@ function doBackup(nameOverride?: string): { name: string; file: string; size: nu
   const tookMs = Date.now() - t0;
   const removed = cleanupOld();
   return { name, file: path.join(name, 'database.dump'), size, tookMs, removed };
+}
+
+/**
+ * 导入外部备份文件：前端以 application/octet-stream 直传裸流（不用 multipart，免依赖），
+ * 边收边落盘到 backups/upload_<时间戳>_<随机>/database.dump，随后由 /restore/:name 走同一条恢复链路。
+ *  安全：目录名完全由服务端生成（绝不采用客户端文件名，杜绝路径穿越）；流式计数超 8GB 即中断；
+ *  落盘后校验文件头必须是 pg_dump custom（PGDMP）或 SQL 文本，否则删除并报错，避免垃圾文件混进备份列表。
+ */
+async function doUpload(req: any): Promise<{ name: string; size: number; kind: string }> {
+  const ct = String(req?.headers?.['content-type'] || '');
+  if (/multipart\/form-data|application\/json|application\/x-www-form-urlencoded/i.test(ct)) {
+    throw new BizException(40003, '请以二进制流上传备份文件（不要使用表单方式）');
+  }
+  fs.mkdirSync(BACKUP_ROOT, { recursive: true });
+  const name = `upload_${tsName()}_${randomBytes(3).toString('hex')}`;
+  const dir = path.join(BACKUP_ROOT, name);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'database.dump');
+  let received = 0;
+  const counter = new Transform({
+    transform(chunk: any, _enc: string, cb: any) {
+      received += chunk.length;
+      if (received > MAX_UPLOAD) cb(new Error('文件超过 8GB 上限')); else cb(null, chunk);
+    },
+  });
+  try {
+    await pipeline(req, counter, fs.createWriteStream(file));
+  } catch (e: any) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* noop */ }
+    throw new BizException(50000, '上传失败：' + String(e?.message || e).slice(-300));
+  }
+  const size = fs.statSync(file).size;
+  if (size < 64) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* noop */ }
+    throw new BizException(40003, '文件过小，不是有效的备份文件');
+  }
+  // 文件头校验：custom 格式以 PGDMP 开头；SQL 文本以注释/SET/COPY/CREATE 开头
+  const fd = fs.openSync(file, 'r');
+  const head = Buffer.alloc(16);
+  try { fs.readSync(fd, head, 0, 16, 0); } finally { fs.closeSync(fd); }
+  const isCustom = head.slice(0, 5).toString('latin1') === 'PGDMP';
+  const isSql = /^\s*(--|SET\s|COPY\s|CREATE\s)/i.test(head.toString('utf8'));
+  if (!isCustom && !isSql) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* noop */ }
+    throw new BizException(40003, '不是有效的 pg_dump 备份文件（文件头校验失败）');
+  }
+  return { name, size, kind: isCustom ? 'custom' : 'sql' };
 }
 
 /**
@@ -197,6 +250,15 @@ export class AdminBackupController {
     const f = path.join(BACKUP_ROOT, name, 'database.dump');
     if (!fs.existsSync(f)) throw new BizException(40404, '备份不存在或已被清理');
     res.download(f, `pos-backup-${name}.dump`);
+  }
+
+  /** 导入外部备份文件（二进制直传，落盘后需再点「恢复」才生效） */
+  @Post('upload')
+  @RequirePerms('sys.data.backup')
+  async upload(@Req() req: any, @CurrentUser() user: AuthUser) {
+    const r = await doUpload(req);
+    await audit(user.storeId, user.sub, '系统', '导入备份文件', 'backup', null, r).catch(() => { });
+    return { ok: true, ...r };
   }
 
   /** 从某个备份恢复整个数据库（危险操作；恢复前自动备份当前库作保险） */
