@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>超市收银系统 · 业务流程全景图</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+:root{
+  --bg:#f6f7f9; --card:#fff; --line:#e3e7ed; --ink:#1f2933; --sub:#5b6673;
+  --pri:#2563eb; --pri-bg:#eff4ff; --ok:#059669; --ok-bg:#ecfdf5;
+  --warn:#d97706; --warn-bg:#fffbeb; --danger:#dc2626; --danger-bg:#fef2f2;
+  --code:#f1f3f6;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{display:flex;max-width:1500px;margin:0 auto;gap:0}
+/* 侧边目录 */
+nav{position:sticky;top:0;height:100vh;overflow-y:auto;width:270px;flex:none;
+  background:var(--card);border-right:1px solid var(--line);padding:22px 0}
+nav .logo{padding:0 20px 16px;border-bottom:1px solid var(--line);margin-bottom:12px}
+nav .logo b{display:block;font-size:16px}
+nav .logo span{font-size:12px;color:var(--sub)}
+nav a{display:block;padding:7px 20px;color:var(--sub);text-decoration:none;font-size:13.5px;
+  border-left:3px solid transparent}
+nav a:hover{background:var(--pri-bg);color:var(--pri)}
+nav a.sub{padding-left:36px;font-size:12.5px}
+nav a.grp{padding-top:14px;font-size:11.5px;color:#98a2b3;letter-spacing:.5px;text-transform:uppercase}
+main{flex:1;min-width:0;padding:32px 40px 90px}
+h1{font-size:27px;margin:0 0 6px}
+h2{font-size:21px;margin:44px 0 14px;padding-top:12px;border-top:2px solid var(--line)}
+h3{font-size:16.5px;margin:26px 0 10px;color:var(--pri)}
+.lead{color:var(--sub);font-size:14px;margin-bottom:22px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+.mermaid{background:var(--card);border:1px solid var(--line);border-radius:10px;
+  padding:16px;margin:14px 0;overflow-x:auto}
+/* 步骤 */
+ol.steps{counter-reset:s;list-style:none;padding:0;margin:10px 0}
+ol.steps li{counter-increment:s;position:relative;padding:8px 0 8px 40px;border-bottom:1px dashed var(--line)}
+ol.steps li:last-child{border-bottom:none}
+ol.steps li:before{content:counter(s);position:absolute;left:0;top:8px;width:26px;height:26px;
+  border-radius:50%;background:var(--pri);color:#fff;font-size:12.5px;display:flex;
+  align-items:center;justify-content:center;font-weight:600}
+ol.steps li b{color:var(--ink)}
+/* 提示块 */
+.box{border-radius:8px;padding:12px 15px;margin:12px 0;font-size:13.5px;border-left:4px solid}
+.box p{margin:4px 0}
+.box.t{background:var(--pri-bg);border-color:var(--pri)}
+.box.w{background:var(--warn-bg);border-color:var(--warn)}
+.box.d{background:var(--danger-bg);border-color:var(--danger)}
+.box.o{background:var(--ok-bg);border-color:var(--ok)}
+.box b{display:block;margin-bottom:3px}
+/* 表格 */
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+th{background:#f3f5f8;font-weight:600}
+td code,li code,p code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:12.5px;
+  font-family:ui-monospace,Consolas,monospace}
+/* 徽章 */
+.tag{display:inline-block;padding:1px 8px;border-radius:11px;font-size:11.5px;margin-right:5px}
+.tag.p{background:var(--pri-bg);color:var(--pri)}
+.tag.o{background:var(--ok-bg);color:var(--ok)}
+.tag.w{background:var(--warn-bg);color:var(--warn)}
+.tag.d{background:var(--danger-bg);color:var(--danger)}
+/* 网格 */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:14px 0}
+.kv{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:13px 15px}
+.kv .k{font-size:12px;color:var(--sub)}
+.kv .v{font-size:19px;font-weight:600;margin-top:2px}
+.kv .n{font-size:11.5px;color:var(--sub);margin-top:3px}
+.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);color:var(--sub);font-size:12.5px}
+@media(max-width:1000px){nav{display:none}main{padding:20px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <div class="logo"><b>超市收银系统</b><span>业务流程全景图 · V5.0.15</span></div>
+  <a class="grp">总览</a>
+  <a href="#overview">系统概览</a>
+  <a href="#map">模块与数据地图</a>
+  <a class="grp">主营业链路</a>
+  <a href="#login">① 登录与设备授权</a>
+  <a href="#checkout">② 收银结账</a>
+  <a href="#refund">③ 退货退款</a>
+  <a href="#purchase">④ 采购入库</a>
+  <a href="#inventory">⑤ 盘点·报损·调拨</a>
+  <a class="grp">会员与资金</a>
+  <a href="#member">⑥ 会员·积分·储值</a>
+  <a href="#dividend">⑦ 分红计提与抵扣</a>
+  <a href="#coupon">⑧ 优惠券</a>
+  <a class="grp">运营与运维</a>
+  <a href="#shift">⑨ 班次·交班·日结</a>
+  <a href="#jobs">⑩ 定时任务时间轴</a>
+  <a href="#backup">⑪ 备份与恢复</a>
+  <a class="grp">附录</a>
+  <a href="#state">状态机速查</a>
+  <a href="#setting">关键设置项</a>
+  <a href="#gap">已知实现缺口</a>
+</nav>
+<main>
+
+<h1>超市收银系统 · 业务流程全景图</h1>
+<p class="lead">基于源码逐行梳理，覆盖 11 条主营业链路、30+ 状态机与关键配置项。所有流程均标注代码位置，便于对照核查。生成于 2026-10-07。</p>
+
+<div class="box t">
+<b>阅读说明</b>
+<p>· 每张流程图下方都配有<strong>文字步骤说明</strong>，即使图未加载也能完整理解。</p>
+<p>· 标注 <span class="tag w">易错</span> 的位置是代码实际行为与设计注释不一致、或容易误解的地方。</p>
+<p>· 第 ⑪ 节与最后的「已知实现缺口」列出了测试中发现的真实问题，建议优先关注。</p>
+</div>
+
+<h2 id="overview">系统概览</h2>
+<div class="card">
+<p>一套面向<strong>单店 / 连锁超市</strong>的全链路收银与经营系统，采用 <strong>NestJS + PostgreSQL</strong> 单体后端 + 多端前端（管理后台 H5、员工端 PWA、安卓 APK、桌面 EXE 收银端）。内置 PostgreSQL 以 Windows 服务方式运行，支持总部—门店双向同步。</p>
+<div class="grid">
+  <div class="kv"><div class="k">数据库表</div><div class="v">151 张</div><div class="n">业务表（public schema）</div></div>
+  <div class="kv"><div class="k">业务模块</div><div class="v">40+ 个</div><div class="n">NestJS Module / Controller</div></div>
+  <div class="kv"><div class="k">库体积（当前）</div><div class="v">约 30 MB</div><div class="n">含全部历史测试数据</div></div>
+  <div class="kv"><div class="k">核心设计</div><div class="v">批次 FIFO</div><div class="n">成本/库存/效期均以批次为最小单位</div></div>
+</div>
+</div>
+
+<h3>三条核心设计原则</h3>
+<div class="card">
+<ol class="steps">
+<li><b>批次（batches）是库存与成本的最小单位。</b>一切出入库都落在批次上，<code>inventory_current</code> 只是批次余量的物化冗余。出库成本恒取批次原始 <code>inbound_cost</code>，<strong>不是移动加权平均</strong>。</li>
+<li><b>单据「录入」与「生效」分离。</b>入库单、退货单、报损单、盘点单创建时都不动库存，只有 <code>audit*</code>（审核）才真正落地批次与流水。这让"录错了可以改"成为可能。</li>
+<li><b>金额全程按「分」整数运算。</b>计价链路（促销→券→抹零→折扣→配送费）用整数分累计，落库前回除为元；尾差统一进最后一行/最后一渠道，避免浮点误差。</li>
+</ol>
+</div>
+
+<h2 id="map">模块与数据地图</h2>
+<div class="card">
+<p>下图展示了七大业务域与核心数据表的关系。<strong>stock_flows 是唯一的库存事实表</strong>——任何库存变动都必须在此留痕。</p>
+</div>
+<div class="mermaid">
+flowchart LR
+  subgraph G["商品与采购域"]
+    SUP[suppliers 供应商] --> PO[purchase_orders 采购单]
+    PO --> IB[inbound_orders 入库单]
+    IB -->|审核| BA[batches 批次]
+    PR[purchase_returns 采购退货] --> BA
+  end
+  subgraph S["销售域"]
+    SO[sales_orders 销售单] --> SI[sale_items 明细]
+    SI --> SIB[sale_item_batches 批次分摊]
+    SO --> SP[sale_payments 支付]
+    SR[sale_refunds 退款单] --> SRI[sale_refund_items]
+  end
+  subgraph M["会员域"]
+    MB[members 会员] --> MA[member_accounts 资产]
+    MA --> PF[points_flows 积分流水]
+    MA --> BF[balance_flows 余额流水]
+    MA --> DP[dividend_periods 分红期]
+    DP --> DR[dividend_records 分红明细]
+  end
+  subgraph K["库存域"]
+    BA --> SF[stock_flows 库存流水]
+    SF --> IC[inventory_current 即时库存]
+    CT[inventory_counts 盘点] --> SF
+    LS[loss_records 报损] --> SF
+    TR[stock_transfers 调拨] --> SF
+  end
+  SIB --> BA
+  SRI --> BA
+  SO --> MA
+  SO --> SF
+  style SF fill:#fee2e2,stroke:#dc2626,stroke-width:2px
+  style BA fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+</div>
+<div class="box o">
+<b>两个"中心节点"</b>
+<p><strong>batches（批次）</strong>——成本、效期、供应商归属的唯一载体；<strong>stock_flows（库存流水）</strong>——一切出入库的事实记录，盘点/对账都应以它为准。</p>
+</div>
+
+<h2 id="login">① 登录与设备授权</h2>
+<p class="lead">源码：<code>auth.module.ts</code> · <code>device.module.ts</code> · <code>common/auth.ts</code></p>
+
+<div class="mermaid">
+flowchart TD
+  A[客户端：取/生成设备码 + RSA-2048 密钥] --> B[POST /auth/login]
+  B --> C{频控检查}
+  C -->|账号连错5次| C1[锁 15 分钟]
+  C -->|同IP 5分钟超100次| C2[拒绝]
+  C -->|通过| D{校验工号+密码 bcrypt}
+  D -->|错误| E[41001 / 41002]
+  D -->|正确| F{设备授权检查}
+  F --> G{总开关 pos.device.auth}
+  G -->|关闭| Z[放行]
+  G -->|开启| H{是否回环地址 127.x / ::1}
+  H -->|是 且 允许豁免| Z
+  H -->|否| I{恢复码正确?}
+  I -->|是| I1[登记/恢复为 已授权] --> Z
+  I -->|否| J{设备已存在?}
+  J -->|否| J1[登记 待授权] --> J2[40307 需管理员授权]
+  J -->|是| K{状态}
+  K -->|待授权| L{携带配对码?}
+  L -->|无| L1[40307]
+  L -->|有且有效| L2[转 已授权 + 换绑公钥] --> Z
+  L -->|错误/过期/用尽| L3[40317]
+  K -->|已停用| K1[40308]
+  K -->|已授权| M{签名校验}
+  M -->|时间戳超时/nonce重放| M1[40313]
+  M -->|签名不符| M2[转回 待授权 + 40314]
+  M -->|通过| N{单会话}
+  N --> O[token_version +1]
+  O --> P[签发 JWT 12小时]
+  P --> Q[写 last_login_at + 审计]
+  style Z fill:#d1fae5,stroke:#059669
+  style J2 fill:#fef3c7,stroke:#d97706
+  style L1 fill:#fef3c7,stroke:#d97706
+  style L3 fill:#fef3c7,stroke:#d97706
+  style K1 fill:#fee2e2,stroke:#dc2626
+</div>
+
+<ol class="steps">
+<li><b>客户端准备身份</b>：设备码优先读 IndexedDB（抗清理），无则生成 <code>PC-/MB-/PAD-</code> + 8 位十六进制；同时生成不可导出的 RSA-2048 密钥（安卓走 Keystore，浏览器走 WebCrypto）。</li>
+<li><b>先校验账号凭据，再校验设备</b> <span class="tag w">易错</span>：顺序是"密码 → 设备"，不是"设备 → 密码"。这样可防止用未授权设备枚举账号、刷出大量待授权记录。</li>
+<li><b>频控</b>：同账号连错 5 次锁 15 分钟；同 IP 5 分钟最多 100 次。只有 41001/41002 计入失败次数。</li>
+<li><b>回环豁免</b>：来自 <code>127.x</code> / <code>::1</code> 且开关开启 → 已有记录直接转"已授权"，<strong>不再登记新设备</strong>（防止自动化脚本每轮产生一条垃圾设备）。</li>
+<li><b>应急恢复码</b>：优先读环境变量 <code>DEVICE_RECOVERY_CODE</code>，否则读设置 <code>pos.device.recovery.hint</code>；SHA-256 + 定时安全比较。这是"管理员被锁死"时的脱困通道。</li>
+<li><b>配对码流程</b> <span class="tag p">核心</span>：未授权设备登录被 40307 拦下 → 管理员在后台生成 8 位配对码（排除易混淆字符 0/O/1/I/L，默认 24 小时有效、1 次使用）→ 员工在登录框输入 → 校验通过即转"已授权"并<strong>换绑本次公钥</strong>。</li>
+<li><b>签名校验</b>：已登记公钥的设备需对 <code>工号|设备码|时间戳|nonce</code> 签名，±5 分钟有效、nonce 防重放；签名不符会<strong>自动退回"待授权"</strong>。</li>
+<li><b>单会话唯一性</b>：<code>token_version + 1</code>，使该账号其它设备的旧 token 立即失效。</li>
+</ol>
+
+<div class="box w">
+<b>两个实现边界（与安全预期不符，需知悉）</b>
+<p>① <strong>回环豁免会绕过"已停用"</strong>：回环分支在"已停用"判断之前返回，本机登录即使库中状态为"已停用"也会被放行（只是不改回已授权）。仅局域网/远程请求才会拿到 40308。</p>
+<p>② <strong>恢复码不校验管理员身份</strong>：只要员工凭据通过 + 恢复码正确，任何账号都能把设备恢复为已授权。</p>
+</div>
+
+<h3>设备状态机与错误码</h3>
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> 待授权 : 新设备首次登录
+  待授权 --> 已授权 : 配对码正确 / 管理员审批 / 恢复码
+  待授权 --> 待授权 : 40307 无码 或 40317 码错
+  已授权 --> 待授权 : 签名不符 40314
+  已授权 --> 已停用 : 管理员停用
+  已停用 --> 已授权 : 管理员恢复 / 恢复码
+  已停用 --> 已停用 : 40308 拒绝登录
+</div>
+<table>
+<tr><th>错误码</th><th>含义</th><th>错误码</th><th>含义</th></tr>
+<tr><td><code>40306</code></td><td>未携带设备码</td><td><code>40313</code></td><td>签名时间戳过期 / nonce 重放</td></tr>
+<tr><td><code>40307</code></td><td>设备未授权（新设备最常见）</td><td><code>40314</code></td><td>签名不符（会自动退回待授权）</td></tr>
+<tr><td><code>40308</code></td><td>设备已停用</td><td><code>40315</code></td><td>设备已绑定其他员工</td></tr>
+<tr><td><code>40311</code></td><td>门店设备数达上限</td><td><code>40316</code></td><td>该员工设备数超配额</td></tr>
+<tr><td><code>40312</code></td><td>强制签名时缺签名</td><td><code>40317</code></td><td>配对码错误/过期/用尽</td></tr>
+</table>
+
+<h3>店长授权票据（改价用）</h3>
+<div class="card">
+<p>收银员遇到改价、单品折扣、手工赠品、整单折扣，或叠加后击穿价格红线时，需要店长授权。票据是 <strong>scope='price' 的 JWT，有效期 120 秒</strong>。</p>
+<table>
+<tr><th>接口</th><th>用途</th><th>校验</th></tr>
+<tr><td><code>POST /auth/authorize</code></td><td>店长现场输入「工号 + 授权码」</td><td>需 <code>pos.price.authorize</code>；授权码错 5 次锁 5 分钟</td></tr>
+<tr><td><code>POST /auth/authorize-self</code></td><td>店长本人免输授权码</td><td>当前登录人需有 <code>pos.price.authorize</code> 或超管</td></tr>
+</table>
+<div class="box w"><b>注意</b><p>票据在 120 秒内<strong>可重复使用</strong>（后端无 nonce 表作废机制）。"每次改价重新弹窗"由前端 <code>pos.price.auth_reuse=once</code> 策略控制，不是后端强制。</p></div>
+</div>
+
+<h2 id="checkout">② 收银结账 <span class="tag d">最核心</span></h2>
+<p class="lead">源码：<code>sales.module.ts</code>（<code>POST /sales/checkout</code>，权限 <code>pos.sell</code>）· 事务边界 104→987 行</p>
+
+<div class="box t">
+<b>一句话概括</b>
+<p>整个结账在<strong>一个数据库事务</strong>内完成：先内存计价（不写库），再一次性落单、扣批次、记流水、做支付、发积分。任何一步失败全部回滚。</p>
+</div>
+
+<div class="mermaid">
+flowchart TD
+  A[接收请求 items + payments] --> B[前置校验]
+  B --> B1[改价/折扣需 price 票据 50035/50036]
+  B --> B2[应急权限 + 金额上限 50032]
+  B --> B3[clientRef 幂等 → 命中直接返回原单]
+  B --> B4[班次归属：传则校验 未传则自动挂本人进行中班]
+  B --> B5[价目表新鲜度 ≤72h]
+  B --> C[逐行计价 内存计算]
+  C --> C1[取价优先级：赠品→单品折扣→手工改价→包装价→会员价→等级折扣→零售价]
+  C --> C2[FIFO 计划：锁定在库批次 FOR UPDATE]
+  C2 -->|库存不足| C3[50001 库存不足]
+  C --> D[应收金额链 按分整数运算]
+  D --> D1[① 货值 goodsCents]
+  D1 --> D2[② 促销 applyPromotions]
+  D2 --> D3[③ 券 applyCoupons]
+  D3 --> D4[④ 自动抹零 pos.round_rule]
+  D4 --> D5[⑤ 手动抹零 需权限]
+  D5 --> D6[⑥ 整单折扣 orderDiscount]
+  D6 --> D7[⑦ 成交价下限闸 50038]
+  D7 --> D8[⑧ 配送费]
+  D8 --> E[INSERT sales_orders 状态=已完成]
+  E --> F[INSERT sale_items 明细+成本+毛利]
+  F --> G[consumeBatches 真正扣库存]
+  G --> G1[写 sale_item_batches 批次分摊]
+  G --> G2[扣 batches.remain_qty 归零置售罄]
+  G --> G3[写 stock_flows 出库]
+  G --> G4[扣 inventory_current]
+  G --> H[支付循环]
+  H --> H1[积分抵现 ≤20% 应收]
+  H --> H2[余额 本金/赠送按比例拆分]
+  H --> H3[分红抵扣]
+  H --> H4[现金 / 微信 / 支付宝]
+  H --> H5[网关流水 SUCCESS 强校验 40902]
+  H -->|合计≠应收| H6[50031 拒绝]
+  H --> I[会员副作用]
+  I --> I1[积分入账 payable×倍率]
+  I --> I2[有效消费窗口 仅本金+真金白银]
+  I --> I3[同步会员等级]
+  I --> I4[消费后奖励 发券/赠品]
+  I --> J[审计 + 上行同步队列]
+  J --> K[COMMIT]
+  K --> L[SyncStoreService.kick 触发推送]
+  style D fill:#dbeafe,stroke:#2563eb
+  style G fill:#fee2e2,stroke:#dc2626
+  style H6 fill:#fef3c7,stroke:#d97706
+</div>
+
+<h3>取价优先级（自上而下短路）</h3>
+<div class="card">
+<ol class="steps">
+<li><b>赠品行</b>：单价 0；手工赠品需 <code>pos.price.manual</code>，促销赠品免授权</li>
+<li><b>单品折扣 discRate</b>：需 <code>pos.price.manual</code>；<span class="tag w">易错</span>会员价生效时取「折后价 vs 会员价」<strong>更低者单享，禁止折上折</strong></li>
+<li><b>手工改价 unitPrice</b>：需 <code>pos.price.manual</code> 或应急权限</li>
+<li><b>包装单位价</b>：整行金额 = 包装价 × 件数（避免摊分尾差）</li>
+<li><b>会员价</b>：<code>member_price</code> 优先，否则 售价 × member_discount</li>
+<li><b>等级折扣</b>：受 <code>member.level_discount</code> 控制，<strong>默认关闭</strong></li>
+<li><b>零售价</b>：兜底</li>
+</ol>
+<div class="box w"><b>双红线校验</b><p>改价/折扣后必须同时满足：① 折扣率 ≥ 商品 <code>min_discount_rate</code>；② 折后单价 ≥ <code>max(min_price 或售价6折, 标准进价 L1)</code>。越线需 <code>pos.emergency.manual</code> 放行并留痕。</p></div>
+</div>
+
+<h3>应收金额计算链 <span class="tag d">重点</span></h3>
+<div class="card">
+<p>全程按<strong>整数「分」</strong>运算，落库前回除为元：</p>
+<table>
+<tr><th>顺位</th><th>环节</th><th>说明</th></tr>
+<tr><td>0</td><td>货值 goodsCents</td><td><strong>促销前的原价货值</strong>。行级促销在之后才改 line_amount，故 <code>goods_amount ≠ Σ sale_items.line_amount</code></td></tr>
+<tr><td>1</td><td>促销</td><td>行级（特价/第二件半价/定时打折）→ 临期自动折扣 → 范围级（捆绑/满件）→ 整单级（满减/满折）；按 <code>promo.stack_layers</code> 决定跨层是否叠加</td></tr>
+<tr><td>2</td><td>券</td><td>门槛按<strong>原货值</strong>判定；券额封顶于 <code>货值 − 促销</code>；模式 manual/single/auto</td></tr>
+<tr><td>3</td><td>自动抹零</td><td><code>pos.round_rule</code>（分/角/5角/元），<strong>只向下取整</strong>（0.91→0.90，绝不凑整到 1.00）</td></tr>
+<tr><td>4</td><td>手动抹零</td><td>需 <code>pos.price.manual</code>，不得超过应收</td></tr>
+<tr><td>5</td><td>整单折扣</td><td>必填原因；预设折扣免权限，自定义需 <code>pos.discount.custom</code>；<strong>保证至少留 1 分</strong></td></tr>
+<tr><td>6</td><td>下限闸</td><td>整单红线 = Σ max(min_price 或售价6折, 进价) × qty；击穿需 price 票据 <code>50038</code></td></tr>
+<tr><td>7</td><td>配送费</td><td>服务端定价后<strong>最后并入</strong>应收</td></tr>
+<tr><td>8</td><td>应急上限</td><td><code>ops.emergency_amount_cap</code> 默认 500 元</td></tr>
+</table>
+<div class="box d">
+<b>两个反直觉点</b>
+<p>① <strong>积分抵扣不在这条链上</strong>。它是<strong>支付通道</strong>（如同现金），不改 <code>payable</code>，只影响"有效消费"统计。积分<strong>入账</strong>在支付之后，按 <code>payable × 等级倍率</code> 计算。</p>
+<p>② <span class="tag w">易错</span> 代码注释写的是"折扣 → 抹零"，但<strong>实际顺序是"抹零 → 整单折扣"</strong>（自动抹零 → 手动抹零 → 整单折扣）。这决定了 0.99 元商品打完折后如何抹零。</p>
+</div>
+</div>
+
+<h3>库存与成本落地（FIFO）</h3>
+<div class="card">
+<ol class="steps">
+<li>计价阶段只是<strong>计划</strong>：<code>SELECT ... FROM batches WHERE status='在库' AND remain_qty>0 ORDER BY expiry_date, inbound_date, id FOR UPDATE</code> —— 行锁防并发，按<strong>效期优先</strong>排序</li>
+<li>真正落账在明细写入后：<code>consumeBatches</code> 写 <code>sale_item_batches</code>（批次分摊台账）→ 扣 <code>batches.remain_qty</code>（归零置"售罄"）→ 写 <code>stock_flows</code>（direction='出库'）→ 扣 <code>inventory_current</code></li>
+</ol>
+<div class="box o"><b>成本口径</b><p>出库成本恒取批次原始 <code>inbound_cost</code>（先进先出），<strong>不是移动加权平均</strong>。这意味着同一商品不同批次价差会真实反映在毛利波动上。</p></div>
+</div>
+
+<h3>支付通道与"有效消费"</h3>
+<div class="card">
+<table>
+<tr><th>通道</th><th>计入有效消费</th><th>说明</th></tr>
+<tr><td>现金 / 微信 / 支付宝</td><td><span class="tag o">是</span></td><td>真金白银</td></tr>
+<tr><td>储值余额（本金部分）</td><td><span class="tag o">是</span></td><td>按「本金余额/总余额」比例拆分，仅本金计入</td></tr>
+<tr><td>储值余额（赠送部分）</td><td><span class="tag d">否</span></td><td>—</td></tr>
+<tr><td>分红抵扣</td><td><span class="tag d">否</span></td><td>—</td></tr>
+<tr><td>积分抵扣</td><td><span class="tag d">否</span></td><td>上限为应收的 20%（<code>pos.points.max_pct</code>）</td></tr>
+<tr><td>优惠券</td><td><span class="tag d">否</span></td><td>—</td></tr>
+<tr><td>赊账 / 挂账</td><td colspan="2"><span class="tag w">已停用</span>收银台直接返回 40003，需走「大客户对账」</td></tr>
+</table>
+<div class="box w"><b>有效消费为什么重要</b><p>它决定会员能否参与<strong>分红</strong>：单笔有效消费 ≥ <code>dividend.min_single</code>(5元) 才进入活跃窗口，窗口累计 ≥ <code>min_window</code>(50元) 才置为 <code>qualified</code>。所以"全用赠送金买单"的会员拿不到分红。</p></div>
+</div>
+
+<h2 id="refund">③ 退货退款</h2>
+<p class="lead">源码：<code>refund.module.ts</code>（<code>POST /refunds</code> 权限 <code>pos.refund.apply</code>；<code>POST /refunds/:id/audit</code> 权限 <code>sales.refund.audit</code>）</p>
+
+<div class="mermaid">
+flowchart TD
+  A[选择原销售单 + 退货明细行] --> B[校验]
+  B --> B1[订单状态必须是 已完成]
+  B --> B2[时限 sales.refund.window_days 默认7天 超时50077]
+  B --> B3[赊账/挂账单禁止原路退 50076]
+  B --> B4[逐行数量：原行qty − 已退累计 不足50072]
+  B --> C[计算退款金额 calcRows]
+  C --> C1[行金额 = line_amount × 退款比例]
+  C --> C2[整单优惠 促销+券+抹零 按货值比例回冲 尾差进最后一行]
+  C --> D{金额 > sales.refund.limit 200元?}
+  D -->|是| E[status=待审核]
+  E --> E1{店长审核}
+  E1 -->|驳回| E2[已驳回 无任何资金动作]
+  E1 -->|通过| F
+  D -->|否| F[status=创建中 → 立即执行]
+  F --> G[执行前重校验]
+  G --> G1[叠加在途退款 不超原行数量 50074]
+  G --> G2[累计退款不超实付 50075]
+  G --> H[回库存 restock]
+  H --> H1[按原批次比例回加 remain_qty]
+  H --> H2[写 stock_flows 入库 return_sale]
+  H --> I[成本回冲 V5.0.15新增]
+  I --> I1[行级 line_cost/line_profit 冲减]
+  I --> I2[单级 cost_amount/profit_amount 冲减]
+  I --> I3[退款单 cost_amount 留痕]
+  I --> J[支付原路退]
+  J --> J1[余额：按原本金/赠送比例回补]
+  J --> J2[分红抵扣：冲回]
+  J --> J3[积分抵扣：按比例退还]
+  J --> J4[微信/支付宝：网关原路退]
+  J --> J5[现金：仅留痕 冲减班次]
+  J --> K[消费所得积分扣回]
+  K --> L[活跃窗口冲减 堵退款保活跃]
+  L --> M[分红回冲 按退款比例]
+  M --> N[status=已退款 + pay_status同步]
+  style I fill:#d1fae5,stroke:#059669,stroke-width:2px
+  style E2 fill:#f3f4f6,stroke:#9ca3af
+  style B2 fill:#fef3c7,stroke:#d97706
+</div>
+
+<ol class="steps">
+<li><b>数量校验</b>：可退 = 原行数量 − 已退累计（含待审核/创建中的<strong>在途</strong>退款单），防止重复退。</li>
+<li><b>金额计算</b>：行金额按退款比例；<strong>整单级优惠（促销+券+抹零）按"退货货值/原货值"比例回冲</strong>，尾差进最后一行。</li>
+<li><b>审核分支</b>：≤ 200 元（<code>sales.refund.limit</code>）直接执行；&gt; 200 元进入"待审核"，店长通过后执行，驳回则只改状态、不动任何资金与库存。</li>
+<li><b>回库存</b>：按<strong>原批次消耗占比</strong>拆回（如退 2 件、原行 12 件、批次 A 占 10 件 → 回补 1.667 件），写 <code>stock_flows</code>（ref_type='return_sale'）。</li>
+<li><b>成本回冲</b> <span class="tag o">V5.0.15 修复</span>：按「退回批次数量 × 该批次单位成本」冲减 <code>sale_items.line_cost/line_profit</code> 与 <code>sales_orders.cost_amount/profit_amount</code>，并在 <code>sale_refunds.cost_amount</code> 留痕。<strong>此前缺失此步，导致退货后毛利虚高、分红基数失真。</strong></li>
+<li><b>支付原路退</b>：按退款比例分摊到原单各支付渠道，尾差进最后一渠道；余额按原本金/赠送比例回补（不增加 principal_total）。</li>
+<li><b>积分双向处理</b>：① 原单用积分抵扣过的 → 按比例退还；② 原单消费所得积分 → 按比例扣回。</li>
+<li><b>分红回冲</b>：找到订单归属的分红期，按退款比例冲减计提额（以 <code>dividend_balance</code> 封顶），失败不阻断。</li>
+</ol>
+
+<div class="box w">
+<b>restock=false 的行为</b>
+<p>若传 <code>restock:false</code>（货不回库，如损耗场景）：<strong>库存不回补、成本也不回冲</strong>——因为货确实没了，成本已实际发生。此时退款只体现为资金流出。</p>
+</div>
+<div class="box d">
+<b>注意</b>
+<p><code>sales_orders.status</code> 枚举里虽然有「已退款/部分退款」，但<strong>代码从不写入</strong>。退款状态实际看两处：<code>pay_status</code>（unpaid/paid/part_refunded/refunded/closed）+ <code>sale_refunds.status</code>。</p>
+</div>
+
+<h2 id="purchase">④ 采购入库</h2>
+<p class="lead">源码：<code>purchase.module.ts</code>，权限 <code>purchase.po.approve</code> / <code>stock.inbound.audit</code></p>
+
+<div class="mermaid">
+flowchart LR
+  A[采购订单 草稿] --> B[提交 待审批]
+  B --> C[审批 已下单]
+  C --> D[收货：建入库单 未审核]
+  D --> E[验收 audit]
+  E --> F[生成批次 batches]
+  F --> G[写 stock_flows 入库]
+  G --> H[更新 inventory_current]
+  H --> I[订单状态 → 到货中/已完成]
+  E --> J[更新供应商报价流水]
+  J --> K[标准进价 L1 判定]
+  C -.->|取消| X[已取消]
+  D -.->|驳回| Y[已驳回]
+  D -.->|作废| Z[已作废 反向冲销]
+  style E fill:#dbeafe,stroke:#2563eb
+  style F fill:#fee2e2,stroke:#dc2626
+</div>
+
+<ol class="steps">
+<li><b>建单</b>：按供应商自动分桶（一个供应商一张单）；商品若无默认供应商且无历史报价 → 拒绝。单号 <code>CG-yyyymmdd-NNN</code>。</li>
+<li><b>提交/审批</b>：草稿 → 待审批 → 已下单；审批<strong>强制电子签名</strong>。</li>
+<li><b>收货</b> <span class="tag w">易错</span>：录入入库单时<strong>不产生批次、不动库存</strong>，只是记录生产日期、数量、进价、售价。生产日期<strong>必填</strong>（50011）。</li>
+<li><b>验收（真正生效）</b>：状态闸门仅"未审核/草稿"可审 → 逐明细：
+  <ul>
+  <li>有效期 = <code>生产日期 + keep_days</code>（缺省 365 天）</li>
+  <li>成本 = 赠品 ? 0 : unit_cost；批次号 = <code>RK单号-序号</code></li>
+  <li><strong>INSERT batches（status='在库'）</strong> → 写 stock_flows（入库）→ inventory_current += </li>
+  <li>非赠品写供应商报价流水；判定标准进价 L1</li>
+  <li>若录入了新售价 → 同步更新 <code>products.sell_price</code></li>
+  </ul>
+</li>
+<li><b>采购退货</b>：可选钉批次或自动归属（<strong>限定同一供应商</strong>的最早剩余批次，<code>ORDER BY inbound_date, id</code>）；审核前<strong>必须上传凭证</strong>（50013）；审核后扣批次、减库存，临期处置单联动置"已退换"。</li>
+</ol>
+
+<div class="box t">
+<b>标准进价 L1 是"单向棘轮"</b>
+<p>只在 <code>standard_cost</code> <strong>为空</strong>时由首次入库自动采纳。之后进价更低或更高都<strong>只留痕不改 L1</strong>，真正的 L1 变更只能由总部执行（<code>chain.module.ts</code>）。这是"R8 乙模型"：门店无权抬高或压低进价红线。</p>
+</div>
+
+<h2 id="inventory">⑤ 盘点 · 报损 · 调拨</h2>
+<p class="lead">源码：<code>inventory.module.ts</code></p>
+
+<h3>盘点（唯一的库存人工纠偏入口）</h3>
+<div class="card">
+<p><strong>系统没有独立的"库存调整"接口</strong>——所有人工纠偏都走盘点单。</p>
+<div class="mermaid">
+flowchart TD
+  A[建盘点单 进行中] --> A1[逐行快照账面数 book_qty]
+  A1 --> B[录入实盘数 actual_qty]
+  B --> C[审核 audit]
+  C --> D{差异 diff = actual − book}
+  D -->|diff = 0| E[跳过]
+  D -->|diff < 0 盘亏| F[按 FIFO 扣批次 remain_qty]
+  F --> F1[写 stock_flows 出库 成本=批次原价]
+  F --> F2[记录 diff_cost]
+  D -->|diff > 0 盘盈| G[仅 inventory_current += diff]
+  G --> G1[写 stock_flows 入库 batch_id=NULL 成本=0]
+  C --> H[status=已审核]
+  style G fill:#fef3c7,stroke:#d97706
+</div>
+<div class="box d">
+<b>盘盈不建批次 <span class="tag w">易错</span></b>
+<p>盘盈数量只存在于 <code>inventory_current</code>，流水是 <code>batch_id=NULL, unit_cost=0</code>。而 <strong>FIFO 出库只扫描 batches 表</strong> → 盘盈出来的数量<strong>永远无法被正常销售消耗</strong>，会造成"账面有货但卖不出/库存对不上"的长期漂移。建议盘盈也落到批次，或提供专门的库存调整通道。</p>
+</div>
+</div>
+
+<h3>报损与调拨</h3>
+<div class="card">
+<table>
+<tr><th>动作</th><th>选批策略</th><th>关键规则</th></tr>
+<tr><td><b>盘亏</b></td><td><code>ORDER BY inbound_date, id</code>（严格 FIFO）</td><td>扣已有批次余量</td></tr>
+<tr><td><b>报损</b></td><td><code>ORDER BY expiry_date, inbound_date</code>（<strong>临期优先</strong>）</td><td>要求<strong>恰好命中 1 个批次</strong>（整批归属）；照片必传；审核扣批次置"报损"</td></tr>
+<tr><td><b>调拨（同店）</b></td><td>FIFO，可拆批</td><td>待确认 → 已入库；双边流水 transfer_out/transfer_in</td></tr>
+<tr><td><b>调拨（跨店）</b></td><td>FIFO，可拆批</td><td>待审核 → 待发货 → 在途 → 已入库；<strong>收货方新建批次</strong>，靠 <code>origin_batch_no</code> 维系血缘；缺口自动生成 <code>XQ-</code> 采购需求单</td></tr>
+</table>
+<div class="box t"><b>选批策略差异要记牢</b><p>盘亏走<strong>先进先出</strong>，报损走<strong>临期优先</strong>——两者是不同策略，不能混用。</p></div>
+</div>
+
+<h2 id="member">⑥ 会员 · 积分 · 储值</h2>
+<p class="lead">源码：<code>members.module.ts</code> · <code>member-chain.module.ts</code></p>
+
+<div class="mermaid">
+flowchart TD
+  A[注册：手机号/姓名至少一项] --> A1[手机号去重]
+  A1 --> A2{连锁节点?}
+  A2 -->|是| A3[总部建档 生成卡号 本地镜像]
+  A2 -->|否| A4[本地 M000001 卡号]
+  A3 --> A5[建 member_accounts 零资产]
+  A4 --> A5
+  A5 --> B[充值]
+  B --> B1[本金 principal + 赠送 gift]
+  B1 --> B2[balance += 本金+赠送]
+  B2 --> B3[principal_total 累计本金]
+  B3 --> B4[同步会员等级]
+  B4 --> C[消费]
+  C --> C1[余额支付：按本金占比拆分]
+  C1 --> C2[仅本金计入有效消费]
+  C2 --> C3[得积分 = floor payable × 等级倍率]
+  C3 --> D[积分用途]
+  D --> D1[积分抵现 上限应收20%]
+  D1 --> D2[积分调整 仅总部接口]
+  D2 --> E[等级升降]
+  E --> E1[只看本金余额 赠送不算]
+  E1 --> E2[升：立即升]
+  E2 --> E3[降：宽限7天后才降]
+  style B3 fill:#dbeafe,stroke:#2563eb
+  style C2 fill:#fee2e2,stroke:#dc2626
+</div>
+
+<h3>会员等级（当前三级）</h3>
+<table>
+<tr><th>等级</th><th>本金余额门槛</th><th>折扣</th><th>积分倍率</th><th>分红系数</th></tr>
+<tr><td>普通会员</td><td>0 元</td><td>9.8 折</td><td>1.0</td><td>1.0</td></tr>
+<tr><td>银卡会员</td><td>1000 元</td><td>9.5 折</td><td>1.5</td><td>1.2</td></tr>
+<tr><td>金卡会员</td><td>5000 元</td><td>9.0 折</td><td>2.0</td><td>1.5</td></tr>
+</table>
+<div class="box w">
+<b>等级判定的两个要点</b>
+<p>① <strong>只看本金余额</strong>（<code>principal_balance</code>），赠送金和累计消费都不参与判级。</p>
+<p>② <strong>降级有 7 天宽限期</strong>：本金掉档后先记 <code>level_below_since</code>，连续低于 7 天才真正降级；期间充值达标可撤销。</p>
+</div>
+
+<h3>积分与储值的对账关系</h3>
+<div class="card">
+<table>
+<tr><th>资产</th><th>恒等式</th></tr>
+<tr><td>积分</td><td><code>members.points = member_accounts.points = 最新一条 points_flows.balance_after</code></td></tr>
+<tr><td>总余额</td><td><code>balance = principal_balance + gift_balance</code></td></tr>
+<tr><td>本金余额</td><td><code>Σ入.principal_part − Σ出.principal_part</code></td></tr>
+</table>
+<div class="box w"><b>对账现状</b><p>数据库<strong>没有一致性约束、也没有自动对账任务</strong>，完全依赖业务事务同时维护余额字段与流水。测试中已验证当前数据一致，但长期需建日巡检。连锁门店本地表只是总部资产的镜像，<strong>不能作为最终权威账本</strong>。</p></div>
+</div>
+
+<h2 id="dividend">⑦ 分红计提与抵扣</h2>
+<p class="lead">源码：<code>dividend.module.ts</code> · 每日 <strong>02:35</strong> 自动执行（<code>dividend.auto.enabled</code>）</p>
+
+<div class="mermaid">
+flowchart TD
+  A[昨日日结快照已固化] --> B[02:35 总部触发]
+  B --> C{昨日净利 > 0?}
+  C -->|否| C1[跳过]
+  C -->|是| D[计算净利]
+  D --> D1[毛利 = Σ已完成订单 profit_amount]
+  D1 --> D2[减 月硬消耗 ÷ 当月天数]
+  D2 --> D3[加 已审核供应商费用 可选]
+  D3 --> E[分红池 = 净利 × dividend.ratio 5%]
+  E --> F[筛选合格会员]
+  F --> F1[状态正常 + 余额>0]
+  F1 --> F2[有 qualified 活跃窗口]
+  F2 --> F3[未达终身封顶]
+  F3 --> G[计算权重]
+  G --> G1[W = 本金余额 × 等级分红系数]
+  G1 --> G2[个人金额 = 池 × 个人W / 总W]
+  G2 --> H{达到封顶?}
+  H -->|是| H1[权重置0 仅积分]
+  H -->|否| I[尾差按权重逐分补发]
+  I --> J[同事务发放]
+  J --> J1[写 dividend_periods]
+  J --> J2[写 dividend_records 计提]
+  J --> J3[dividend_balance += ]
+  J --> K{有人拿到钱?}
+  K -->|有| L[status=已发放]
+  K -->|无人| M[status=零发放 + 整期失效记录]
+  style E fill:#dbeafe,stroke:#2563eb
+  style M fill:#fef3c7,stroke:#d97706
+</div>
+
+<ol class="steps">
+<li><b>计提时点</b>：每日 02:35，只在总部/单店执行，连锁门店节点跳过；<code>biz_date</code> 唯一保证幂等。</li>
+<li><b>净利 = 毛利 − 硬消耗日摊 + 供应商费用</b>。硬消耗含房租/水电/折旧/其他（<code>store.cost.*</code>）。</li>
+<li><b>池金额 = 净利 × 5%</b>（<code>dividend.ratio</code>），按「分」整数运算后向下取整。</li>
+<li><b>权重 = 本金余额 × 等级分红系数</b>；赠送余额不参与。</li>
+<li><b>终身封顶</b>：累计分红 ≤ 累计充值本金 × 30%（<code>dividend.cap_rate</code>）。</li>
+<li><b>零发放</b>：无人满足条件时，写一条 <code>record_type='失效'</code> 的整期记录（member_id 为 NULL），而不是静默无记录。</li>
+<li><b>消费抵扣</b>：会员可用分红余额付款，不计入有效消费。</li>
+</ol>
+
+<div class="box d">
+<b>两个重要缺口</b>
+<p>① <strong>30 天失效未闭环</strong>：个人计提只写了 <code>expire_at</code>，但<strong>没有扫描到期、扣减余额、写"失效回冲"的任务</strong>。字段和注释都有，闭环没做。</p>
+<p>② <span class="tag w">易错</span> <strong>活跃窗口可能放大到约 60 天</strong>：创建窗口写 <code>window_end = 今天 + 30天</code>，而筛选条件用 <code>window_end >= 今天 − 30天</code>，两者组合后实际存活期接近 60 天，与"最近 30 天"的注释不符。</p>
+</div>
+
+<h2 id="coupon">⑧ 优惠券</h2>
+<p class="lead">源码：<code>coupons.module.ts</code></p>
+
+<div class="mermaid">
+flowchart LR
+  A[创建券模板] --> B{获取方式}
+  B -->|后台发放 issue| C[指定会员/全员]
+  B -->|会员自领 claim| D[校验每人限领]
+  C --> E[member_coupons 未使用]
+  D --> E
+  E --> F[收银核销]
+  F --> F1[校验：本人 未使用 未过期 模板启用]
+  F1 --> F2[门槛按原货值 券额封顶于货值−促销]
+  F2 --> G{券类型}
+  G -->|满减券| G1[减固定金额]
+  G -->|折扣券| G2[货值−促销 后打折]
+  G -->|兑换券| G3[适用商品最低价免费]
+  G -->|次卡| G4[times_used+1 用尽才核销]
+  G1 --> H[status=已使用 + 核销出库流水]
+  G2 --> H
+  G3 --> H
+  G4 --> H
+  style F2 fill:#dbeafe,stroke:#2563eb
+</div>
+
+<h3>多券模式 <code>coupon.mode</code>（默认 manual）</h3>
+<table>
+<tr><th>模式</th><th>行为</th></tr>
+<tr><td><code>single</code></td><td>一单只用一张；在指定券或全部可用券中选抵扣最大的</td></tr>
+<tr><td><code>manual</code></td><td>收银员手动多选；若选中不可叠加券，只保留抵扣最大的那张</td></tr>
+<tr><td><code>auto</code></td><td>忽略手工选择；比较"全部可叠加券之和"与"最佳不可叠加单券"，取更优</td></tr>
+</table>
+<div class="box t"><b>叠加开关</b><p><code>coupon.stack_with_promo</code>（默认开启）控制券能否与促销同单使用。关闭时只要订单已有促销金额就拒券（50046）。</p></div>
+<div class="box w"><b>券库存有两套口径，不要混用</b><p>① <strong>剩余发行额度</strong> = <code>total_qty − issued_qty</code>（后台列表显示）；② <strong>生命周期可用量</strong> = <code>total_qty − 已使用 − 已过期 − 已作废</code>（核销流水用）。设计上把"发放"视为内部调拨（流水 qty=0），两者含义不同。</p></div>
+
+<h2 id="shift">⑨ 班次 · 交班 · 日结</h2>
+<p class="lead">源码：<code>shift.module.ts</code> · <code>pos.module.ts</code>（<code>/pos/daily</code>）</p>
+
+<div class="card">
+<p><strong>"交班"与"日结"是两个不同的概念</strong>，容易混淆：</p>
+<table>
+<tr><th></th><th>交班</th><th>日结</th></tr>
+<tr><td>对象</td><td>单个收银员/班次</td><td>整个门店/一天</td></tr>
+<tr><td>动作</td><td>盘现金 → 算差异 → 关班次</td><td>汇总报表（前台查询）/ 固化快照（定时任务）</td></tr>
+<tr><td>状态</td><td><code>shifts.status</code> 进行中 → 已交班</td><td>写 <code>daily_settlement</code>，不关任何班次</td></tr>
+</table>
+</div>
+
+<h3>钱箱应答公式</h3>
+<div class="card">
+<table>
+<tr><th>项</th><th>公式</th></tr>
+<tr><td>现金净收入</td><td>现金销售 − <strong>现金退款</strong></td></tr>
+<tr><td>钱箱应答</td><td>开班备用金 + 现金净收入 + 班中存入 − 班中取出</td></tr>
+<tr><td>交班差异</td><td>实点现金 − 钱箱应答</td></tr>
+</table>
+<div class="box w"><b>退款归属原班次 <span class="tag w">易错</span></b><p>现金退款冲减的是<strong>原销售单所属班次</strong>的钱箱，不是退款操作人当前所在班次。跨班退货会让前一班的钱箱"变少"，对账时需注意。</p></div>
+<div class="box t"><b>差异容差</b><p>差异绝对值 &gt; <code>pos.shift.diff_tolerance</code>（默认 5 元）时<strong>必须填写原因</strong>，但不需要店长审批，填完即可完成交班。</p></div>
+</div>
+
+<h2 id="jobs">⑩ 定时任务时间轴</h2>
+<div class="card">
+<div class="mermaid">
+flowchart LR
+  T0["每 60 秒 tick"] --> T1["自动关单<br/>待付款超 5 分钟"]
+  T0 --> T2["00:05 日结快照<br/>固化昨日 daily_settlement<br/>校准库存漂移<br/>算净利"]
+  T0 --> T3["00:10 审计归档<br/>超 365 天移入 audit_logs_archive"]
+  T0 --> T4["02:30 数据库备份<br/>pg_dump 保留 14 天"]
+  T2 --> T5["02:35 分红计提<br/>净利×5% 分配给会员"]
+  style T2 fill:#dbeafe,stroke:#2563eb
+  style T5 fill:#fee2e2,stroke:#dc2626
+  style T4 fill:#d1fae5,stroke:#059669
+</div>
+<table>
+<tr><th>时间</th><th>任务</th><th>作用</th><th>开关</th></tr>
+<tr><td>每分钟</td><td>自动关单</td><td>超时"待付款"订单回冲库存并置已取消</td><td><code>sales.close_order_minutes</code>=5</td></tr>
+<tr><td>00:05</td><td><strong>日结快照</strong></td><td>固化昨日销售/渠道/毛利，按批次总量<strong>重算 inventory_current</strong>（校准漂移），算净利</td><td>启动即补跑一次</td></tr>
+<tr><td>00:10</td><td>审计归档</td><td>超期审计日志移入归档表</td><td><code>auth.audit_retention</code>=365</td></tr>
+<tr><td>02:30</td><td><strong>数据库备份</strong></td><td><code>pg_dump</code> 到 <code>backups/&lt;时间戳&gt;/</code></td><td><code>ops.backup_hour</code></td></tr>
+<tr><td>02:35</td><td><strong>分红计提</strong></td><td>按昨日净利计提并分配给会员</td><td><code>dividend.auto.enabled</code></td></tr>
+</table>
+<div class="box w"><b>日结口径差异</b><p>前台 <code>/pos/daily</code> 按 <strong>支付完成时间</strong> 归属，定时快照按 <strong>订单创建时间</strong> 归属。跨零点创建、次日付款的订单可能落在不同的日子里。</p></div>
+</div>
+
+<h2 id="backup">⑪ 备份与恢复 <span class="tag o">V5.0.15 新增</span></h2>
+<div class="card">
+<div class="mermaid">
+flowchart LR
+  A[立即备份] --> D[(backups/时间戳/database.dump)]
+  B[自动备份 02:30] --> D
+  C[上传外部备份文件] --> D
+  D --> E{恢复前}
+  E --> F[自动拍保险快照 _pre]
+  F --> G[pg_restore --clean --if-exists]
+  G --> H[(数据库)]
+  style F fill:#d1fae5,stroke:#059669
+  style C fill:#dbeafe,stroke:#2563eb
+</div>
+<ol class="steps">
+<li><b>立即备份</b>（<code>POST /admin/backup/now</code>）/ <b>自动备份</b>（每日 02:30，保留 14 天）。</li>
+<li><b>导入上传</b><span class="tag o">新增</span>：<code>POST /admin/backup/upload</code> 二进制直传，落盘为 <code>upload_时间戳_随机/</code>，校验文件头必须是 <code>PGDMP</code> 或 SQL 文本，非法文件即删即拒。上传本身<strong>不改动数据库</strong>。</li>
+<li><b>恢复</b>：<code>POST /admin/backup/restore/:name</code> —— <strong>先自动拍一份"恢复前"保险快照</strong>（<code>_pre</code> 后缀），再 <code>pg_restore</code> 整体还原。</li>
+</ol>
+<div class="box o"><b>实测（V5.0.15）</b><p>备份 1.06 秒 · 恢复 8.86 秒 · 恢复后订单数/商品数/营业总额<strong>完全一致</strong>。保险快照使误操作可回退。</p></div>
+</div>
+
+<h2 id="state">状态机速查</h2>
+<table>
+<tr><th>单据</th><th>状态取值</th><th>主流转</th></tr>
+<tr><td><b>销售单</b><br/>sales_orders.status</td><td>挂单 / 待付款 / 已完成 / 已退款 / 部分退款 / 已取消</td><td>柜台结账<strong>直接插"已完成"</strong>；<span class="tag w">易错</span>"已退款/部分退款"代码从不写入，实际看 <code>pay_status</code></td></tr>
+<tr><td><b>支付状态</b><br/>pay_status</td><td>unpaid / paid / part_refunded / refunded / closed</td><td>paid → part_refunded → refunded</td></tr>
+<tr><td><b>退款单</b><br/>sale_refunds.status</td><td>创建中 / 待审核 / 已退款 / 已驳回</td><td>≤200元 创建中→已退款；&gt;200元 待审核→(通过)已退款 /(驳回)已驳回</td></tr>
+<tr><td><b>采购订单</b></td><td>草稿 / 待审批 / 已下单 / 到货中 / 已完成 / 已取消</td><td>草稿→待审批→已下单→到货中→已完成</td></tr>
+<tr><td><b>入库单</b></td><td>草稿 / 未审核 / 已驳回 / 已审核 / 已对账 / 已作废</td><td>未审核→<strong>已审核（生成批次）</strong>→已对账</td></tr>
+<tr><td><b>采购退货单</b></td><td>待审核 / 已审核 / 已驳回 / 已作废 / 已取消</td><td>待审核→已审核（扣批次）</td></tr>
+<tr><td><b>盘点单</b></td><td>进行中 / 已审核 / 已驳回</td><td>进行中→已审核（差异生效）</td></tr>
+<tr><td><b>盘点任务</b></td><td>待执行 / 执行中 / 待审核 / 已完成</td><td>审核时自动建盘点单再生效</td></tr>
+<tr><td><b>报损单</b></td><td>待审核 / 已审核 / 已驳回</td><td>待审核→已审核（扣批次置"报损"）</td></tr>
+<tr><td><b>调拨单</b></td><td>待确认 / 待审核 / 待发货 / 在途 / 已入库 / 已取消 / 驳回</td><td>同店：待确认→已入库；跨店：待审核→待发货→在途→已入库</td></tr>
+<tr><td><b>批次</b><br/>batches.status</td><td>在库 / 售罄 / 退货清零 / 报损 / 调出 / 入库作废</td><td>入库→在库→（卖完）售罄</td></tr>
+<tr><td><b>设备</b><br/>pos_devices.status</td><td>待授权 / 已授权 / 已停用</td><td>见 ① 登录流程</td></tr>
+<tr><td><b>班次</b><br/>shifts.status</td><td>进行中 / 已交班</td><td>无重新开班/撤销交班</td></tr>
+<tr><td><b>分红期</b><br/>dividend_periods.status</td><td>已发放 / 零发放</td><td>见 ⑦</td></tr>
+</table>
+
+<h2 id="setting">关键设置项速查</h2>
+<table>
+<tr><th>设置项</th><th>默认</th><th>说明</th></tr>
+<tr><td colspan="3"><b>结算与价格</b></td></tr>
+<tr><td><code>pos.round_rule</code></td><td>分</td><td>抹零规则：分/角/5角/元，<strong>只向下取整</strong></td></tr>
+<tr><td><code>sales.price_floor_guard</code></td><td>1（开）</td><td>成交价下限闸，防击穿进价</td></tr>
+<tr><td><code>ops.emergency_amount_cap</code></td><td>500 元</td><td>应急单笔上限</td></tr>
+<tr><td><code>pos.points.max_pct</code></td><td>20%</td><td>单笔积分抵现上限</td></tr>
+<tr><td><code>pos.points.rate</code></td><td>100</td><td>100 积分抵 1 元</td></tr>
+<tr><td colspan="3"><b>退货</b></td></tr>
+<tr><td><code>sales.refund.limit</code></td><td>200 元</td><td>超过需店长审核</td></tr>
+<tr><td><code>sales.refund.window_days</code></td><td>7 天</td><td>退货时限（0=不限）</td></tr>
+<tr><td colspan="3"><b>会员与分红</b></td></tr>
+<tr><td><code>member.level_discount</code></td><td>0（关）</td><td>等级折扣开关，<strong>默认关闭</strong></td></tr>
+<tr><td><code>dividend.ratio</code></td><td>5%</td><td>分红池占净利比例</td></tr>
+<tr><td><code>dividend.cap_rate</code></td><td>30%</td><td>终身封顶 = 累计充值本金 × 30%</td></tr>
+<tr><td><code>dividend.min_single</code> / <code>min_window</code></td><td>5 元 / 50 元</td><td>活跃窗口门槛</td></tr>
+<tr><td><code>dividend.window_days</code></td><td>30 天</td><td>窗口参数（<span class="tag w">实际约 60 天</span>）</td></tr>
+<tr><td colspan="3"><b>设备与安全</b></td></tr>
+<tr><td><code>pos.device.auth</code></td><td>true</td><td>设备授权总闸</td></tr>
+<tr><td><code>pos.device.auth.loopback.bypass</code></td><td>true</td><td>本机回环免授权</td></tr>
+<tr><td><code>pos.device.bind.employee</code></td><td>false</td><td>一机一人（共用收银台默认关）</td></tr>
+<tr><td><code>pos.device.single.session</code></td><td>true</td><td>同账号新登录挤掉旧 token</td></tr>
+<tr><td><code>pos.device.store.cap</code></td><td>10</td><td>门店设备总量上限</td></tr>
+<tr><td colspan="3"><b>运营</b></td></tr>
+<tr><td><code>pos.shift.diff_tolerance</code></td><td>5 元</td><td>交班差异容差</td></tr>
+<tr><td><code>sales.close_order_minutes</code></td><td>5 分钟</td><td>待付款自动关单</td></tr>
+<tr><td><code>ops.backup_hour</code></td><td>02:30</td><td>自动备份时间</td></tr>
+<tr><td><code>dividend.auto.enabled</code></td><td>true</td><td>02:35 自动分红</td></tr>
+</table>
+
+<h2 id="gap">已知实现缺口 <span class="tag d">建议排期修复</span></h2>
+<div class="card">
+<p>这些是源码梳理与 P0~P4 测试交叉验证发现的<strong>真实问题</strong>，按影响面排序：</p>
+<table>
+<tr><th>#</th><th>缺口</th><th>影响</th><th>状态</th></tr>
+<tr><td>1</td><td><b>盘盈不建批次</b></td><td>盘盈数量无法被 FIFO 消耗，造成长期库存漂移（账面有货卖不出）</td><td><span class="tag d">未修</span></td></tr>
+<tr><td>2</td><td><b>分红 30 天失效未闭环</b></td><td>只写 <code>expire_at</code>，无扫描/扣减/回冲任务，分红余额只增不减</td><td><span class="tag d">未修</span></td></tr>
+<tr><td>3</td><td><b>分红枚举缺"冲回/冲减"</b></td><td>代码使用这两个 record_type，但迁移未给枚举增值 → 退款时可能报 <code>invalid input value for enum</code></td><td><span class="tag d">未修</span></td></tr>
+<tr><td>4</td><td><b>积分过期未实现</b></td><td><code>biz_type</code> 注释预留了"过期"，但无有效期字段/扫描任务</td><td><span class="tag w">预留</span></td></tr>
+<tr><td>5</td><td><b>会员等级降级无夜间任务</b></td><td>宽限期到达后不会自动降，需等下次充值/消费/手动同步才触发</td><td><span class="tag w">预留</span></td></tr>
+<tr><td>6</td><td><b>券过期无定时调用</b></td><td><code>/coupons/expire-scan</code> 只有接口，未找到自动调用点</td><td><span class="tag w">预留</span></td></tr>
+<tr><td>7</td><td><b>活跃窗口实际约 60 天</b></td><td>创建与筛选条件组合，与"30 天"设计不符</td><td><span class="tag w">口径偏差</span></td></tr>
+<tr><td>8</td><td><b>积分/余额无自动对账</b></td><td>依赖事务同时维护余额与流水，无约束、无巡检</td><td><span class="tag w">建议加巡检</span></td></tr>
+<tr><td>9</td><td><b>历史退货毛利虚高未回补</b></td><td>V5.0.15 已修复<strong>未来</strong>的退货成本回冲，但库内已有的历史退款单仍缺成本冲减</td><td><span class="tag d">需一次性回补</span></td></tr>
+</table>
+</div>
+
+<div class="box o">
+<b>V5.0.15 本轮已修复（供对照）</b>
+<p>① 促销功能完全不可用（validateRules 逻辑断裂）· ② 结账全线 500（迁移 158 jsonb 空串 + manifest 治理失效）</p>
+<p>③ 抹零归零后无法结账 · ④ 券被静默忽略（single/auto 模式）· ⑤ 连接池耗尽（max=10 → 40）· ⑥ 日期越界返回 500</p>
+<p>⑦ 退货成本回冲缺失（本轮最后一项）· ⑧ 商品建档 snake_case 静默忽略 · ⑨ 负售价可建档 · ⑩ 软删仍占唯一键</p>
+</div>
+
+<div class="foot">
+本报告由源码逐行梳理生成 · 覆盖 auth / sales / refund / purchase / inventory / members / dividend / coupons / shift / jobs / backup 十一大链路<br>
+所有流程均可通过 <code>backend/tools/qa-*.mjs</code> 八个回归套件验证 · 生成日期 2026-10-07
+</div>
+</main>
+</div>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad:true, theme:'default',
+    flowchart:{ curve:'basis', htmlLabels:true, useMaxWidth:true },
+    securityLevel:'loose' });
+} else {
+  document.querySelectorAll('.mermaid').forEach(function(el){
+    el.innerHTML = '<div style="padding:14px;background:#fffbeb;border-left:4px solid #d97706;font-size:13px">'
+      + '流程图需要联网加载 Mermaid 渲染库。当前未加载，请直接阅读下方【文字步骤说明】——每个流程都配有完整文字描述。</div>';
+  });
+}
+</script>
+</body>
+</html>
