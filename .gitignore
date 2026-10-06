@@ -56,3 +56,11 @@ backend/public/signatures/
 # ── 内部运维/测试工具（含真实凭据，不入仓库）──
 backend/tools/
 mobile-apk/tools/sec-verify.mjs
+
+# ── 运行期数据备份（灾备产物，逐店本地生成，不入仓库）──
+backend/backups/
+
+# ── TTS 调试/实验页与片段库（服务端生成产物，部署时随 dist 分发）──
+backend/public/tts-frag/
+backend/public/tts-ab/
+backend/public/tts-tn/

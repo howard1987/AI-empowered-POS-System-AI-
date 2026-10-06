@@ -77,12 +77,13 @@ function cleanupOld(): number {
   return removed;
 }
 
-/** 执行一次备份（手动 / 自动共用）。返回相对路径与统计信息 */
-function doBackup(): { name: string; file: string; size: number; tookMs: number; removed: number } {
+/** 执行一次备份（手动 / 自动共用）。返回相对路径与统计信息。
+ *  nameOverride：供「恢复前保险快照」传入带唯一后缀的名字，避免与同一秒内的目标备份同名而被覆盖。 */
+function doBackup(nameOverride?: string): { name: string; file: string; size: number; tookMs: number; removed: number } {
   if (!DATABASE_URL) throw new BizException(50000, '缺少 DATABASE_URL 环境变量，无法执行备份');
   fs.mkdirSync(BACKUP_ROOT, { recursive: true });
   const dump = locatePgDump();
-  const name = tsName();
+  const name = nameOverride || tsName();
   const dir = path.join(BACKUP_ROOT, name);
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'database.dump');
@@ -117,8 +118,9 @@ function doRestore(name: string): { name: string; size: number; tookMs: number; 
   if (!DATABASE_URL) throw new BizException(50000, '缺少 DATABASE_URL 环境变量，无法执行恢复');
   const f = path.join(BACKUP_ROOT, name, 'database.dump');
   if (!fs.existsSync(f)) throw new BizException(40404, '备份不存在或已被清理');
-  // ① 保险快照：先备份当前库，便于误恢复后找回
-  const safe = doBackup();
+  // ① 保险快照：先备份当前库，便于误恢复后找回。
+  //    名字必须与目标备份不同 —— tsName() 只到秒，若与目标同名会直接把目标文件覆盖掉。
+  const safe = doBackup(`${tsName()}_pre${Date.now().toString(36).slice(-4)}`);
   // ② 恢复
   const restore = locatePgRestore();
   const t0 = Date.now();

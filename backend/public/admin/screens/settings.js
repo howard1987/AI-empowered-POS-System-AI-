@@ -1169,12 +1169,15 @@ export async function render(view) {
         list.innerHTML = `<div style="margin:0 18px 14px;max-height:280px;overflow:auto;border:1px solid var(--line-2);border-radius:6px">
           <table style="width:100%;margin:0;border:none">
           <thead><tr><th>备份时间</th><th>大小</th><th>操作</th></tr></thead>
-          <tbody>${items.map(it => `<tr><td>${esc(it.name.replace(/_/g, ' '))}</td><td>${Math.round(it.size / 1024)} KB</td>
+          <tbody>${items.map(it => {
+            const isPre = /_pre[0-9a-z]+$/.test(it.name);
+            return `<tr><td>${esc(it.name.replace(/_/g, ' '))}${isPre ? ' <span class="tag warn">恢复前快照</span>' : ''}</td><td>${Math.round(it.size / 1024)} KB</td>
             <td>
               <a data-bk="${esc(it.name)}" style="cursor:pointer;color:var(--pri);text-decoration:underline">下载</a>
               &nbsp;|&nbsp;
               <a data-rs="${esc(it.name)}" style="cursor:pointer;color:#c62828;text-decoration:underline">恢复</a>
-            </td></tr>`).join('')}</tbody></table></div>`;
+            </td></tr>`;
+          }).join('')}</tbody></table></div>`;
         list.querySelectorAll('[data-bk]').forEach(a => a.onclick = () => downloadBackup(a.dataset.bk));
         list.querySelectorAll('[data-rs]').forEach(a => a.onclick = () => restoreBackup(a.dataset.rs));
       } catch (e) { list.innerHTML = '<div class="muted" style="padding:6px 18px">列表加载失败</div>'; }
