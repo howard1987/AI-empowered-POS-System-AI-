@@ -45,6 +45,21 @@ function loadDesktopConfig() {
 }
 const DESKTOP_CFG = loadDesktopConfig();
 
+// ─── V5.0.18g 硬件稳定标识（Windows MachineGuid）：卸载重装 EXE 不变，重装系统才变 ───
+// 与 Android 端 ANDROID_ID 同一机制（设备码前缀 HW-），配合服务端「重装自动换绑签名公钥」，
+// 实现「硬件不变、授权不变」。MachineGuid 位于 HKLM\SOFTWARE\Microsoft\Cryptography，系统级只读。
+let MACHINE_GUID = '';
+try {
+  MACHINE_GUID = require('child_process')
+    .execSync('reg query HKLM\\SOFTWARE\\Microsoft\\Cryptography /v MachineGuid',
+      { windowsHide: true, timeout: 5000, encoding: 'utf8' })
+    .split(/\r?\n/).find(l => /MachineGuid\s+REG_SZ/.test(l))
+    ?.split('REG_SZ')[1]?.trim() || '';
+  console.log('[DeviceIdentity] MachineGuid 读取成功（长度 ' + MACHINE_GUID.length + '）');
+} catch (e) {
+  console.warn('[DeviceIdentity] MachineGuid 读取失败（将回退软标识）:', e.message || e);
+}
+
 // ─── V4.22.1 EXE 白屏根治：启动前置探活 + 首次配置向导 + 断连错误页 ───
 //  旧缺陷：服务器不可达时 loadURL 静默失败 → kiosk 全屏只剩底色（用户报障"打开就是一片白"）
 //  新逻辑：
@@ -338,6 +353,8 @@ setInterval(() => {
   } catch { /* noop */ }
 }, 1200);
 // 窗口状态自检（现场排查「登录页还是全屏 / 窗口被压住」类问题；也供自动化实测断言）
+// V5.0.18g：硬件稳定标识（渲染层 deviceCode() 硬件派生设备码 HW-XXXXXXXX 用）
+ipcMain.handle('pos:machine-guid', () => MACHINE_GUID);
 ipcMain.handle('pos:shell-state', () => {
   const w = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
   return {

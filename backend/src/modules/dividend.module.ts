@@ -86,7 +86,7 @@ export async function resolveDailyProfit(settleDate: string): Promise<DailyProfi
   }
   const g = await q1<any>(
     `SELECT COALESCE(SUM(profit_amount),0) AS gross FROM sales_orders
-      WHERE status='已完成' AND created_at::date=$1::date`, [settleDate]);
+      WHERE status='已完成' AND COALESCE(pay_paid_at, created_at)::date=$1::date`, [settleDate]);
   const gross = Number(g?.gross ?? 0);
   const monthly = await sumHardCostMonthly();
   const days = daysInMonth(settleDate);
@@ -122,7 +122,10 @@ class DividendEngine {
       // 决策③(A1)：分红池一律整数分——(元分 × ratio×100) / 10000，BigInt 整除无浮点
       const poolCents = Number((BigInt(Math.round(Number(netProfit) * 100)) * BigInt(Math.round(p.ratio * 100))) / 10000n);
       const pool = poolCents / 100;
-      // 参与会员：正常状态 + 余额>0 + 最近 windowDays 天内有达标消费窗口
+      // 参与会员：正常状态 + 余额>0 + 存在仍处有效期内的达标消费窗口
+      // V5.0.18 修复「60 天放大」：窗口创建时 window_end = window_start + windowDays(30)，
+      // 旧筛选再容 `-30 天` → 实际存活期被放大到约 60 天，与「最近 30 天活跃」不符。
+      // 正确语义：窗口在自身 window_end 前有效（持续消费会把 window_end 顶延到最近消费日，即滚动活跃）。
       const members = await exec(
         `SELECT m.id, m.card_no, m.name, a.balance, a.principal_balance, a.principal_total,
                 a.dividend_cumulative, a.dividend_capped, COALESCE(l.dividend_coeff, 1.0) AS coeff
@@ -132,7 +135,7 @@ class DividendEngine {
           WHERE m.status='正常' AND m.deleted_at IS NULL AND a.balance > 0
             AND EXISTS (SELECT 1 FROM member_activity_windows w
                          WHERE w.member_id = m.id AND w.qualified = true
-                           AND w.window_end >= CURRENT_DATE - $1::int)`, [p.windowDays]);
+                           AND w.window_end >= CURRENT_DATE)`, []);
       // 权重 = 有效本金余额 × 等级系数 c（口径B：赠送部分不参与加权，5.1.2/5.1.7）
       let weightTotal = 0;
       const rows = members.map((m: any) => {
@@ -258,6 +261,57 @@ class DividendEngine {
                  : '' };
     });
   }
+/**
+   * V5.0.16 分红「到期失效」闭环（expire_days 默认 30 天未消费 → 失效回冲）：
+   *   缺陷：此前 expire_at 只被营销提醒读取，没有任何扫描/扣减 → 会员永久保留已过期分红余额（负债虚高），
+   *   且「零发放」期的 status 永远停在「零发放」，失效未在期间台账上闭环。
+   *   本方法：扫描「计提」明细中 expire_at < 今天且尚未回冲的，按笔扣减 member_accounts.dividend_balance
+   *   （封顶到当前余额，绝不产生负负债），并写一条「失效回冲」负额台账（ref_type='expire'，ref_id=原计提id）保证幂等可追溯；
+   *   同时把已到期的「零发放」期状态更新为「已失效」。
+   */
+  async expireScan(trigger = 'auto') {
+    return tx(async c => {
+      const rows = await cx(c,
+        `SELECT d.id, d.member_id, d.period_id, d.amount, d.expire_at
+           FROM dividend_records d
+          WHERE d.store_id=${curStore()} AND d.record_type='计提' AND d.amount > 0
+            AND d.expire_at IS NOT NULL AND d.expire_at < CURRENT_DATE
+            AND NOT EXISTS (SELECT 1 FROM dividend_records x
+                             WHERE x.ref_type='expire' AND x.ref_id = d.id)`);
+      let total = 0, cnt = 0;
+      const op = curEmp() || 0;
+      for (const d of rows) {
+        const acc = await cx(c,
+          `SELECT dividend_balance FROM member_accounts WHERE member_id=$1 FOR UPDATE`, [d.member_id]);
+        const bal = Number(acc[0]?.dividend_balance || 0);
+        const back = Math.min(bal, Number(d.amount));      // 封顶：余额不足则只冲到 0，不产生负债
+        if (back > 0) {
+          await cx(c,
+            `UPDATE member_accounts SET dividend_balance = dividend_balance - $2, updated_at=now() WHERE member_id=$1`,
+            [d.member_id, back]);
+        }
+        await cx(c,
+          `INSERT INTO dividend_records (store_id, member_id, period_id, record_type, amount,
+                                         ref_type, ref_id, operator_id, remark)
+           VALUES (${curStore()},$1,$2,'失效回冲',$3,'expire',$4,$5,$6)`,
+          [d.member_id, d.period_id, -r2(back), d.id, op,
+           `${String(d.expire_at).slice(0, 10)} 到期未消费，失效回冲（${trigger}）`]);
+        total += back; cnt++;
+      }
+      // 零发放期到期 → 状态闭环为「已失效」
+      const z = await cx(c,
+        `UPDATE dividend_periods SET status='已失效'
+          WHERE store_id=${curStore()} AND status='零发放'
+            AND biz_date + (SELECT COALESCE((value::int),30) FROM system_settings
+                             WHERE setting_key='dividend.expire_days' LIMIT 1) + 1 < CURRENT_DATE
+        RETURNING id`);
+      if (cnt) {
+        await audit(curStore(), op, '分红', 'dividend.expire', 'dividend_record', null,
+          { count: cnt, total: r2(total), zeroClosed: z.length, trigger });
+      }
+      return { count: cnt, total: r2(total), zeroPeriodClosed: z.length };
+    });
+  }
 }
 
 function addDaysStr(dateStr: string, days: number): string {
@@ -296,20 +350,43 @@ export async function autoDividendRun(date?: string): Promise<any> {
   return { ...r, date: bizDate, settle, gross: prof.gross, hardCost: prof.hardCost, source: prof.source };
 }
 
-/** P3-2：自动分红定时任务（零依赖 setInterval，模式同 SyncReconJob；每日 02:35） */
+/** V5.0.18：自动计提触发时刻（dividend.auto.time，"HH:MM"，默认 02:35；非法值回退默认） */
+async function autoTriggerMinute(): Promise<number> {
+  try {
+    const r = await q1(`SELECT value #>> '{}' AS v FROM system_settings WHERE setting_key='dividend.auto.time'`);
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(r?.v || '').trim());
+    if (m) return Math.min(23, Math.max(0, Number(m[1]))) * 60 + Math.min(59, Number(m[2]));
+  } catch { /* 回退默认 */ }
+  return 2 * 60 + 35;
+}
+
+/** P3-2：自动分红定时任务（零依赖 setInterval，模式同 SyncReconJob；每日 dividend.auto.time，默认 02:35，到点后补跑） */
 @Injectable()
 export class DividendAutoJob implements OnModuleInit, OnModuleDestroy {
   private timer: any;
   private lastRunDay = '';
+  private lastExpireDay = '';
   onModuleInit() {
     this.timer = setInterval(() => this.maybeRun().catch(e => { console.error('[分红job] 执行失败:', e?.message); try { notifyStaff(1, 'job_error', `[分红job] 执行失败：${String(e?.message).slice(0, 140)}`, {}, 'sys.settings', 'job:div').catch(() => { }); } catch { } }), 60_000);
-    console.log('[分红job] 自动每日分红定时器已启动（每日 02:35 计提昨日净利）');
+    console.log('[分红job] 自动每日分红定时器已启动（每日 02:35 计提昨日净利 + 到期失效回冲）');
   }
   onModuleDestroy() { clearInterval(this.timer); }
   private async maybeRun() {
     const now = new Date();
-    if (now.getHours() !== 2 || now.getMinutes() < 35 || this.lastRunDay === now.toISOString().slice(0, 10)) return;
-    this.lastRunDay = now.toISOString().slice(0, 10);
+    const day = now.toISOString().slice(0, 10);
+    // V5.0.18：触发时刻可配置（dividend.auto.time，默认 02:35），并改为「到点后首次巡检即补跑」——
+    //   旧逻辑要求严格命中 hour===2 && minutes>=35 的一分钟窗口，服务器 02:35 未开机（开机时
+    //   getHours() 已 > 2）当天永不触发 → 漏计提。新语义：当天到达设定时刻后的第一次 tick 执行
+    //   （lastDay 幂等，进程当天重启也会补跑一次）。
+    const due = await autoTriggerMinute();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    if (nowMin >= due && this.lastExpireDay !== day) {
+      this.lastExpireDay = day;
+      try { await new DividendEngine().expireScan('auto'); }
+      catch (e) { console.error('[分红job] 失效回冲扫描失败:', e?.message); }
+    }
+    if (nowMin < due || this.lastRunDay === day) return;
+    this.lastRunDay = day;
     await autoDividendRun();
   }
 }
@@ -383,6 +460,15 @@ class DividendController {
     const r = await autoDividendRun(b?.date);
     await audit(user.storeId, user.sub, '分红', 'dividend.auto.run', 'dividend_period', r.periodId,
       { date: r.date, skipped: r.skipped ?? null, pool: r.pool ?? null });
+    return r;
+  }
+
+  /** V5.0.16 手动触发「到期失效回冲」扫描（与 02:35 job 同一逻辑，幂等；便于补跑与验证） */
+  @RequirePerms('member.dividend.adjust')
+  @Post('expire-scan')
+  async expireScanNow(@CurrentUser() user: AuthUser) {
+    const r = await this.engine.expireScan('manual');
+    await audit(user.storeId, user.sub, '分红', 'dividend.expire.scan', 'dividend_record', null, r as any);
     return r;
   }
 

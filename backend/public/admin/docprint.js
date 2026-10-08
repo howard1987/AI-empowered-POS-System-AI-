@@ -42,7 +42,13 @@ const DOC_DEFS = {
         lines: its.map(it => ({ name: it.product_name, unit: it.base_unit || '', qty: Number(it.qty) || 0, price: it.unit_cost != null ? Number(it.unit_cost) : null,
           pdate: it.production_date ? String(it.production_date).slice(0, 10) : '—', batch: String(it.batch_no || '未审核').replace(/-\d{2}$/, '') })),
         totalQty: its.reduce((s, x) => s + Number(x.qty || 0), 0), totalAmount: Number(o.total_amount || 0),
-        signImg: o.sign_image_path, footer: ['操作员签字', '仓管', '审核'],
+        // V5.0.18g 修复主体关联：operator_sign_image_path=操作员本人（登录人）签名；
+        // sign_image_path=供应商业务员预采签名（原被误标操作员）——按角色分槽，姓名图一一配对
+        signItems: [
+          ...(o.operator_sign_image_path ? [{ path: o.operator_sign_image_path, name: o.operator_sign_name || '', role: '操作员' }] : []),
+          ...(o.sign_image_path ? [{ path: o.sign_image_path, name: '', role: '业务员' }] : []),
+        ],
+        signImg: o.operator_sign_image_path || o.sign_image_path || '', footer: ['操作员签字', '仓管', '审核'],
       };
     },
   },
@@ -58,7 +64,11 @@ const DOC_DEFS = {
         lines: its.map(it => ({ name: it.product_name, unit: it.base_unit || '', qty: Number(it.qty) || 0, price: it.unit_cost != null ? Number(it.unit_cost) : null,
           batch: String(it.batch_no || '—').replace(/-\d{2}$/, '') })),
         totalQty: its.reduce((s, x) => s + Number(x.qty || 0), 0), totalAmount: Number(o.total_amount || 0),
-        signImg: o.sign_image_path, footer: ['操作员签字', '仓管', '审核'],
+        signItems: [
+          ...(o.operator_sign_image_path ? [{ path: o.operator_sign_image_path, name: o.operator_sign_name || '', role: '操作员' }] : []),
+          ...(o.sign_image_path ? [{ path: o.sign_image_path, name: '', role: '业务员' }] : []),
+        ],
+        signImg: o.operator_sign_image_path || o.sign_image_path || '', footer: ['操作员签字', '仓管', '审核'],
       };
     },
   },

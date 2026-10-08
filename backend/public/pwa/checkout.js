@@ -219,8 +219,7 @@ View.checkout = function (v, opt) {
     if (!list.length) { box.innerHTML = '<div class="hint" style="grid-column:1/-1;text-align:center;padding:40px 0">该分类未添加商品!</div>'; return; }
     box.innerHTML = list.map(p => `
       <div class="ck-card" data-add="${p.id}">
-        ${stockBadge(p)}
-        <div class="n">${esc(p.name)}</div>
+        <div class="n">${stockBadge(p)}${esc(p.name)}</div>
         <div class="p">¥${money(p.sellPrice ?? p.sell_price ?? 0)}</div>
         ${p.memberPrice ? `<div class="m">会员 ¥${money(p.memberPrice)}</div>` : ''}
         ${p.spec ? `<div class="barcode">${esc(p.spec)}</div>` : ''}
@@ -244,11 +243,11 @@ View.checkout = function (v, opt) {
       .ck-grid{flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:min-content;gap:8px;padding:8px;align-content:start;-webkit-overflow-scrolling:touch;-webkit-text-size-adjust:100%;text-size-adjust:100%;}
       .ck-card{position:relative;min-width:0;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 9px;cursor:pointer;overflow:hidden;}
       .ck-card:active{background:var(--green-soft);transform:scale(.98);}
-      .ck-card .n{font-size:13.5px;font-weight:700;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;padding-right:56px;word-break:break-word;}
+      .ck-card .n{font-size:13.5px;font-weight:700;line-height:1.35;max-height:2.7em;overflow:hidden;word-break:break-word;}
       .ck-card .p{font-size:15px;font-weight:800;color:var(--pri);margin-top:4px;}
       .ck-card .m{font-size:11px;color:var(--ink-3);}
       .ck-card .barcode{font-size:10px;color:var(--ink-3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-      .ck-stockpill{position:absolute;top:6px;right:7px;font-size:10px;border-radius:8px;padding:1px 7px;background:var(--paper-2);color:var(--ink-2);font-weight:600;}
+      .ck-stockpill{float:right;margin:1px 0 1px 5px;font-size:10px;line-height:1.4;border-radius:8px;padding:1px 7px;background:var(--paper-2);color:var(--ink-2);font-weight:600;}
       .ck-stockpill.low{background:#fdf3d8;color:#b07207;}
       .ck-stockpill.out{background:#ffe0e0;color:#c00;}
       .ck-topbar{display:flex;align-items:center;gap:8px;margin-bottom:8px;}

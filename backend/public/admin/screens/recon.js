@@ -3,6 +3,7 @@ import { confirmBox, bindPad as uiBindPad, clearPad as uiClearPad } from '../ui.
 import { paginate, bindPager, docTable } from '../common-ui.js';
 import { renderConsign } from './consign.js';
 import { anchorNav } from '../ui-polish.js';   // V4.26.3 长页面锚点导航
+import { autoPrintA5AfterAudit } from '../docprint.js';   // V5.0.17b：对账确认后自动弹 A5（与其余六类单据一致）
 
 /** 对账与结算（合并联营对账 · 图一高保真版式）：
  *  页头选供应商自动判别 购销/联营 → 加载对应视图；
@@ -572,6 +573,7 @@ export async function render(view) {
     const photo = padDirty ? view.querySelector('#cfmPad').toDataURL('image/png') : undefined;
     await must(post(`/purchase/recon/${cfmReconId}/confirm`,
       { confirmType: type, confirmName: name, confirmPhotos: photo ? [photo] : undefined }), '对账单已确认');
+    autoPrintA5AfterAudit('recon', [Number(cfmReconId)]);   // V5.0.17b：doc.print.auto_a5 开启时自动弹 A5（补齐七类单据的最后一类）
     view.querySelector('#cfmModal').style.display = 'none';
     await lists();
   };

@@ -694,7 +694,7 @@ async function main() {
   console.log('════════════════════════════════════════════════');
   console.log('');
 
-  const child = spawn(process.execPath, [path.join(ROOT, 'dist', 'main.js')], { cwd: ROOT, env, stdio: 'inherit' });
+  const child = spawn(process.execPath, [path.join(ROOT, 'dist', 'main.js')], { cwd: ROOT, env, stdio: 'inherit', windowsHide: true });
   const bye = () => { try { child.kill(); } catch { /* noop */ } process.exit(0); };
   process.on('SIGINT', bye);
   process.on('SIGTERM', bye);

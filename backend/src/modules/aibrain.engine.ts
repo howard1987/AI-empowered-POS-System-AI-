@@ -239,7 +239,7 @@ export class AibrainEngine {
     const safety = Number(await this.setting('ai.restock.safety_days', 1.5) ?? 1.5);
     const sales = await q<any>(
       `SELECT si.product_id AS pid, p.name, p.sell_price, COALESCE(SUM(si.qty),0) AS qty,
-              COUNT(DISTINCT so.created_at::date) AS active_days
+              COUNT(DISTINCT COALESCE(so.pay_paid_at, so.created_at)::date) AS active_days
          FROM sale_items si
          JOIN sales_orders so ON so.id=si.order_id AND ${SQL_ORDER_DONE} AND so.created_at >= CURRENT_DATE - $2::int
          JOIN products p ON p.id=si.product_id AND p.status=1
@@ -326,11 +326,11 @@ export class AibrainEngine {
       if (r) return r;
     }
     const sales = await q<any>(
-      `SELECT si.product_id AS pid, so.created_at::date AS d, SUM(si.qty) AS qty
+      `SELECT si.product_id AS pid, COALESCE(so.pay_paid_at, so.created_at)::date AS d, SUM(si.qty) AS qty
          FROM sale_items si
          JOIN sales_orders so ON so.id=si.order_id AND ${SQL_ORDER_DONE}
         WHERE so.store_id=$1 AND so.created_at >= CURRENT_DATE - $2::int
-        GROUP BY si.product_id, so.created_at::date`, [storeId, history]);
+        GROUP BY si.product_id, COALESCE(so.pay_paid_at, so.created_at)::date`, [storeId, history]);
     if (!sales.length) return { products: 0, snapshots: 0, maeBackfilled: 0, byCategory: [] };
 
     // 按商品聚合日销序列
@@ -353,10 +353,10 @@ export class AibrainEngine {
     const backfilled = await q(
       `UPDATE forecast_snapshots f SET actual_qty = COALESCE(agg.q, 0),
               mae_after = ROUND(ABS(COALESCE(agg.q,0) - f.predict_qty)::numeric, 4)
-         FROM (SELECT si.product_id, so.created_at::date AS d, SUM(si.qty) AS q
+         FROM (SELECT si.product_id, COALESCE(so.pay_paid_at, so.created_at)::date AS d, SUM(si.qty) AS q
                  FROM sale_items si JOIN sales_orders so ON so.id=si.order_id AND ${SQL_ORDER_DONE}
                 WHERE so.store_id=$1
-                GROUP BY si.product_id, so.created_at::date) agg
+                GROUP BY si.product_id, COALESCE(so.pay_paid_at, so.created_at)::date) agg
         WHERE f.store_id=$1 AND agg.product_id=f.product_id AND agg.d=f.horizon_date
           AND f.actual_qty IS NULL AND f.horizon_date < CURRENT_DATE RETURNING f.id`, [storeId]);
     const maeBackfilled = backfilled.length;
@@ -436,15 +436,15 @@ export class AibrainEngine {
     try {
       const minDays = Number(await this.setting('ai.forecast.lgbm.min_days', 56) ?? 56);
       const totalDays = await q1<{ n: string }>(
-        `SELECT count(DISTINCT so.created_at::date) AS n FROM sales_orders so
+        `SELECT count(DISTINCT COALESCE(so.pay_paid_at, so.created_at)::date) AS n FROM sales_orders so
           WHERE so.store_id=$1 AND ${SQL_ORDER_DONE}`, [storeId]);
       if (Number(totalDays?.n ?? 0) < minDays) return null;   // 数据门槛未到 → baseline（防过拟合空转）
       const base = String(await this.setting('ai.forecast.lgbm.url', 'http://localhost:9101') ?? 'http://localhost:9101');
       const series = await q<any>(
-        `SELECT si.product_id AS pid, so.created_at::date AS d, SUM(si.qty) AS qty
+        `SELECT si.product_id AS pid, COALESCE(so.pay_paid_at, so.created_at)::date AS d, SUM(si.qty) AS qty
            FROM sale_items si JOIN sales_orders so ON so.id=si.order_id AND ${SQL_ORDER_DONE}
           WHERE so.store_id=$1 AND so.created_at >= CURRENT_DATE - $2::int
-          GROUP BY si.product_id, so.created_at::date`, [storeId, historyDays]);
+          GROUP BY si.product_id, COALESCE(so.pay_paid_at, so.created_at)::date`, [storeId, historyDays]);
       if (!series.length) return null;
       const ctl = AbortSignal.timeout(15000);
       const res = await fetch(`${base.replace(/\/$/, '')}/predict`, {
@@ -642,16 +642,16 @@ export class AibrainEngine {
       { k: /毛利|利润(?!排|榜)|赚(?!钱榜)/, name: '毛利', fn: async () => {
         const r = await q1<any>(
           `SELECT COALESCE(SUM(profit_amount),0) AS p, COUNT(*) AS n FROM sales_orders
-            WHERE store_id=$1 AND ${SQL_ORDER_DONE} AND created_at::date=$2`, [storeId, today]);
+            WHERE store_id=$1 AND ${SQL_ORDER_DONE} AND COALESCE(pay_paid_at, created_at)::date=$2`, [storeId, today]);
         const m = await q1<any>(
           `SELECT COALESCE(SUM(profit_amount),0) AS p FROM sales_orders
-            WHERE store_id=$1 AND ${SQL_ORDER_DONE} AND created_at::date >= date_trunc('month', CURRENT_DATE)`, [storeId]);
+            WHERE store_id=$1 AND ${SQL_ORDER_DONE} AND COALESCE(pay_paid_at, created_at)::date >= date_trunc('month', CURRENT_DATE)`, [storeId]);
         return [`今日（${today}）毛利 ¥${Number(r?.p).toFixed(2)}（${r?.n ?? 0} 单）；本月累计毛利 ¥${Number(m?.p).toFixed(2)}。`];
       } },
       { k: /销售|营业额|流水|营收|卖了/, name: '销售', fn: async () => {
         const r = await q1<any>(
           `SELECT COUNT(*) AS n, COALESCE(SUM(payable_amount),0) AS s, COALESCE(AVG(payable_amount),0) AS a
-             FROM sales_orders WHERE store_id=$1 AND ${SQL_ORDER_DONE} AND created_at::date=$2`, [storeId, today]);
+             FROM sales_orders WHERE store_id=$1 AND ${SQL_ORDER_DONE} AND COALESCE(pay_paid_at, created_at)::date=$2`, [storeId, today]);
         return [`今日销售额 ¥${Number(r?.s).toFixed(2)}，${r?.n ?? 0} 单，客单价 ¥${Number(r?.a).toFixed(2)}。`];
       } },
       { k: /排行|热销|卖得最好|TOP|top/, name: '热销榜', fn: async () => {
@@ -703,7 +703,7 @@ export class AibrainEngine {
       { k: /退货|退款/, name: '退款', fn: async () => {
         const r = await q1<any>(
           `SELECT COUNT(*) AS n, COALESCE(SUM(payable_amount),0) AS s FROM sales_orders
-            WHERE store_id=$1 AND status IN ('已退款','部分退款') AND created_at::date=$2`, [storeId, today]);
+            WHERE store_id=$1 AND status IN ('已退款','部分退款') AND COALESCE(pay_paid_at, created_at)::date=$2`, [storeId, today]);
         return [`今日退款 ${r?.n ?? 0} 单，金额 ¥${Number(r?.s).toFixed(2)}。`];
       } },
       { k: /关联|搭配|一起买|推荐/, name: '关联推荐', fn: async () => {
@@ -716,9 +716,9 @@ export class AibrainEngine {
         const [t, y] = await Promise.all([
           q1<any>(`SELECT COUNT(*) AS n, COALESCE(SUM(payable_amount),0) AS s, COALESCE(SUM(profit_amount),0) AS p,
                           COALESCE(AVG(payable_amount),0) AS a FROM sales_orders
-                    WHERE store_id=$1 AND ${SQL_ORDER_DONE} AND created_at::date=$2`, [storeId, today]),
+                    WHERE store_id=$1 AND ${SQL_ORDER_DONE} AND COALESCE(pay_paid_at, created_at)::date=$2`, [storeId, today]),
           q1<any>(`SELECT COALESCE(SUM(payable_amount),0) AS s FROM sales_orders
-                    WHERE store_id=$1 AND ${SQL_ORDER_DONE} AND created_at::date=CURRENT_DATE-1`, [storeId]),
+                    WHERE store_id=$1 AND ${SQL_ORDER_DONE} AND COALESCE(pay_paid_at, created_at)::date=CURRENT_DATE-1`, [storeId]),
         ]);
         const vs = Number(y?.s) > 0 ? ((Number(t?.s) - Number(y?.s)) / Number(y?.s) * 100) : (Number(t?.s) > 0 ? 100 : 0);
         return [`今日销售额 ¥${Number(t?.s).toFixed(2)}（${t?.n ?? 0} 单，较昨日 ${vs >= 0 ? '+' : ''}${vs.toFixed(1)}%），毛利 ¥${Number(t?.p).toFixed(2)}，客单价 ¥${Number(t?.a).toFixed(2)}。`];
@@ -726,7 +726,7 @@ export class AibrainEngine {
       { k: /时段|高峰|分时|几点.*卖|卖.*几点/, name: '分时销售', fn: async () => {
         const rows = await q<any>(
           `SELECT EXTRACT(HOUR FROM created_at)::int AS h, COUNT(*)::int AS n, COALESCE(SUM(payable_amount),0) AS s
-             FROM sales_orders WHERE store_id=$1 AND ${SQL_ORDER_DONE} AND created_at::date=$2
+             FROM sales_orders WHERE store_id=$1 AND ${SQL_ORDER_DONE} AND COALESCE(pay_paid_at, created_at)::date=$2
             GROUP BY 1 ORDER BY 1`, [storeId, today]);
         if (!rows.length) return ['今日暂无销售流水。'];
         const top = rows.reduce((a, b) => Number(b.s) > Number(a.s) ? b : a);
@@ -872,10 +872,10 @@ export class AibrainEngine {
                 COUNT(*) FILTER (WHERE status IN ('已退款','部分退款')) AS refunded,
                 COALESCE(SUM(CASE WHEN status IN ('已退款','部分退款') THEN payable_amount ELSE 0 END),0) AS refund_amt,
                 COUNT(*) FILTER (WHERE profit_amount<0) AS neg
-           FROM sales_orders WHERE store_id=$1 AND created_at::date=$2 AND status <> '挂单'`, [storeId, d]),
+           FROM sales_orders WHERE store_id=$1 AND COALESCE(pay_paid_at, created_at)::date=$2 AND status <> '挂单'`, [storeId, d]),
       q1<any>(
         `SELECT COUNT(*) AS n, COALESCE(SUM(payable_amount),0) AS sales, COALESCE(SUM(profit_amount),0) AS profit
-           FROM sales_orders WHERE store_id=$1 AND created_at::date=$2 AND status <> '挂单'`,
+           FROM sales_orders WHERE store_id=$1 AND COALESCE(pay_paid_at, created_at)::date=$2 AND status <> '挂单'`,
         [storeId, fmtD(new Date(new Date(d).getTime() - 86400000))]),
     ]);
     const newMembers = await q1<{ n: string }>(
@@ -960,7 +960,7 @@ export class AibrainEngine {
     const maxTurnover = Number(await this.setting('ai.assortment.max_turnover_days', 60) ?? 60);
     const rows = await q<any>(
       `WITH sold AS (
-         SELECT si.product_id AS pid, SUM(si.qty) AS qty_w, COUNT(DISTINCT so.created_at::date) AS sell_days
+         SELECT si.product_id AS pid, SUM(si.qty) AS qty_w, COUNT(DISTINCT COALESCE(so.pay_paid_at, so.created_at)::date) AS sell_days
            FROM sale_items si JOIN sales_orders so ON so.id=si.order_id AND ${SQL_ORDER_DONE}
             AND so.created_at >= CURRENT_DATE - $2::int
           WHERE so.store_id=$1 GROUP BY si.product_id
@@ -1328,7 +1328,7 @@ export class AibrainEngine {
       `SELECT w.wdate, w.temp_max, w.temp_min, w.precip_mm, w.cond_text,
               COALESCE(agg.amt, 0) AS amt
          FROM weather_daily w
-         LEFT JOIN (SELECT so.created_at::date AS d, SUM(so.payable_amount) AS amt
+         LEFT JOIN (SELECT COALESCE(so.pay_paid_at, so.created_at)::date AS d, SUM(so.payable_amount) AS amt
                       FROM sales_orders so WHERE so.store_id=$1 AND ${SQL_ORDER_DONE}
                       GROUP BY 1) agg ON agg.d = w.wdate
         WHERE w.store_id=$1 AND w.wdate >= CURRENT_DATE - 120 AND w.wdate < CURRENT_DATE

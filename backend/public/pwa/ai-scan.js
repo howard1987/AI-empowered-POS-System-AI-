@@ -252,7 +252,10 @@ const AiScan = {
       }
       const fx = (v, isDiff, fmt) => (v == null || v === '') ? '' :
         `<span style="${isDiff ? 'color:#c0392b;font-weight:700' : 'color:#888'}">${esc(fmt ?? String(v))}</span>`;
-      listBox.innerHTML = items.map((it, i) => {
+      // V5.0.18g：按置信度降序渲染（手机/桌面收银台同组件，机制一致）；data-* 仍绑 items 原索引，勾选/加减不受影响
+      const view = items.map((it, i) => ({ it, i })).sort((a, b) =>
+        ((b.it.rawImgSim ?? b.it.conf) || 0) - ((a.it.rawImgSim ?? a.it.conf) || 0));
+      listBox.innerHTML = view.map(({ it, i }) => {
         const metaBits = [
           fx(it.category, diff.category),
           it.sellPrice != null ? fx(it.sellPrice, diff.sellPrice, '¥' + Number(it.sellPrice).toFixed(2)) : '',
@@ -284,7 +287,10 @@ const AiScan = {
       okBtn.classList.toggle('hidden', !items.some(x => x.checked));
     };
 
-    /** 抓当前帧（V4.27.1 Q12：前端压缩到 ≤1280×720 再上传，JPEG 0.75——识别够用且大幅省传输耗时） */
+    /** 抓当前帧（V4.27.1 Q12：前端压缩到 ≤1280×720 再上传，JPEG 0.75——识别够用且大幅省传输耗时）
+     *  V5.0.18g 黑帧守卫：WebView 相机会话被系统打断（息屏/切后台回来）后 track 仍在但只出黑帧，
+     *  预览停留旧画面看似正常，识别却每帧全黑 → 全黑嵌入恒定 → trackStable 连续"稳定" →
+     *  噪声置信误采信（实测全帧恒判"宜简 0.16"）。32×32 采样统计亮度，近全黑/零方差拒绝发帧。 */
     const grabFrame = () => {
       if (!stream || video.readyState < 2) return '';
       const MAX_W = 1280, MAX_H = 720;
@@ -293,9 +299,22 @@ const AiScan = {
       const c = document.createElement('canvas');
       c.width = Math.max(1, Math.round(vw * k));
       c.height = Math.max(1, Math.round(vh * k));
-      c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+      const ctx = c.getContext('2d');
+      ctx.drawImage(video, 0, 0, c.width, c.height);
+      try {
+        const t = document.createElement('canvas'); t.width = 32; t.height = 32;
+        const tc = t.getContext('2d');
+        tc.drawImage(video, 0, 0, 32, 32);
+        const px = tc.getImageData(0, 0, 32, 32).data;
+        let sum = 0, sum2 = 0; const n = 32 * 32;
+        for (let i = 0; i < px.length; i += 4) { const l = px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114; sum += l; sum2 += l * l; }
+        const mean = sum / n, sd = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
+        if (mean < 12 && sd < 8) { blackFrames++; if (blackFrames === 3 || blackFrames === 20) setState('⚠️ 相机画面异常（黑帧）：请重进本弹窗恢复相机'); return ''; }
+      } catch { /* 采样失败不拦截正常流程 */ }
+      blackFrames = 0;
       return c.toDataURL('image/jpeg', 0.75);
     };
+    let blackFrames = 0;
 
     /** 合并一轮识别结果：已有→刷新置信度/勾选；新出现→追加或防抖 +1
      *  V4.11.2 多件识别（exact）：count 为轮廓分割实点数，非手动改过则直填（不再走"重现 +1"防抖） */
@@ -351,7 +370,7 @@ const AiScan = {
         }
         const d = await call('POST', '/ai/recognize', { imageBase64: frame, scene, mode: 'multi' });
         if (d.logId) lastLogId = Number(d.logId);   // V4.11.3 记录日志 ID，确认时回传纠正
-        const multiExact = d.layer === 'clip-multi';   // 多件识别：count 为分割实点数，直接采信
+        const multiExact = d.layer === 'emb-multi' || d.layer === 'clip-multi';   // V5.0.17b 正名 emb-multi（兼容旧值 clip-multi）：count 为分割实点数，直接采信
         const list = (d.result || []).map(r => ({ productId: Number(r.productId), name: r.name || `商品${r.productId}`, count: Math.max(1, Number(r.count) || 1), conf: Number(r.conf || 0), exact: multiExact }));
         if (list.length) { emptyRounds = 0; mergeResults(list); }
         else if ((d.candidates || []).length) {

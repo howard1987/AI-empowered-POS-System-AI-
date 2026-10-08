@@ -4,6 +4,19 @@ import { openDetailModal, openExportPicker } from '../common-ui.js';
 import { serialSendBase64 } from '../serialprint.js';
 import { segHtml, bindSeg, hl, noResult } from '../ui-polish.js';   // V4.26.3：统一状态筛选 / 搜索命中高亮 / 空态
 
+/* V5.0.16 商品属性「记库存」与「称重」互斥：勾选其一自动取消另一个，两者不可同时为真
+ * （避免下游「是否入库/是否传秤/盘点口径」判定冲突）。均不勾选 = 既不记库存也不称重，允许。 */
+function bindStockWeighExclusive(trackEl, weightedEl) {
+  if (!trackEl || !weightedEl) return;
+  const sync = (src) => {
+    if (src.checked) {
+      (src === trackEl ? weightedEl : trackEl).checked = false;
+    }
+  };
+  trackEl.onchange = () => sync(trackEl);
+  weightedEl.onchange = () => sync(weightedEl);
+}
+
 /* V4.9.8 跨页编辑商品：模块级监听 pd:edit 事件（如库存总览的商品详情弹窗点「编辑商品」）。
  * render() 时注入 pdEditCtx（view + openEdit），未渲染过则先跳转商品档案页触发渲染。 */
 let pdEditCtx = null;   // { view, openEdit }
@@ -1288,6 +1301,8 @@ export async function render(view) {
   }
 
   view.querySelector('#pNew').onclick = () => { modal.style.display = 'flex'; resetForm(); $('#mBarcode').focus(); };
+  // V5.0.16：新建商品「记库存/称重」互斥联动（勾其一自动取消另一个）
+  bindStockWeighExclusive($('#mTrack'), $('#mWeighted'));
 
   /* ── V4.9.11 条码大数据自动填充：输码/扫码 → 查本店库+在线条码库 → 只填空位不覆盖已填，全部可改 ── */
   const bcHint = $('#mBcHint');
@@ -1941,8 +1956,12 @@ export async function render(view) {
     // V4.25.6 库存上下限回填（0/NULL 视为未设）
     view.querySelector('#eMinStock').value = Number(p.min_stock) > 0 ? p.min_stock : '';
     view.querySelector('#eMaxStock').value = Number(p.max_stock) > 0 ? p.max_stock : '';
-    view.querySelector('#eTrack').checked = p.track_inventory !== false;
-    view.querySelector('#eWeighted').checked = !!p.is_weighted;
+    // V5.0.16：记库存/称重互斥回填；若历史数据两者同真（迁移前遗留），优先保留「称重」并取消「记库存」
+    const eWeightedBox = view.querySelector('#eWeighted');
+    const eTrackBox = view.querySelector('#eTrack');
+    eWeightedBox.checked = !!p.is_weighted;
+    eTrackBox.checked = eWeightedBox.checked ? false : (p.track_inventory !== false);
+    bindStockWeighExclusive(eTrackBox, eWeightedBox);
     view.querySelector('#eStatus').value = String(p.status ?? 1);
     lastSamples = d.aiSamples || [];
     renderEditPhoto(p.photo_path || '', lastSamples);

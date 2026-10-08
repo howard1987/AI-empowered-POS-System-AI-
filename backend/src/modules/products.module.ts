@@ -602,6 +602,11 @@ class ProductsController {
     if (b.is_weighted && (b.keep_days === undefined || b.keep_days === null) && b.categoryRequiresKeepDays) {
       throw new BizException(50041, '食品类商品建档保质期必填（V4.3.6）');
     }
+    // V5.0.16 记库存/称重互斥：两者同时为真会让下游「是否入库 / 是否传秤 / 盘点口径」判定冲突，
+    // 约定只能二选一。前端表单已做勾选联动互斥，这里做服务端兜底（防绕过前端直接调接口建档）。
+    if (b.trackInventory !== false && !!b.isWeighted) {
+      throw new BizException(40003, '「记库存」与「称重」只能二选一：称重商品请只勾「称重」，其余商品请只勾「记库存」');
+    }
     // V4.13.9 保质期校验：换算成天须在 1~32750 内（SMALLINT 上限 32767），给出中文提示而不是数据库报错
     const keepDaysNum = Number(b.keepDays ?? b.keep_days ?? 0);
     if (keepDaysNum > 0 && (keepDaysNum < 1 || keepDaysNum > 32750)) {
@@ -729,6 +734,7 @@ class ProductsController {
     // 仅校验本次请求实际传入的字段——历史违规数据（列表已 price_warn 预警）编辑其他字段不受阻，改到该字段时强制纠正
     const cur = await q1<any>(
       `SELECT p.sell_price, p.member_price, p.wholesale_price, p.min_price, p.min_discount_rate,
+              p.is_weighted, p.track_inventory,
               (SELECT spp.price FROM supplier_product_prices spp WHERE spp.product_id = p.id ORDER BY spp.id DESC LIMIT 1) AS cost_price
          FROM products p WHERE p.id=$1`, [id]);
     const costNum = Number(cur?.cost_price ?? 0);
@@ -746,6 +752,19 @@ class ProductsController {
     const keepDaysEdit = Number(b.keepDays ?? 0);
     if (keepDaysEdit > 0 && (keepDaysEdit < 1 || keepDaysEdit > 32750)) {
       throw new BizException(40003, `保质期换算成天须在 1～32750 天内（当前 ${keepDaysEdit} 天超出范围，请检查数量×单位）`);
+    }
+    // V5.0.16 记库存/称重互斥：仅当本次请求实际改动了这两个属性字段之一时才校验，
+    // 避免历史遗留的冲突数据在编辑其它字段时被误拒卡死；有效值 = 本次传入值 ?? 库中现值。
+    const trackTouched = b.trackInventory !== undefined || b.track_inventory !== undefined;
+    const weightedTouched = b.isWeighted !== undefined || b.is_weighted !== undefined;
+    if (trackTouched || weightedTouched) {
+      const effTrack = trackTouched
+        ? (b.trackInventory ?? b.track_inventory) !== false
+        : cur?.track_inventory !== false;
+      const effWeighted = weightedTouched ? !!(b.isWeighted ?? b.is_weighted) : !!cur?.is_weighted;
+      if (effTrack && effWeighted) {
+        throw new BizException(40003, '「记库存」与「称重」只能二选一：称重商品请只勾「称重」，其余商品请只勾「记库存」');
+      }
     }
     const updated = await q1(
       `UPDATE products SET
@@ -768,6 +787,8 @@ class ProductsController {
          pinyin_code     = COALESCE(NULLIF($18,''), pinyin_code),   -- V4.18.2 改名时自动重算拼音码
          min_price       = COALESCE($19, min_price),                -- V4.25.3 最低卖价（0=不限制）
          min_discount_rate = COALESCE($20, min_discount_rate),      -- V4.25.3 最低折扣率（100=不打折）
+         is_weighted      = COALESCE($21, is_weighted),             -- V5.0.16 修复：此前 update 漏掉属性字段，编辑「记库存/称重」不生效
+         track_inventory  = COALESCE($22, track_inventory),
          updated_at  = now()
        WHERE id=$1 RETURNING *`,
        [id, b.name ?? null, b.barcode ?? null, b.categoryId ?? null, b.sellPrice ?? null,
@@ -777,7 +798,9 @@ class ProductsController {
        b.spec ?? null, b.wholesalePrice ?? null, b.memberDiscount ?? null,
        b.name ? genPinyin(String(b.name)) : '',
        (b.minPrice ?? b.min_price) !== undefined ? (Number(b.minPrice ?? b.min_price) || 0) : null,
-       (b.minDiscountRate ?? b.min_discount_rate) !== undefined ? (Number(b.minDiscountRate ?? b.min_discount_rate) || 0) : null],
+             (b.minDiscountRate ?? b.min_discount_rate) !== undefined ? (Number(b.minDiscountRate ?? b.min_discount_rate) || 0) : null,
+             b.isWeighted !== undefined ? !!b.isWeighted : (b.is_weighted !== undefined ? !!b.is_weighted : null),
+             b.trackInventory !== undefined ? b.trackInventory !== false : (b.track_inventory !== undefined ? b.track_inventory !== false : null)],
     );
     // V4.9.12 纠错回写闭环：编辑保存同样回写（用户改过的名字/规格就是最真实的数据）
     const newBarcode = b.barcode ? String(b.barcode).trim() : '';

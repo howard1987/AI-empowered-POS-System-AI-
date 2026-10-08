@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('cashier', {
 // V4.22.1：首次配置向导 / 断连错误页（setup.html、neterr.html 经同一 preload 使用）
 contextBridge.exposeInMainWorld('DesktopShell', {
   isDesktop: true,
+  // V5.0.18g：硬件稳定标识（Windows MachineGuid，卸载重装 EXE 不变）→ 渲染层 deviceCode() 派生 HW- 设备码
+  machineGuid: () => ipcRenderer.invoke('pos:machine-guid'),
   silentPrintHtml: (html, opts = {}) => ipcRenderer.invoke('pos:print-html', { html, widthMm: opts.widthMm }),
   registerHotkeys: keys => ipcRenderer.invoke('pos:hotkeys-register', keys),
   // V4.22.2：桌面端「关闭程序」按钮（登录页/退出收银台后使用；kiosk 下唯一正规退出通道）

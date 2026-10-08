@@ -1,9 +1,9 @@
-import { Module, Controller, Post, Get, Delete, Body, HttpCode, Param, ParseIntPipe, Req } from '@nestjs/common';
+import { Module, Controller, Post, Get, Put, Delete, Body, HttpCode, Param, ParseIntPipe, Query, Req } from '@nestjs/common';
 import { RequirePerms } from '../common/auth';
 import * as bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
 import * as crypto from 'crypto';
-import { q, q1, tx, audit } from '../common/db';
+import { q, q1, tx, cx, audit } from '../common/db';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, JWT_SECRET, Public, clearAuthStateCache } from '../common/auth';
 import { lanIPv4, MDNS_HOST } from '../common/cert';
@@ -29,6 +29,30 @@ async function isSuperAdmin(empId: number | string): Promise<boolean> {
     `SELECT 1 AS ok FROM employee_roles er JOIN roles ro ON ro.id = er.role_id
       WHERE er.employee_id = $1 AND ro.name = '超级管理员' LIMIT 1`, [Number(empId)]);
   return !!r;
+}
+/** V5.0.18g：员工是否持有某权限点 = (角色权限 ∪ 本机 allow) − deny（表缺失回退纯角色查询） */
+async function hasPermCode(empId: number | string, code: string): Promise<boolean> {
+  try {
+    const r = await q1(
+      `SELECT 1 AS ok FROM permission_points pp
+        WHERE pp.code=$2
+          AND ((pp.id IN (SELECT rp.permission_id FROM employee_roles er
+                           JOIN role_permissions rp ON rp.role_id = er.role_id
+                          WHERE er.employee_id=$1)
+             OR pp.id IN (SELECT permission_id FROM employee_perm_overrides
+                           WHERE employee_id=$1 AND mode='allow'))
+          AND pp.id NOT IN (SELECT permission_id FROM employee_perm_overrides
+                             WHERE employee_id=$1 AND mode='deny')) LIMIT 1`, [Number(empId), code]);
+    return !!r;
+  } catch (e: any) {
+    if (String(e?.code) !== '42P01') throw e;   // 表未建（未迁移）→ 回退纯角色
+    const r = await q1(
+      `SELECT 1 AS ok FROM employee_roles er
+         JOIN role_permissions rp ON rp.role_id = er.role_id
+         JOIN permission_points pp ON pp.id = rp.permission_id
+        WHERE er.employee_id=$1 AND pp.code=$2 LIMIT 1`, [Number(empId), code]);
+    return !!r;
+  }
 }
 /**
  * V5.0.0 连锁（方案 §2.6.1）：解析员工「数据范围」，登录时一次、打入 JWT（与 perms 同策略）
@@ -249,8 +273,15 @@ class AuthService {
         const d = await q1<any>(`SELECT id, status FROM pos_devices WHERE store_id=$1 AND device_code=$2`,
           [emp.store_id, c]);
         if (d) {
-          // 「待授权」直接转正（这正是本条豁免要解决的死锁）；
-          // 「已停用」是管理员显式收回权限，尊重该意图不动 —— 真要恢复走 CLI。
+          // V5.0.15 修复：此前回环分支在「已停用」判断之前就 return，
+          // 导致本机（127.x/::1）登录时即使该设备已被管理员停用也能登进去 —— 停用形同虚设。
+          // 「已停用」是管理员显式收回权限的意图，任何来源（含回环）都必须拒绝。
+          if (String(d.status) === '已停用') {
+            await audit(emp.store_id, emp.id, '系统', 'pos_device.loopback_denied', 'pos_device', Number(d.id),
+              { code: c, ip, reason: '已停用' });
+            throw new BizException(40308, '本机授权已被停用，请联系管理员（设备码 ' + c + '）', 403);
+          }
+          // 「待授权」直接转正（这正是本条豁免要解决的死锁）
           await q(`UPDATE pos_devices SET last_seen_at=now(), last_ip=$2,
                        status = CASE WHEN status='待授权' THEN '已授权' ELSE status END,
                        device_name=COALESCE(NULLIF(device_name,''), $3)
@@ -277,6 +308,15 @@ class AuthService {
     // 应急恢复码（决策 2-A：超管不豁免，靠恢复码防锁死）。
     // 必须放在「未登记」分支之前：否则全新设备会先被登记成待授权并直接抛错，
     // 恢复码根本没机会生效 → 管理员换新设备后永远登不上（实测踩到）。
+    if (dev.recovery) {
+      // V5.0.15 修复：恢复码此前不校验使用者身份 —— 任何员工只要知道恢复码，
+      // 就能把自己手上的设备"洗"成已授权，等于把设备授权体系整体绕过。
+      // 恢复码是最高危的应急通道（可绕过设备授权），必须限定超级管理员本人使用。
+      if (!(await isSuperAdmin(Number(emp.id)))) {
+        throw new BizException(40318,
+          '应急恢复码仅限超级管理员使用，请联系超管在本机登录（员工：' + String(emp.emp_no) + '）', 403);
+      }
+    }
     if (dev.recovery && await recoveryCodeOk(dev.recovery)) {
       if (!row) {
         row = await q1<any>(
@@ -377,9 +417,28 @@ class AuthService {
           throw new BizException(40313, '设备签名重复（疑似重放攻击），请重新登录', 403);
         }
         if (!verifyDeviceSig(row.pubkey, dev.sig, deviceSignPayload(dev, emp.emp_no))) {
-          await q(`UPDATE pos_devices SET status='待授权' WHERE id=$1`, [row.id]);
-          throw new BizException(40314,
-            `设备签名校验失败（设备码 ${code}）：该设备码可能已被复制到其他设备，已转待授权，请管理员重新审批`, 403);
+          /* V5.0.18g 重装自动换绑：设备码为硬件派生（Android ANDROID_ID，卸载重装不变）的收银机，
+           * 卸载重装会把 WebView 存储连同签名私钥一起清空——重新登录时必然"新钥验签失败"。
+           * 若该设备近 30 天内活跃（last_seen_at），且登录工号密码已验证通过，判定为「同机重装」
+           * 而非设备码复制：自动换绑登记公钥为本机新公钥并留痕，硬件不变则授权不变。
+           * 30 天窗口防陈旧设备码被盗用（30 天未活跃的设备码重装/被复制仍走人工审批）。
+           * 非 APK 场景（浏览器/EXE，软标识）不自动换绑——软码可被复制，保持人工审批。 */
+          const isNativeCode = /^HW-[0-9A-F]{8}$/.test(String(code));   // 硬件派生码（APK ANDROID_ID / EXE MachineGuid）
+          const lastSeenAge = row.last_seen_at ? (Date.now() - new Date(row.last_seen_at).getTime()) / 86400_000 : Infinity;
+          const rebindable = isNativeCode && row.status === '已授权' && !!row.pubkey && lastSeenAge <= 30
+            && String(dev.pubkey || '').length > 100;   // 新公钥有效（重装后新生成的密钥对）
+          if (rebindable) {
+            await q(`UPDATE pos_devices SET pubkey=$2, status='已授权', last_seen_at=now(), last_ip=$3,
+                        device_type=COALESCE($4,device_type)
+                      WHERE id=$1`, [row.id, String(dev.pubkey), ip, detectDeviceType(ua, dev.type)]);
+            await audit(emp.store_id, emp.id, '系统', 'pos_device.reinstall_rebind', 'pos_device', Number(row.id),
+              { code, daysSinceLastSeen: Math.round(lastSeenAge * 10) / 10 });
+            // 换绑成功 → 继续正常登录流程（不抛 40314）
+          } else {
+            await q(`UPDATE pos_devices SET status='待授权' WHERE id=$1`, [row.id]);
+            throw new BizException(40314,
+              `设备签名校验失败（设备码 ${code}）：该设备码可能已被复制到其他设备，已转待授权，请管理员重新审批`, 403);
+          }
         }
       }
     }
@@ -441,13 +500,31 @@ class AuthService {
 
   /** V4.24.0：签发 token（登录 / 扫码登录 / PIN 登录三路共用，权限点与安全标记口径一致） */
   private async issue(emp: any, auditAction: string) {
-    const perms = await q<{ code: string }>(
-      `SELECT DISTINCT pp.code
-         FROM employee_roles er
-         JOIN role_permissions rp ON rp.role_id = er.role_id
-         JOIN permission_points pp ON pp.id = rp.permission_id
-        WHERE er.employee_id = $1`, [emp.id],
-    );
+    // V5.0.18g 员工级权限覆盖：有效权限 = (角色权限 ∪ allow) − deny（employee_perm_overrides）
+    // 表不存在（旧库未跑迁移 184）→ 回落纯角色权限，绝不阻断登录
+    let perms: { code: string }[];
+    try {
+      perms = await q<{ code: string }>(
+        `SELECT DISTINCT pp.code
+           FROM permission_points pp
+          WHERE (pp.id IN (SELECT rp.permission_id FROM employee_roles er
+                            JOIN role_permissions rp ON rp.role_id = er.role_id
+                           WHERE er.employee_id = $1)
+              OR pp.id IN (SELECT permission_id FROM employee_perm_overrides
+                            WHERE employee_id = $1 AND mode = 'allow'))
+            AND pp.id NOT IN (SELECT permission_id FROM employee_perm_overrides
+                               WHERE employee_id = $1 AND mode = 'deny')`, [emp.id],
+      );
+    } catch (e: any) {
+      if (String(e?.code) !== '42P01') throw e;
+      perms = await q<{ code: string }>(
+        `SELECT DISTINCT pp.code
+           FROM employee_roles er
+           JOIN role_permissions rp ON rp.role_id = er.role_id
+           JOIN permission_points pp ON pp.id = rp.permission_id
+          WHERE er.employee_id = $1`, [emp.id],
+      );
+    }
     // 超管通配：绑定「超级管理员」角色 → 持有 '*'（后端守卫豁免 + 前端权限位全通过）
     const permCodes = (await isSuperAdmin(emp.id)) ? ['*', ...perms.map(p => p.code)] : perms.map(p => p.code);
     // V5.0.0 连锁：登录时解析一次数据范围打入 JWT（与 perms 同策略，请求内零查库）
@@ -643,13 +720,9 @@ class AuthService {
     const emp = await q1<any>(`SELECT * FROM employees WHERE emp_no=$1 AND status='在职'`, [no]);
     if (!emp) throw new BizException(41020, '工号不存在或已离职', 401);
     if (!emp.auth_code_hash) throw new BizException(41021, '该工号未设置授权码，请店长先在「设置 → 店长授权码」中设置', 401);
-    // 资格校验：须持「改价/折扣授权」权限点（超管等价）
+    // 资格校验：须持「改价/折扣授权」权限点（超管等价；V5.0.18g 起员工级覆盖同样生效）
     const superAdmin = await isSuperAdmin(emp.id);
-    const hasPerm = superAdmin || !!(await q1(
-      `SELECT 1 AS ok FROM employee_roles er
-         JOIN role_permissions rp ON rp.role_id = er.role_id
-         JOIN permission_points pp ON pp.id = rp.permission_id
-        WHERE er.employee_id=$1 AND pp.code='pos.price.authorize' LIMIT 1`, [Number(emp.id)]));
+    const hasPerm = superAdmin || (await hasPermCode(emp.id, 'pos.price.authorize'));
     if (!hasPerm) throw new BizException(41022, '该工号无改价/折扣授权资格（需店长级权限）', 403);
     if (!bcrypt.compareSync(String(authCode), emp.auth_code_hash)) throw new BizException(41023, '授权码不正确', 401);
     const ticket = jwt.sign(
@@ -664,11 +737,7 @@ class AuthService {
    *  须持 pos.price.authorize；用登录态证明身份、免输授权码；票据口径与 /auth/authorize 完全一致，仍写审计留痕 */
   async authorizeSelf(user: AuthUser) {
     const superAdmin = await isSuperAdmin(user.sub);
-    const hasPerm = superAdmin || !!(await q1(
-      `SELECT 1 AS ok FROM employee_roles er
-         JOIN role_permissions rp ON rp.role_id = er.role_id
-         JOIN permission_points pp ON pp.id = rp.permission_id
-        WHERE er.employee_id=$1 AND pp.code='pos.price.authorize' LIMIT 1`, [Number(user.sub)]));
+    const hasPerm = superAdmin || (await hasPermCode(user.sub, 'pos.price.authorize'));
     if (!hasPerm) throw new BizException(41022, '当前账号无改价/折扣授权资格（需店长级权限）', 403);
     const ticket = jwt.sign(
       { sub: Number(user.sub), empNo: user.empNo, name: user.name, scope: 'price' },
@@ -680,20 +749,31 @@ class AuthService {
 }
 
 // ─── Controller ───
+/** V5.0.18g：员工删除冷静期（停用满该天数方可删除） */
+const EMP_DELETE_GRACE_DAYS = 90;
+
 @Controller('auth')
 class AuthController {
   private svc = new AuthService();
 
-  /** VQA（需求3）：已停用员工允许删除——仅限「停用」且无任何业务记录的账号；有记录一律拒绝并建议保留停用 */
+  /** V5.0.18g：删除员工——停用满 90 天冷静期后方可。
+   *  无任何业务记录 → 物理删除；有业务记录 → 「注销归档」：全量快照入 employee_delete_archive，
+   *  员工行转「已注销」（密码/手机/授权码作废，登录守卫自动拦截），业务单据外键与操作人姓名完整保留。 */
   @RequirePerms('staff.manage')
   @Delete('employees/:id')
   async deleteEmployee(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
     const eid = Number(id);
     if (user && Number(user.sub) === eid) throw new BizException(40003, '不能删除当前登录账号');
-    const emp = await q1<any>(`SELECT id, emp_no, name, status FROM employees WHERE id=$1`, [eid]);
+    const emp = await q1<any>(`SELECT id, store_id, emp_no, name, status, disabled_at FROM employees WHERE id=$1`, [eid]);
     if (!emp) throw new BizException(40404, '员工不存在', 404);
     if (String(emp.emp_no).toUpperCase() === 'ADMIN') throw new BizException(40003, '超级管理员账号不可删除');
     if (emp.status !== '停用') throw new BizException(40003, '仅「停用」状态员工可删除，请先停用');
+    // V5.0.18g：90 天冷静期（从停用时刻起算）
+    if (!emp.disabled_at) throw new BizException(40003, '缺少停用时间记录，请重新执行一次「停用」以开始 90 天冷静期');
+    const days = Math.floor((Date.now() - new Date(emp.disabled_at).getTime()) / 86400000);
+    if (days < EMP_DELETE_GRACE_DAYS) {
+      throw new BizException(40003, `停用未满 ${EMP_DELETE_GRACE_DAYS} 天（已停 ${days} 天，还需 ${EMP_DELETE_GRACE_DAYS - days} 天）后方可删除`);
+    }
     const refs: string[] = [];
     const seen = new Set<string>();
     const fks = await q<any>(`SELECT tc.table_name AS t, kcu.column_name AS c
@@ -713,13 +793,30 @@ class AuthController {
         if (n && Number(n.n) > 0) refs.push(`${p.t}(${n.n})`);
       } catch { /* 列不存在等非致命 */ }
     }
-    if (refs.length) throw new BizException(40003, `该员工存在业务记录（${refs.slice(0, 3).join('、')}${refs.length > 3 ? ' 等' : ''}），禁止物理删除；建议保留「停用」状态以满足审计追溯`, 400);
-    await tx(async c => {
-      await c.query(`DELETE FROM employee_roles WHERE employee_id=$1`, [eid]);
-      await c.query(`DELETE FROM employees WHERE id=$1`, [eid]);
-    });
-    await audit(user.storeId, user.sub, '员工', 'employee.delete', 'employee', eid, { empNo: emp.emp_no, name: emp.name });
-    return { deleted: true, empNo: emp.emp_no, name: emp.name };
+    if (!refs.length) {
+      // 无业务记录：物理删除（干净移除，工号不复用由注销工号占位规则无关——此处删除后工号可被重建）
+      await tx(async c => {
+        await c.query(`DELETE FROM employee_roles WHERE employee_id=$1`, [eid]);
+        await c.query(`DELETE FROM employees WHERE id=$1`, [eid]);
+      });
+    } else {
+      // 有业务记录：注销归档——快照入档，员工行转「已注销」并作废敏感字段；FK 完整保留，单据仍显示操作人
+      const roles = (await q(`SELECT r.name FROM employee_roles er JOIN roles r ON r.id=er.role_id WHERE er.employee_id=$1`, [eid])).map((x: any) => x.name);
+      const full = await q1<any>(`SELECT row_to_json(e.*) AS snap FROM employees e WHERE e.id=$1`, [eid]);
+      const snapshot = { ...full?.snap, roles, refs } as Record<string, unknown>;
+      delete snapshot.password_hash;
+      await tx(async c => {
+        await c.query(
+          `INSERT INTO employee_delete_archive (store_id, emp_no, name, snapshot, archived_by) VALUES ($1,$2,$3,$4,$5)`,
+          [emp.store_id, emp.emp_no, emp.name, JSON.stringify(snapshot), user?.sub ?? null]);
+        await c.query(
+          `UPDATE employees SET status='已注销', password_hash=NULL, phone=NULL, auth_code_hash=NULL, updated_at=now() WHERE id=$1`, [eid]);
+      });
+    }
+    clearAuthStateCache(eid); // 注销/删除后 60s 守卫缓存立即失效
+    await audit(user.storeId, user.sub, '员工', 'employee.delete', 'employee', eid,
+      { empNo: emp.emp_no, name: emp.name, mode: refs.length ? 'archived' : 'purged', refs });
+    return { deleted: true, mode: refs.length ? 'archived' : 'purged', empNo: emp.emp_no, name: emp.name, refs };
   }
 
   @Public()
@@ -891,18 +988,20 @@ class AuthController {
              dataScope: user.ds ?? 'all', scopeStores: user.ss ?? null, hq: !!user.hq };
   }
 
-  /** 员工列表（含角色） */
+  /** 员工列表（含角色）；?archived=1 时包含「已注销」（供恢复入职） */
   @Get('employees')
-  async employees(@CurrentUser() user: AuthUser) {
+  async employees(@Query() qs: any, @CurrentUser() user: AuthUser) {
+    const showArchived = String(qs?.archived || '') === '1';
     const emps = await q(
-      `SELECT e.id, e.emp_no, e.name, e.phone, e.status, e.last_login_at, e.created_at,
+      `SELECT e.id, e.emp_no, e.name, e.phone, e.status, e.disabled_at, e.last_login_at, e.created_at,
               e.auth_code_hash IS NOT NULL AS auth_code_set,
               COALESCE(json_agg(json_build_object('id', r.id, 'name', r.name))
                        FILTER (WHERE r.id IS NOT NULL), '[]') AS roles
          FROM employees e
          LEFT JOIN employee_roles er ON er.employee_id = e.id
          LEFT JOIN roles r ON r.id = er.role_id
-        WHERE e.store_id=$1 GROUP BY e.id ORDER BY e.id`, [user.storeId]);
+        WHERE e.store_id=$1 ${showArchived ? '' : `AND e.status <> '已注销'`}
+        GROUP BY e.id ORDER BY e.id`, [user.storeId]);
     // P2-M2：无人事/排班/对账类权限的查看者，收敛手机号与登录时间（下拉仍可用）
     const full = ['sys.user.manage', 'staff.manage', 'shift.manage', 'recon.confirm']
       .some(p => user.perms.includes(p)) || user.perms.includes('*');
@@ -992,8 +1091,10 @@ class AuthController {
     @CurrentUser() user: AuthUser,
   ) {
     if (!['在职', '停用'].includes(body.status)) throw new BizException(40003, '状态仅支持 在职/停用');
-    const r = await q1(`UPDATE employees SET status=$2, updated_at=now() WHERE id=$1 AND store_id=$3 RETURNING id`,
-      [id, body.status, user.storeId]);
+    // V5.0.18g：停用写 disabled_at（90 天删除冷静期起点）；复职清空
+    const r = await q1(`UPDATE employees SET status=$2,
+        disabled_at = CASE WHEN $2='停用' THEN now() ELSE NULL END, updated_at=now()
+      WHERE id=$1 AND store_id=$3 RETURNING id`, [id, body.status, user.storeId]);
     if (!r) throw new BizException(41004, '员工不存在', 404);
     clearAuthStateCache(id); // P1-H5：停用/复职即时反映到守卫（免等 60s 缓存）
     if (body.status === '停用') {
@@ -1002,6 +1103,20 @@ class AuthController {
     await audit(user.storeId, user.sub, '系统', 'staff.status', 'employee', id,
       { status: body.status, invalidatedTemplates: body.status === '停用' });
     return { id, status: body.status };
+  }
+
+  /** V5.0.18g：已注销员工恢复入职——恢复为「停用」态（disabled_at 保留，冷静期已满），
+   *  再走正常复职流程；原工号原档案复用，历史单据与操作人关联连续。归档快照保留作历史痕迹。 */
+  @RequirePerms('staff.manage')
+  @Post('employees/:id/restore')
+  async restoreEmployee(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
+    const r = await q1<any>(
+      `UPDATE employees SET status='停用', updated_at=now()
+        WHERE id=$1 AND store_id=$2 AND status='已注销' RETURNING id, emp_no, name`, [id, user.storeId]);
+    if (!r) throw new BizException(40003, '仅「已注销」员工可恢复入职（或该员工不在本店）');
+    clearAuthStateCache(id);
+    await audit(user.storeId, user.sub, '员工', 'employee.restore', 'employee', id, { empNo: r.emp_no, name: r.name });
+    return { id, status: '停用', empNo: r.emp_no, name: r.name, note: '已恢复为「停用」状态，请重置密码并复职' };
   }
 
   /** V4.25.7 店长授权码管理（移到后台员工管理）：设置/修改/清除；authCode 传 null/空串 = 清除 */
@@ -1136,6 +1251,62 @@ class AuthController {
     clearAuthStateCache(id); // P1-H5
     await audit(user.storeId, user.sub, '系统', 'auth.reset_password', 'employee', id, { empNo: emp.emp_no });
     return { ok: true };
+  }
+
+  /** V5.0.18g 员工级权限配置（读）：角色基础权限 + 员工覆盖（allow/deny）+ 全量权限目录（按模块分组供勾选） */
+  @RequirePerms('staff.manage')
+  @Get('employees/:id/perms')
+  async getEmployeePerms(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
+    const emp = await q1<any>(`SELECT id, emp_no, name FROM employees WHERE id=$1 AND store_id=$2`, [id, user.storeId]);
+    if (!emp) throw new BizException(40404, '员工不存在', 404);
+    const base = (await q(
+      `SELECT DISTINCT pp.code FROM employee_roles er
+         JOIN role_permissions rp ON rp.role_id = er.role_id
+         JOIN permission_points pp ON pp.id = rp.permission_id
+        WHERE er.employee_id=$1`, [id])).map(r => r.code);
+    const ov = await q(
+      `SELECT pp.code, o.mode FROM employee_perm_overrides o
+         JOIN permission_points pp ON pp.id = o.permission_id WHERE o.employee_id=$1`, [id]).catch(() => [] as any[]);
+    const catalog = await q(
+      `SELECT code, name, module, risk_level FROM permission_points ORDER BY module, id`);
+    return { emp: { id: Number(emp.id), empNo: emp.emp_no, name: emp.name }, base,
+             allow: ov.filter(x => x.mode === 'allow').map(x => x.code),
+             deny: ov.filter(x => x.mode === 'deny').map(x => x.code),
+             catalog: catalog.map(r => ({ code: r.code, name: r.name, module: r.module, risk: r.risk_level })) };
+  }
+
+  /** V5.0.18g 员工级权限配置（写）：allow/deny 覆盖集全量替换；有效权限 = (角色 ∪ allow) − deny。
+   *  生效时机：员工下次登录（perms 打入 JWT）。 */
+  @RequirePerms('staff.manage')
+  @Put('employees/:id/perms')
+  async setEmployeePerms(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() b: { allow?: string[]; deny?: string[] },
+    @CurrentUser() user: AuthUser,
+  ) {
+    const emp = await q1<any>(`SELECT id, store_id, emp_no, name FROM employees WHERE id=$1 AND store_id=$2`, [id, user.storeId]);
+    if (!emp) throw new BizException(40404, '员工不存在', 404);
+    if (emp.emp_no === 'ADMIN') throw new BizException(40003, '超级管理员账号权限固定为全部，不可配置');
+    const allow = [...new Set((Array.isArray(b.allow) ? b.allow : []).map(String).filter(Boolean))];
+    const deny = [...new Set((Array.isArray(b.deny) ? b.deny : []).map(String).filter(Boolean))];
+    const dup = allow.filter(x => deny.includes(x));
+    if (dup.length) throw new BizException(40003, `同一权限不能同时出现在增与减中：${dup.join('、')}`);
+    await tx(async c => {
+      await cx(c, `DELETE FROM employee_perm_overrides WHERE employee_id=$1`, [id]);
+      for (const code of allow) {
+        await cx(c, `INSERT INTO employee_perm_overrides (employee_id, permission_id, mode)
+                      SELECT $1, id, 'allow' FROM permission_points WHERE code=$2
+                      ON CONFLICT (employee_id, permission_id) DO UPDATE SET mode='allow', updated_at=now()`, [id, code]);
+      }
+      for (const code of deny) {
+        await cx(c, `INSERT INTO employee_perm_overrides (employee_id, permission_id, mode)
+                      SELECT $1, id, 'deny' FROM permission_points WHERE code=$2
+                      ON CONFLICT (employee_id, permission_id) DO UPDATE SET mode='deny', updated_at=now()`, [id, code]);
+      }
+    });
+    await audit(user.storeId, user.sub, '员工', 'employee.perms.set', 'employee', id,
+      { empNo: emp.emp_no, name: emp.name, allow, deny });
+    return { ok: true, allow, deny };
   }
 
   /** 角色列表 */

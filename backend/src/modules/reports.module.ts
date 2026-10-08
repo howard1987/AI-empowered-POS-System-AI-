@@ -46,7 +46,7 @@ class ReportsController {
                  COALESCE(SUM(profit_amount),0) AS "profitTotal",
                  count(*) FILTER (WHERE is_emergency)::int AS "emergencyOrders"
             FROM sales_orders
-           WHERE status='已完成' AND created_at::date = CURRENT_DATE${sFilter}`, sParams),
+           WHERE status='已完成' AND COALESCE(pay_paid_at, created_at)::date = CURRENT_DATE${sFilter}`, sParams),
       q1(`SELECT count(*)::int AS total,
                  count(*) FILTER (WHERE created_at::date = CURRENT_DATE)::int AS "newToday"
             FROM members WHERE deleted_at IS NULL`),
@@ -99,8 +99,8 @@ class ReportsController {
       `SELECT sp.channel, count(*)::int AS cnt, COALESCE(SUM(sp.amount),0) AS amount
          FROM sale_payments sp
          JOIN sales_orders o ON o.id = sp.order_id AND o.status='已完成'
-        WHERE ($1::date IS NULL OR o.created_at::date >= $1::date)
-          AND ($2::date IS NULL OR o.created_at::date <= $2::date)${this.sf(rs, p2, 'o.store_id')}
+        WHERE ($1::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date >= $1::date)
+          AND ($2::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date <= $2::date)${this.sf(rs, p2, 'o.store_id')}
         GROUP BY sp.channel ORDER BY amount DESC`,
       p2);
     // 日报目标达成率（14.6.3 口径一致；report.daily_target=0 视为未设目标）
@@ -137,8 +137,8 @@ class ReportsController {
          LEFT JOIN employees e ON e.id = o.cashier_id
          LEFT JOIN promotions pr ON pr.id = si.promo_id
         WHERE si.line_remark LIKE '赠品%'
-          AND ($1::date IS NULL OR o.created_at::date >= $1::date)
-          AND ($2::date IS NULL OR o.created_at::date <= $2::date)${this.sf(rs, p1, 'o.store_id')}
+          AND ($1::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date >= $1::date)
+          AND ($2::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date <= $2::date)${this.sf(rs, p1, 'o.store_id')}
         ORDER BY o.created_at DESC LIMIT 300`, p1);
     const sum = await q(
       `SELECT count(*)::int AS "times", COALESCE(SUM(si.qty),0) AS "qtyTotal",
@@ -147,8 +147,8 @@ class ReportsController {
          FROM sale_items si
          JOIN sales_orders o ON o.id = si.order_id AND o.status = '已完成'
         WHERE si.line_remark LIKE '赠品%'
-          AND ($1::date IS NULL OR o.created_at::date >= $1::date)
-          AND ($2::date IS NULL OR o.created_at::date <= $2::date)${this.sf(rs, p1, 'o.store_id')}`, p1);
+          AND ($1::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date >= $1::date)
+          AND ($2::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date <= $2::date)${this.sf(rs, p1, 'o.store_id')}`, p1);
     return { rows, summary: sum[0] || { times: 0, qtyTotal: 0, costTotal: 0, kinds: 0 } };
   }
 
@@ -277,7 +277,7 @@ class ReportsController {
               COALESCE(SUM(o.profit_amount),0) AS "profitTotal"
          FROM generate_series(CURRENT_DATE - 6, CURRENT_DATE, '1 day') d
          LEFT JOIN sales_orders o
-                ON o.created_at::date = d::date AND o.status='已完成'${trendFilter}
+                ON COALESCE(o.pay_paid_at, o.created_at)::date = d::date AND o.status='已完成'${trendFilter}
         GROUP BY d ORDER BY d`, tc);
     const categoryShare = await q(
       `SELECT COALESCE(c.name, '未分类') AS name, COALESCE(SUM(i.line_amount),0) AS revenue
@@ -285,7 +285,7 @@ class ReportsController {
          JOIN sales_orders o ON o.id = i.order_id AND o.status='已完成'
          JOIN products p ON p.id = i.product_id
          LEFT JOIN categories c ON c.id = p.category_id
-        WHERE o.created_at::date >= CURRENT_DATE - 29${catFilter}
+        WHERE COALESCE(o.pay_paid_at, o.created_at)::date >= CURRENT_DATE - 29${catFilter}
         GROUP BY 1 ORDER BY revenue DESC LIMIT 12`, cc);
     return { period: unit, current: cur, periods, trend, categoryShare };
   }
@@ -306,8 +306,8 @@ class ReportsController {
            FROM sale_items i
            JOIN sales_orders o ON o.id = i.order_id AND o.status='已完成'
            JOIN products p ON p.id = i.product_id
-          WHERE ($1::date IS NULL OR o.created_at::date >= $1::date)
-            AND ($2::date IS NULL OR o.created_at::date <= $2::date)${this.sf(rs, p, 'o.store_id')}
+          WHERE ($1::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date >= $1::date)
+            AND ($2::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date <= $2::date)${this.sf(rs, p, 'o.store_id')}
           GROUP BY p.id, p.name, p.base_unit
           HAVING COALESCE(SUM(i.line_amount),0) > 0
        ), ranked AS (
@@ -364,8 +364,8 @@ class ReportsController {
          JOIN sales_orders o ON o.id = i.order_id AND o.status='已完成'
          JOIN products p ON p.id = i.product_id
          LEFT JOIN categories c ON c.id = p.category_id
-        WHERE ($1::date IS NULL OR o.created_at::date >= $1::date)
-          AND ($2::date IS NULL OR o.created_at::date <= $2::date)
+        WHERE ($1::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date >= $1::date)
+          AND ($2::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date <= $2::date)
           AND ($3 = '' OR p.name ILIKE '%'||$3||'%' OR p.barcode = $3)
           AND ($4::bigint IS NULL OR p.category_id = $4::bigint)${this.sf(rs, p, 'o.store_id')}
         GROUP BY p.id, p.name, p.base_unit, c.name
@@ -403,8 +403,8 @@ class ReportsController {
          LEFT JOIN member_levels l ON l.id = m.level_id
          LEFT JOIN member_accounts a ON a.member_id = m.id
          LEFT JOIN sales_orders o ON o.member_id = m.id AND o.status='已完成'
-              AND ($1::date IS NULL OR o.created_at::date >= $1::date)
-              AND ($2::date IS NULL OR o.created_at::date <= $2::date)${storeCond}
+              AND ($1::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date >= $1::date)
+              AND ($2::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date <= $2::date)${storeCond}
         WHERE m.deleted_at IS NULL
         GROUP BY m.id, m.card_no, m.name, m.phone, l.name,
                  a.balance, a.dividend_balance, a.points, m.last_active_date
@@ -454,8 +454,8 @@ class ReportsController {
               COALESCE(SUM(r.amount),0) AS "refundTotal"
          FROM employees e
          LEFT JOIN sales_orders o ON o.cashier_id = e.id AND o.status='已完成'
-              AND ($1::date IS NULL OR o.created_at::date >= $1::date)
-              AND ($2::date IS NULL OR o.created_at::date <= $2::date)${this.sf(rs, p, 'o.store_id')}
+              AND ($1::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date >= $1::date)
+              AND ($2::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date <= $2::date)${this.sf(rs, p, 'o.store_id')}
          LEFT JOIN sale_refunds r ON r.order_id = o.id
         WHERE ($3 = 0 OR e.id = $3)
         GROUP BY e.id, e.emp_no, e.name
@@ -499,8 +499,8 @@ class ReportsController {
               COALESCE(SUM(r.amount),0) AS "refundAmount"
          FROM employees e
          LEFT JOIN sales_orders o ON o.cashier_id = e.id
-              AND ($1::date IS NULL OR o.created_at::date >= $1::date)
-              AND ($2::date IS NULL OR o.created_at::date <= $2::date)${this.sf(rs, p3, 'o.store_id')}
+              AND ($1::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date >= $1::date)
+              AND ($2::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date <= $2::date)${this.sf(rs, p3, 'o.store_id')}
          LEFT JOIN sale_refunds r ON r.order_id = o.id
         GROUP BY e.id, e.name
        HAVING count(o.id) > 0
@@ -551,8 +551,8 @@ class ReportsController {
          FROM products p
          LEFT JOIN sale_items si ON si.product_id=p.id AND si.order_id IN (
            SELECT o.id FROM sales_orders o WHERE o.status='已完成'
-             AND ($1::date IS NULL OR o.created_at::date >= $1::date)
-             AND ($2::date IS NULL OR o.created_at::date <= $2::date)${oCond})
+             AND ($1::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date >= $1::date)
+             AND ($2::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date <= $2::date)${oCond})
          LEFT JOIN categories c ON c.id=p.category_id
         WHERE ($3 = '' OR p.name ILIKE '%'||$3||'%' OR p.barcode = $3)
           AND ($4::bigint IS NULL OR p.category_id = $4::bigint)
@@ -640,7 +640,7 @@ class HqReportsController {
               CASE WHEN count(o.id) > 0 THEN COALESCE(SUM(o.payable_amount),0)/count(o.id) ELSE 0 END AS "avgTicket"
          FROM stores s
          LEFT JOIN sales_orders o ON o.store_id = s.id AND o.status='已完成'
-               AND o.created_at::date BETWEEN $1::date AND $2::date
+               AND COALESCE(o.pay_paid_at, o.created_at)::date BETWEEN $1::date AND $2::date
         WHERE s.status = 1
         GROUP BY s.id, s.name
        HAVING count(o.id) > 0 OR s.org_type = 'hq'
@@ -676,9 +676,9 @@ class HqReportsController {
        HAVING COALESCE(SUM(m.sales_total),0) > 0 OR s.org_type = 'hq'
         ORDER BY cur_sales DESC`,
       `SELECT s.id AS store_id, s.name AS store_name,
-              COALESCE(SUM(o.payable_amount) FILTER (WHERE o.created_at::date BETWEEN $1::date AND $2::date),0) AS cur_sales,
-              count(o.id) FILTER (WHERE o.created_at::date BETWEEN $1::date AND $2::date)::int AS cur_orders,
-              COALESCE(SUM(o.payable_amount) FILTER (WHERE o.created_at::date BETWEEN $3::date AND $4::date),0) AS prev_sales
+              COALESCE(SUM(o.payable_amount) FILTER (WHERE COALESCE(o.pay_paid_at, o.created_at)::date BETWEEN $1::date AND $2::date),0) AS cur_sales,
+              count(o.id) FILTER (WHERE COALESCE(o.pay_paid_at, o.created_at)::date BETWEEN $1::date AND $2::date)::int AS cur_orders,
+              COALESCE(SUM(o.payable_amount) FILTER (WHERE COALESCE(o.pay_paid_at, o.created_at)::date BETWEEN $3::date AND $4::date),0) AS prev_sales
          FROM stores s
          LEFT JOIN sales_orders o ON o.store_id = s.id AND o.status='已完成'
         WHERE s.status = 1
@@ -717,10 +717,10 @@ class HqReportsController {
        HAVING COALESCE(SUM(m.sales_total),0) > 0 OR s.org_type = 'hq'
         ORDER BY cur_sales DESC`,
       `SELECT s.id AS store_id, s.name AS store_name,
-              COALESCE(SUM(o.payable_amount) FILTER (WHERE o.created_at::date BETWEEN $1::date AND $2::date),0) AS cur_sales,
-              COALESCE(SUM(o.profit_amount) FILTER (WHERE o.created_at::date BETWEEN $1::date AND $2::date),0) AS cur_profit,
-              COALESCE(SUM(o.payable_amount) FILTER (WHERE o.created_at::date BETWEEN $3::date AND $4::date),0) AS prev_sales,
-              COALESCE(SUM(o.payable_amount) FILTER (WHERE o.created_at::date BETWEEN $5::date AND $6::date),0) AS yoy_sales
+              COALESCE(SUM(o.payable_amount) FILTER (WHERE COALESCE(o.pay_paid_at, o.created_at)::date BETWEEN $1::date AND $2::date),0) AS cur_sales,
+              COALESCE(SUM(o.profit_amount) FILTER (WHERE COALESCE(o.pay_paid_at, o.created_at)::date BETWEEN $1::date AND $2::date),0) AS cur_profit,
+              COALESCE(SUM(o.payable_amount) FILTER (WHERE COALESCE(o.pay_paid_at, o.created_at)::date BETWEEN $3::date AND $4::date),0) AS prev_sales,
+              COALESCE(SUM(o.payable_amount) FILTER (WHERE COALESCE(o.pay_paid_at, o.created_at)::date BETWEEN $5::date AND $6::date),0) AS yoy_sales
          FROM stores s
          LEFT JOIN sales_orders o ON o.store_id = s.id AND o.status='已完成'
         WHERE s.status = 1
@@ -768,10 +768,10 @@ class HqReportsController {
               COALESCE(SUM(o.payable_amount),0) AS sales_total,
               COALESCE(SUM(o.cost_amount),0) AS cost_total,
               COALESCE(SUM(o.profit_amount),0) AS profit_total,
-              COALESCE(SUM(o.payable_amount) FILTER (WHERE o.created_at::date BETWEEN $3::date AND $4::date),0) AS prev_sales
+              COALESCE(SUM(o.payable_amount) FILTER (WHERE COALESCE(o.pay_paid_at, o.created_at)::date BETWEEN $3::date AND $4::date),0) AS prev_sales
          FROM stores s
          LEFT JOIN sales_orders o ON o.store_id = s.id AND o.status='已完成'
-               AND o.created_at::date BETWEEN $1::date AND $2::date
+               AND COALESCE(o.pay_paid_at, o.created_at)::date BETWEEN $1::date AND $2::date
         WHERE s.status = 1 AND s.org_type = 'store'
         GROUP BY 1
         ORDER BY sales_total DESC`, [r.from, r.to, prevFrom, prevTo]);
@@ -885,7 +885,7 @@ class HqReportsController {
          LEFT JOIN sale_refunds r ON COALESCE(r.origin_store_id, r.store_id) = s.id
                AND r.created_at::date BETWEEN $1::date AND $2::date
          LEFT JOIN sales_orders o ON o.store_id = s.id AND o.status='已完成'
-               AND o.created_at::date BETWEEN $1::date AND $2::date
+               AND COALESCE(o.pay_paid_at, o.created_at)::date BETWEEN $1::date AND $2::date
         WHERE s.status = 1
         GROUP BY s.id, s.name
         ORDER BY refund_amount DESC`, [r.from, r.to]);
@@ -964,7 +964,7 @@ class HqReportsController {
               COALESCE(SUM(CASE WHEN f.direction='出' THEN f.amount ELSE 0 END),0) AS cross_debit
          FROM members m
          LEFT JOIN sales_orders o ON o.member_id = m.id AND o.status='已完成'
-               AND o.created_at::date BETWEEN $1::date AND $2::date
+               AND COALESCE(o.pay_paid_at, o.created_at)::date BETWEEN $1::date AND $2::date
          LEFT JOIN member_cross_store_flows f ON f.member_id = m.id
                AND f.biz_ts::date BETWEEN $1::date AND $2::date
         WHERE m.deleted_at IS NULL

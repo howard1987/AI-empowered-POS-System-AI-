@@ -6,6 +6,7 @@ import { AuthUser, CurrentUser, RequirePerms, JWT_SECRET } from '../common/auth'
 import * as jwt from 'jsonwebtoken';
 import { SettingsService } from './settings.module';
 import { syncMemberLevel } from './members.module';
+import { memberGrowth } from './member-growth.service';   // V5.0.17：消费成长值
 import { applyPromotions, grantPostCheckoutRewards } from './promotions.module';
 import { applyCoupons, couponStockAfter, logCoupon } from './coupons.module';   // V5.0 多选核销 + 核销出库流水
 import { storePrice } from './store-price.service';   // V4.26.5 门店覆盖价：结算按当前门店取价
@@ -159,6 +160,17 @@ export class SalesService {
         levelCtx = { discount: Number(lv[0].discount), pointRate: Number(lv[0].point_rate), levelId: lv[0].level_id };
       }
 
+      // ── V5.0.15：最低售价兜底比率（商品未设 min_price 时的红线 = 售价 × 本比率）──
+      //    原实现硬编码 0.6（6 折）。超市综合毛利普遍 ≤20%（成本约占售价 80%），
+      //    6 折意味着每卖一件亏约 20% —— 红线形同虚设，改价/折扣几乎不受约束。
+      //    现改为可配置 sales.floor_guard_rate（默认 0.8 = 最多打 8 折，保护 20% 毛利空间）；
+      //    红线最终仍取 max(兜底价, 进价)，有成本数据时以不亏本为准。
+      //    注意：设置项不存在时 getNum 返回 null，直接 Math.max(0.01, null) 会得到 0.01（红线≈形同虚设），
+      //    故必须做有限性校验并回退到 0.8。
+      const rawRate = Number(await this.settings.getNum('sales.floor_guard_rate', 0.8));
+      const floorRate = Number.isFinite(rawRate) && rawRate > 0
+        ? Math.min(1, Math.max(0.01, rawRate)) : 0.8;
+
       // ── 1. 逐行计价 + FIFO 批次分配（内存先算，写库在后） ──
       let goodsCents = 0, costCents = 0, levelDiscCents = 0; // RV-01 按分计算：累计一律整数分
       const lines: any[] = [];
@@ -252,7 +264,8 @@ export class SalesService {
           originPrice = Number(p.sell_price); basePrice = originPrice; unitPrice = 0; priceChanged = true;
         } else if ((it as any).discRate !== undefined && (it as any).discRate !== null && Number((it as any).discRate) > 0) {
           // ── V4.25.3 单品折扣（行级）：按折扣率打折，双红线校验 ──
-          //    ① 折扣率 ≥ 商品最低折扣 min_discount_rate；② 折后单价 ≥ 商品最低卖价 min_price（未设按售价 6 折兜底）
+          //    ① 折扣率 ≥ 商品最低折扣 min_discount_rate；② 折后单价 ≥ 商品最低卖价 min_price
+          //      （未设 min_price 时按「售价 × sales.floor_guard_rate」兜底，V5.0.15 起可配置，默认 8 折）
           //    任一越线：店长（pos.emergency.manual）可放行并留痕；否则拒绝
           if (!user.perms.includes('pos.price.manual')) {
             throw new BizException(42002, '单品折扣需改价权限（pos.price.manual）', 403);
@@ -272,7 +285,7 @@ export class SalesService {
           priceChanged = true;
           const minDiscRate = Number((p as any).min_discount_rate) || 0;
           const minSalePrice = p.min_price !== null && p.min_price !== undefined && p.min_price !== ''
-            ? Number(p.min_price) : r2(Number(p.sell_price) * 0.6);
+            ? Number(p.min_price) : r2(Number(p.sell_price) * floorRate);
           // V4.25.4 进价兜底：折后价不得低于进价（未设最低卖价时进价即最终红线）
           const costP = Number((p as any).cost_price) || 0;
           const floorP = Math.max(minSalePrice, costP);
@@ -301,9 +314,10 @@ export class SalesService {
           basePrice = Number(p.sell_price);
           priceChanged = true;
           // ── V4.18.0 P14 最低售价硬拦 + V4.25.4 进价兜底：改价不得低于 max(最低卖价线, 最新进价) ──
-          //    最低卖价线 = 商品 min_price，未设时按售价 6 成；进价取最新供应商进价（取不到按 0 = 不启用）
+          //    最低卖价线 = 商品 min_price，未设时按「售价 × sales.floor_guard_rate」（V5.0.15 起可配置，默认 8 折）；
+          //    进价取最新供应商进价（取不到按 0 = 不启用）
           const minP = p.min_price !== null && p.min_price !== undefined && p.min_price !== ''
-            ? Number(p.min_price) : r2(Number(p.sell_price) * 0.6);
+            ? Number(p.min_price) : r2(Number(p.sell_price) * floorRate);
           const costP = Number((p as any).cost_price) || 0;
           const floorP = Math.max(minP, costP);
           if (floorP > 0 && unitPrice < floorP) {
@@ -420,29 +434,13 @@ export class SalesService {
       couponIdsUsed = cpRes.usedIds;
       payableCents -= toCents(couponAmount);
       const couponIdUsed = couponIdsUsed.length ? couponIdsUsed[0] : null;
-      // ── 1.7 抹零（5.2 收银设置 pos.round_rule：分/角/5角/元，向下去零；抹掉金额记 round_amount ≥0）──
-      // RV-01：单位直接用分，向下去零 = 对 ruc 取余，整数运算零尾差
-      const roundRule = String((await this.settings.getVal('pos.round_rule')) ?? '分');
-      const roundUnitC: Record<string, number> = { '分': 1, '角': 10, '5角': 50, '元': 100 };
-      const ruc = roundUnitC[roundRule];
-      let roundCents = 0;
-      if (ruc && ruc > 1 && payableCents > 0) {
-        roundCents = payableCents % ruc;
-        payableCents -= roundCents;
-      }
-      // ── 1.7b 手动抹零（V4.18.0 P14 抹零双轨）：收银员界面抹零至元/角，需 pos.price.manual 权限并留痕 ──
-      let manualRoundCents = 0;
-      if (dto.manualRound && dto.manualRound > 0) {
-        if (!user.perms.includes('pos.price.manual')) {
-          throw new BizException(42003, '手动抹零需改价权限（pos.price.manual）', 403);
-        }
-        manualRoundCents = toCents(dto.manualRound);
-        if (manualRoundCents > payableCents) throw new BizException(40003, '手动抹零金额不能超过应收');
-        payableCents -= manualRoundCents;
-        await audit(user.storeId, user.sub, '收银', '手动抹零', 'sales_order', null,
-          { manualRound: dto.manualRound, roundRule });
-      }
-      // ── 1.7c 整单折扣（V4.18.3 P15 批2 §13.1）：促销/券之后、抹零之前冲减应收；
+      // ── 1.7c 整单折扣（V4.18.3 P15 批2 §13.1）
+      //    V5.0.15 顺序修正：原实现是「先抹零 → 再整单折扣」，与注释及业务直觉相反 ——
+      //    折扣应该作用在「未抹零的应收」上，抹零是最后一步的找零处理（先打折、再抹零）。
+      //    例：应收 19.98，打 95 折 → 18.98，再抹角 → 18.90（而旧顺序会先抹成 19.90 再打折 → 18.90，
+      //    在「元」等粗粒度规则下两者差异可达数元）。
+      //    预设规则（settings pos.discount.presets）套用免权限；自定义折扣率需 pos.discount.custom + 留痕；
+      //    逐行校验折后单价不得低于最低售价（min_price>0 时），防整单折扣绕过行级改价红线 ──
       //    预设规则（settings pos.discount.presets）套用免权限；自定义折扣率需 pos.discount.custom + 留痕；
       //    逐行校验折后单价不得低于最低售价（min_price>0 时），防整单折扣绕过行级改价红线 ──
       let orderDiscountCents = 0;
@@ -465,11 +463,11 @@ export class SalesService {
         const isBossDiscount = user.perms.includes('*') || user.perms.includes('pos.emergency.manual');
         for (const ln of lines) {
           const lnName = String((ln.p as any)?.name ?? '商品');
-          // V4.25.4 进价兜底：红线价 = max(最低卖价线, 最新进价)；最低卖价线未设时按售价 6 成
+          // V4.25.4 进价兜底：红线价 = max(最低卖价线, 最新进价)；最低卖价线未设时按「售价 × floorRate」
           const priceSet = Number((ln.p as any)?.min_price ?? (ln.p as any)?.minPrice ?? 0) || 0;
           const sellP = Number((ln.p as any)?.sell_price) || 0;
           const costP = Number((ln.p as any)?.cost_price) || 0;
-          const minP = Math.max(priceSet > 0 ? priceSet : Math.round(sellP * 0.6 * 100) / 100, costP);
+          const minP = Math.max(priceSet > 0 ? priceSet : Math.round(sellP * floorRate * 100) / 100, costP);
           const minD = Number((ln.p as any)?.min_discount_rate) || 0;
           const belowDisc = minD > 0 && rate < minD;
           const belowPrice = minP > 0 && ln.unitPrice * (rate / 100) < minP - 0.005;
@@ -491,6 +489,29 @@ export class SalesService {
           await audit(user.storeId, user.sub, '收银', '整单折扣', 'sales_order', null,
             { rate, amount: orderDiscountCents / 100, reason, preset: presetOk });
         }
+      }
+      // ── 1.7 抹零（5.2 收银设置 pos.round_rule：分/角/5角/元，向下去零；抹掉金额记 round_amount ≥0）──
+      // V5.0.15：移至整单折扣之后 —— 先打折，再对折后金额抹零
+      // RV-01：单位直接用分，向下去零 = 对 ruc 取余，整数运算零尾差
+      const roundRule = String((await this.settings.getVal('pos.round_rule')) ?? '分');
+      const roundUnitC: Record<string, number> = { '分': 1, '角': 10, '5角': 50, '元': 100 };
+      const ruc = roundUnitC[roundRule];
+      let roundCents = 0;
+      if (ruc && ruc > 1 && payableCents > 0) {
+        roundCents = payableCents % ruc;
+        payableCents -= roundCents;
+      }
+      // ── 1.7b 手动抹零（V4.18.0 P14 抹零双轨）：收银员界面抹零至元/角，需 pos.price.manual 权限并留痕 ──
+      let manualRoundCents = 0;
+      if (dto.manualRound && dto.manualRound > 0) {
+        if (!user.perms.includes('pos.price.manual')) {
+          throw new BizException(42003, '手动抹零需改价权限（pos.price.manual）', 403);
+        }
+        manualRoundCents = toCents(dto.manualRound);
+        if (manualRoundCents > payableCents) throw new BizException(40003, '手动抹零金额不能超过应收');
+        payableCents -= manualRoundCents;
+        await audit(user.storeId, user.sub, '收银', '手动抹零', 'sales_order', null,
+          { manualRound: dto.manualRound, roundRule });
       }
       // ── 1.7c 促销赠品行强校验（V4.28.9）：免店长授权的促销赠品行，必须逐活动验证——
       //    ① 对应「消费后奖励-送赠品」活动真实存在且进行中（防伪造 promoGift 免授权白拿）；
@@ -554,7 +575,7 @@ export class SalesService {
           const priceSet = Number((ln.p as any)?.min_price ?? 0) || 0;
           const sellP = Number((ln.p as any)?.sell_price) || 0;
           const costP = Number((ln.p as any)?.cost_price) || 0;
-          const minP = Math.max(priceSet > 0 ? priceSet : Math.round(sellP * 0.6 * 100) / 100, costP);
+          const minP = Math.max(priceSet > 0 ? priceSet : Math.round(sellP * floorRate * 100) / 100, costP);
           if (minP > 0) floorCents += Math.round(minP * 100) * Number(ln.baseQty || 0);
         }
         if (payableCents < floorCents) {
@@ -866,6 +887,9 @@ export class SalesService {
 
       // ── 4.95 会员挂账落欠款（V4.18.3 P15 批2 §13.2 B2）：一笔挂账=一笔独立欠款，账期/原因留痕 ──
       if (creditCents > 0 && dto.memberId) {
+        // V5.0.18 挂账单按实际回款日归属：含挂账金额的单 pay_paid_at 置空（日结等 COALESCE 回退创建日），
+        //   待销账全额结清时由 creditsSettle 回写 pay_paid_at=回款时刻 → 业务日跳到实际回款日。
+        await cx(c, `UPDATE sales_orders SET pay_paid_at=NULL WHERE id=$1`, [orderId]);
         const dueDays = await this.settings.getNum('pos.credit.due_days', 30);
         await cx(c,
           `INSERT INTO member_credits (store_id, member_id, order_id, amount, due_date, reason, creator_id)
@@ -921,6 +945,8 @@ export class SalesService {
               [dto.memberId, windowDays, validSpend, validSpend >= minWindow]);
           }
         }
+        // V5.0.17：消费成长值（仅非排除商品的现金实付部分；余额/分红/积分抵扣与券抵扣不计）
+        await memberGrowth.earnConsume(c, { memberId: Number(dto.memberId), orderId });
         levelResult = await syncMemberLevel(c, dto.memberId);
       }
 

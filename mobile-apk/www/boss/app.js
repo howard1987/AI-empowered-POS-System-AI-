@@ -296,6 +296,37 @@ function deviceType() {
  * 被清空后会随机生成**新设备码** → 服务端视为未登记设备 → 每次登录都要重新配对
  * （真机投诉「授权状态不被记住」的根因）。 */
 async function deviceCode() {
+  // V5.0.18g 硬件派生码（Android APK）：ANDROID_ID 卸载重装不变——与员工端同规则同码（HW- 前缀），
+  // 同一台手机员工端/老板端授权一次即可，卸载重装不再失联（配合服务端重装自动换绑）。
+  if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
+    try {
+      const P = window.Capacitor.Plugins && window.Capacitor.Plugins.DeviceIdentity;
+      if (P && typeof P.getStableId === 'function') {
+        const r = await P.getStableId();
+        const aid = String((r && r.androidId) || '').trim().toLowerCase();
+        if (/^[0-9a-f]{8,16}$/.test(aid)) {
+          const c = 'HW-' + aid.slice(0, 8).toUpperCase();
+          try { localStorage.setItem('boss_device_code', c); } catch { }
+          try { localStorage.setItem('pwa_device_code', c); } catch { }
+          try { await idbSet('device_code', c); } catch { }
+          return c;
+        }
+      }
+    } catch { /* 插件不可用 → 回退软标识 */ }
+  }
+  // V5.0.18g 硬件派生码（桌面 EXE）：Windows MachineGuid，与员工端同前缀同码（同机授权一次两端通用）。
+  if (window.DesktopShell && typeof window.DesktopShell.machineGuid === 'function') {
+    try {
+      const g = String(await window.DesktopShell.machineGuid() || '').replace(/-/g, '').toLowerCase();
+      if (/^[0-9a-f]{16,}$/.test(g)) {
+        const c = 'HW-' + g.slice(0, 8).toUpperCase();
+        try { localStorage.setItem('boss_device_code', c); } catch { }
+        try { localStorage.setItem('pwa_device_code', c); } catch { }
+        try { await idbSet('device_code', c); } catch { }
+        return c;
+      }
+    } catch { /* EXE 旧版无此接口 → 回退软标识 */ }
+  }
   let c = '';
   try { c = String((await idbGet('device_code')) || '').trim(); } catch { c = ''; }
   if (!c) {
@@ -1031,7 +1062,10 @@ const n0 = n => Math.round(Number(n ?? 0)).toLocaleString('zh-CN');
 
 // ── V4.11.3 AI 识别质量（M4 长期闭环）：纠正率=准确率代理，低置信件闭环率=候选确认处理覆盖 ──
 const AI_LAYER_NAME = {
-  barcode: '📊 条码', clip: '⚡ 向量检索', 'clip-multi': '⚡ 多件检索', 'clip-cand': '🔎 候选确认',
+  barcode: '📊 条码',
+  // V5.0.17b 正名：向量检索层 emb*（默认 PP-ShiTuV2 编码）；旧键 clip* 保留用于历史识别日志展示
+  emb: '⚡ 向量检索', 'emb-multi': '⚡ 多件检索', 'emb-cand': '🔎 候选确认',
+  clip: '⚡ 向量检索', 'clip-multi': '⚡ 多件检索', 'clip-cand': '🔎 候选确认',
   vl: '🧠 VL 兜底', dhash: '🔍 dHash', onnx: '📦 ONNX', sample: '🗃️ 样本匹配', mock: '🧪 模拟',
 };
 View.aiQuality = async function (v) {

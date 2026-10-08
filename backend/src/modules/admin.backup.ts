@@ -65,22 +65,72 @@ function tsName(): string {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-/** 清理超过保留期的备份目录，返回清理数量 */
-function cleanupOld(): number {
+/** V5.0.18 备份保留策略缓存（keep_count 份数上限 / max_total_gb 总大小上限；0=不限）。
+ *  cleanupOld 在同步上下文中执行，故由 async 的 refreshLimits() 预先刷新缓存
+ *  （tick 每分钟刷新、手动备份前刷新）；读不到设置回退 0=不限，绝不阻断备份主流程。 */
+let limitCache = { keepCount: 0, maxTotalGb: 0 };
+async function refreshLimits(): Promise<void> {
+  try {
+    const kc = await q1(`SELECT value #>> '{}' AS v FROM system_settings WHERE setting_key='ops.backup.keep_count'`);
+    const mt = await q1(`SELECT value #>> '{}' AS v FROM system_settings WHERE setting_key='ops.backup.max_total_gb'`);
+    limitCache = { keepCount: Math.max(0, Number(kc?.v ?? 0)) || 0,
+                   maxTotalGb: Math.max(0, Number(mt?.v ?? 0)) || 0 };
+  } catch { /* 保留上次缓存 */ }
+}
+
+/** 清理备份：① 按保留天数过期（env POS_BACKUP_RETAIN_DAYS，默认 14 天）
+ *  ② V5.0.18 按份数循环覆盖（ops.backup.keep_count，保留最近 N 份，超出删最旧）
+ *  ③ V5.0.18 按总大小限制（ops.backup.max_total_gb，从最旧删起直到达标）
+ *  返回清理数量。limits 由调用方异步读取后传入（0 = 不限）。 */
+function cleanupOld(limits?: { keepCount: number; maxTotalGb: number }): number {
   if (!fs.existsSync(BACKUP_ROOT)) return 0;
   const cutoff = Date.now() - RETAIN_DAYS * 86400_000;
-  let removed = 0;
+  type Item = { dir: string; mtime: number; size: number };
+  const items: Item[] = [];
   for (const e of fs.readdirSync(BACKUP_ROOT)) {
     const dir = path.join(BACKUP_ROOT, e);
     try {
       const st = fs.statSync(dir);
-      if (st.isDirectory() && st.mtimeMs < cutoff) {
-        fs.rmSync(dir, { recursive: true, force: true });
-        removed++;
-      }
+      if (st.isDirectory()) items.push({ dir, mtime: st.mtimeMs, size: dirSize(dir) });
     } catch { /* 跳过异常项 */ }
   }
+  items.sort((a, b) => a.mtime - b.mtime);   // 最旧在前
+  let removed = 0;
+  const kill = (it: Item) => { try { fs.rmSync(it.dir, { recursive: true, force: true }); removed++; } catch { /* noop */ } };
+  // ① 天数过期
+  for (const it of items) if (it.mtime < cutoff) kill(it);
+  const alive = () => items.filter(it => fs.existsSync(it.dir));
+  // ② 份数上限：保留最近 N 份，从最旧开始删
+  const keep = limits?.keepCount ?? 0;
+  if (keep > 0) {
+    let list = alive();
+    while (list.length > keep) { kill(list[0]); list = alive(); }
+  }
+  // ③ 总大小上限：从最旧删起直到达标
+  const maxBytes = (limits?.maxTotalGb ?? 0) * 1024 * 1024 * 1024;
+  if (maxBytes > 0) {
+    let list = alive();
+    let total = list.reduce((s, it) => s + it.size, 0);
+    while (total > maxBytes && list.length > 1) {   // 至少保 1 份，删空比超额更危险
+      total -= list[0].size;
+      kill(list[0]);
+      list = alive();
+    }
+  }
   return removed;
+}
+
+/** 目录大小（递归，字节） */
+function dirSize(dir: string): number {
+  let size = 0;
+  try {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) size += dirSize(p);
+      else { try { size += fs.statSync(p).size; } catch { /* noop */ } }
+    }
+  } catch { /* noop */ }
+  return size;
 }
 
 /** 执行一次备份（手动 / 自动共用）。返回相对路径与统计信息。
@@ -109,7 +159,7 @@ function doBackup(nameOverride?: string): { name: string; file: string; size: nu
   }
   const size = fs.statSync(file).size;
   const tookMs = Date.now() - t0;
-  const removed = cleanupOld();
+  const removed = cleanupOld(limitCache);
   return { name, file: path.join(name, 'database.dump'), size, tookMs, removed };
 }
 
@@ -290,6 +340,7 @@ export class BackupJob implements OnModuleInit, OnModuleDestroy {
     try {
       const now = new Date();
       const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      await refreshLimits().catch(() => { });   // V5.0.18：刷新备份保留策略缓存
       const target = await getBackupHour();
       // 当天还没到设定时刻 → 不跑；已跑过 → 不重复（窗口 = 设定时刻起到当天结束，命中即锁当天）
       if (hhmm < target) return;

@@ -124,7 +124,9 @@ export async function render(view) {
         cols: [
           { h: '序号', cls: 'seq' }, { h: '单号' }, { h: '渠道' }, { h: '会员' }, { h: '收银员' },
           { h: '货值', cls: 'num' }, { h: '促销', cls: 'num' }, { h: '券', cls: 'num' }, { h: '抹零', cls: 'num' },
-          { h: '应收', cls: 'num' }, { h: '毛利', cls: 'num' }, { h: '时间' }, { h: '' },
+          { h: '应收', cls: 'num' }, { h: '毛利', cls: 'num' },
+          { h: '状态' },   // V5.0.18：展示退款状态（订单 status 与 pay_status 同步更新，V5.0.18 起退款会改 status）
+          { h: '时间' }, { h: '' },
         ],
         rows: rows.map((o, i) => ({
           attrs: `data-id="${o.id}" style="cursor:pointer" title="双击查看详情"`,
@@ -140,6 +142,9 @@ export async function render(view) {
             { h: Number(o.round_amount) ? money(o.round_amount) : '—', cls: 'num' },
             { h: `<b>${money(o.payable_amount)}</b>`, cls: 'num' },
             { h: money(o.profit_amount), cls: 'num' },
+            { h: o.status === '部分退款' ? '<span class="tag y">部分退款</span>'
+              : o.status === '已退款' ? '<span class="tag r">已退款</span>'
+              : `<span class="tag ${o.pay_status === 'unpaid' ? 'y' : 'g'}">${esc(o.pay_status === 'unpaid' ? '待付款' : (o.status || '已完成'))}</span>`, style: 'white-space:nowrap' },
             { h: dt(o.created_at), cls: 'muted' },
             `<td><button class="btn sm" data-id="${o.id}">详情</button></td>`,
           ],

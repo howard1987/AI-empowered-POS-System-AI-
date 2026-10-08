@@ -109,7 +109,7 @@ export class SalesJobsService implements OnModuleInit, OnModuleDestroy {
                              AND o3.created_at::date = CURRENT_DATE - 1 AND sp2.amount <> 0
                            GROUP BY sp2.channel) ch
                 ) det ON true
-               WHERE o.status = '已完成' AND o.created_at::date = CURRENT_DATE - 1
+               WHERE o.status = '已完成' AND COALESCE(o.pay_paid_at, o.created_at)::date = CURRENT_DATE - 1
                GROUP BY o.store_id
                ON CONFLICT (settle_date, store_id) DO NOTHING`, []);
     // RV-04 校准：按批次口径重算汇总表（V4.14.6：修正行数留痕到 daily_settlement.stock_drift_fixed）

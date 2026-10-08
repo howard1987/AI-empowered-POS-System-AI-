@@ -473,7 +473,8 @@ export async function render(view) {
       c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
       const d = await must(post('/ai/recognize', { imageBase64: c.toDataURL('image/jpeg', 0.72), mode: 'multi' }));
       const items = (d?.result || []);
-      const layerName = { clip: '⚡ CLIP 向量检索', 'clip-multi': '⚡ CLIP 多件识别（轮廓分割×逐件检索）', 'clip-cand': '🔎 CLIP 候选待确认', vl: '🧠 VL 大模型兜底', dhash: '🔍 dHash 样本匹配', onnx: '📦 ONNX 模型', barcode: '📊 条码' }[d?.layer] || (d?.layer || '-');
+      // V5.0.17b 正名：emb* = 向量检索层（默认 PP-ShiTuV2 编码，可回滚 Chinese-CLIP）；旧键 clip* 保留兼容历史识别日志
+      const layerName = { emb: '⚡ 向量检索', 'emb-multi': '⚡ 多件识别（定位×逐件检索）', 'emb-cand': '🔎 候选待确认', clip: '⚡ 向量检索', 'clip-multi': '⚡ 多件识别', 'clip-cand': '🔎 候选待确认', vl: '🧠 VL 大模型兜底', dhash: '🔍 dHash 样本匹配', onnx: '📦 ONNX 模型', barcode: '📊 条码' }[d?.layer] || (d?.layer || '-');
       const candRows = (d?.candidates || []).map(x => `<tr><td>${esc(x.name || '')}</td><td class="num">${Math.round((x.conf || 0) * 100)}%</td></tr>`).join('');
       view.querySelector('#rOut').innerHTML = `
         <div class="${items.length ? 'ok' : 'muted'}" style="margin-bottom:6px">${items.length ? '✅' : '⚠️'} ${esc(d?.notice || '未识别出商品')}</div>

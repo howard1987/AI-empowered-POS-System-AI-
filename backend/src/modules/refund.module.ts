@@ -7,6 +7,9 @@ import { PayGatewayService } from './pay.gateway';
 import { enqueueSync } from '../common/outbox';            // V5.0.0 批次4A：同事务上行入队
 import { SyncStoreService } from './sync-store.service';   // V5.0.0：事件触发立即推送
 import { isChainStoreNode, hqMemberPost } from './member-chain.module'; // V5.0.0 批次5：会员资产权威账本在总部（R3/R4）
+import { applyPromotions } from './promotions.module';  // V5.0.15：退款时重算促销活动
+import { memberGrowth } from './member-growth.service';   // V5.0.17：退货扣回成长值
+import { syncMemberLevel } from './members.module';         // V5.0.17：扣减后重判等级（保级/缓冲）
 
 /** 元→分（RV-01 按分计算；与 sales.module 同一定义） */
 const toCents = (yuan: number | string): number => Math.round(Number(yuan) * 100);
@@ -33,39 +36,106 @@ export class RefundService {
   private settings = new SettingsService();
   private paygw = new PayGatewayService();
 
-  /** 计算按行退款金额（整单级优惠按行小比分摊回冲，尾差进最后一行）
-   *  RV-01 按分计算：行金额/整单优惠/分摊全程整数分，落库前回除为元 */
-  private calcRows(order: any, items: { saleItemId: number; qty: number; line: any }[]) {
-    const goodsCents = toCents(order.goods_amount);
-    // 整单级优惠 = 促销 + 券 + 抹零（行级优惠已在 line_amount 内，退货自然按行退）
-    const extraOffCents = toCents(order.promo_amount) + toCents(order.coupon_amount) + toCents(order.round_amount);
-    const ratios = items.map(it => {
-      const ratio = Number(it.line.qty) > 0 ? Math.min(it.qty / Number(it.line.qty), 1) : 0;
-      return { ratio, lineCents: toCents(it.line.line_amount) };
-    });
-    const totalLineCents = ratios.reduce((s, x) => s + x.lineCents, 0);
-    const totalLineRatio = totalLineCents > 0
-      ? ratios.reduce((s, x) => s + x.lineCents * x.ratio, 0) / totalLineCents
-      : 0;
-    // 各行金额（分）
-    const rowCents = ratios.map(x => Math.round(x.lineCents * x.ratio));
-    // 整单优惠回冲：extraOff × (退货货值 / goods_amount)，尾差进最后一行
-    let extraCents = goodsCents > 0 ? Math.round(extraOffCents * Math.min(totalLineRatio, 1)) : 0;
-    for (let i = 0; i < rowCents.length; i++) {
-      if (i === rowCents.length - 1) {
-        rowCents[i] -= extraCents;
-        extraCents = 0;
-      } else {
-        const share = rowCents.length > 1
-          ? Math.round(extraOffCents * (rowCents[i] / Math.max(rowCents.reduce((s, x) => s + x, 0) + extraCents, 1)))
-          : 0;
-        const take = Math.min(share, rowCents[i]);
-        rowCents[i] -= take;
-        extraCents -= take;
-      }
+  /**
+   * 计算按行退款金额（V5.0.15 新口径：券不回退 + 活动重新计算）
+   *
+   *   ① **优惠券不回退**：券是一次性核销商品，退款既不退还券、也不回补券额。
+   *      券额在「退前应实付」与「退后新应收」两边同样抵扣，差额中自然抵消。
+   *   ② **促销活动重新计算**：按「退后剩余商品」重跑促销引擎 ——
+   *      若退后不再满足满减门槛，则整单促销归零，按活动前实价重算。
+   *      例：A50 + B30 + C15 + D10 = 105，满 100 减 5 → 实付 100；
+   *          退 C(15) 后剩 90，不满足门槛 → 促销归零 → 退后应收 90 → 应退 100 − 90 = **10 元**
+   *          （旧口径按货值比例回冲满减，会退约 14.29 元，等于让顾客白拿 4.29 元优惠）。
+   *   ③ 抹零按退后应收重新计算（规则同 pos.round_rule）。
+   *   ④ 退款金额 = 退前剩余实付 − 退后剩余应收，再按行分摊（尾差进最后一行）。
+   *      「退前剩余实付」= 原实付 − 本单之前已退金额，故多次部分退款同样正确。
+   */
+  private async calcRows(c: any, order: any, items: { saleItemId: number; qty: number; line: any }[]) {
+    // 本单之前已退（按行）
+    const prevByLine = new Map<number, number>();
+    const prevRows = await cx(c,
+      `SELECT ri.sale_item_id, COALESCE(SUM(ri.qty),0) AS n
+         FROM sale_refund_items ri JOIN sale_refunds r ON r.id = ri.refund_id
+        WHERE r.order_id=$1 AND r.status IN ('已退款','待审核','创建中')
+        GROUP BY ri.sale_item_id`, [order.id]);
+    for (const r of prevRows) prevByLine.set(Number(r.sale_item_id), Number(r.n));
+    // 本单之前已退金额（用于计算「退前剩余实付」）
+    const prevAmt = await cx(c,
+      `SELECT COALESCE(SUM(amount),0) AS n FROM sale_refunds
+        WHERE order_id=$1 AND status IN ('已退款','待审核','创建中')`, [order.id]);
+    const prevRefundCents = toCents(Number(prevAmt[0]?.n || 0));
+
+    const thisBack = new Map<number, number>();
+    for (const it of items) thisBack.set(Number(it.saleItemId), Number(it.qty));
+
+    // 原单全部明细 + 商品信息（用于重建剩余商品并重算促销）
+    const rows = await cx(c,
+      `SELECT si.id, si.product_id, si.qty, si.unit_price, si.origin_price,
+              p.sell_price, p.category_id, p.name, p.barcode, p.member_price,
+              p.member_discount, p.min_price, p.min_discount_rate
+         FROM sale_items si JOIN products p ON p.id = si.product_id
+        WHERE si.order_id=$1`, [order.id]);
+
+    // 构造「退后剩余」行
+    const lines: any[] = [];
+    let remainGoodsCents = 0;
+    for (const row of rows) {
+      const already = prevByLine.get(Number(row.id)) || 0;
+      const back = thisBack.get(Number(row.id)) || 0;
+      const remain = Number(row.qty) - already - back;
+      if (remain <= 0) continue;
+      lines.push({
+        p: {
+          id: row.product_id, category_id: row.category_id, sell_price: row.sell_price,
+          name: row.name, barcode: row.barcode, member_price: row.member_price,
+          member_discount: row.member_discount, min_price: row.min_price,
+          min_discount_rate: row.min_discount_rate,
+        },
+        baseQty: remain,
+        unitPrice: Number(row.unit_price),
+        originPrice: Number(row.origin_price),
+        lineAmount: Number(row.unit_price) * remain,
+      });
+      remainGoodsCents += Math.round(Number(row.unit_price) * remain * 100);
     }
-    const amountCents = Math.max(rowCents.reduce((s, x) => s + x, 0), 0);
-    return { rowAmts: rowCents.map(c => c / 100), amount: amountCents / 100 };
+
+    // 重算促销：退后不满足门槛则促销归零
+    let newPromoCents = 0;
+    if (lines.length) {
+      try {
+        const promo = await applyPromotions(c, order.store_id, lines, order.member_id);
+        newPromoCents = toCents(Number(promo?.promoAmount || 0));
+      } catch { /* 重算失败按无促销处理，保守少退 */ }
+      newPromoCents = Math.min(newPromoCents, remainGoodsCents);
+    }
+
+    // 券不回退：券额在两边同额抵扣
+    const couponCents = toCents(order.coupon_amount);
+
+    // 抹零按退后应收重算
+    const roundRule = String((await this.settings.getVal('pos.round_rule')) ?? '分');
+    const roundUnitC: Record<string, number> = { '分': 1, '角': 10, '5角': 50, '元': 100 };
+    const ruc = roundUnitC[roundRule] || 1;
+    let afterPayableCents = Math.max(remainGoodsCents - newPromoCents - couponCents, 0);
+    if (ruc > 1 && afterPayableCents > 0) afterPayableCents -= (afterPayableCents % ruc);
+
+    // 退前剩余实付 − 退后应收 = 应退
+    const basePaidCents = toCents(order.payable_amount) - prevRefundCents;
+    let amountCents = Math.max(basePaidCents - afterPayableCents, 0);
+
+    // 按行分摊：以「退货数量 × 成交单价」为权重，尾差进最后一行
+    const weights = items.map(it => Number(it.qty) * Number(it.line.unit_price || 0));
+    const totalW = weights.reduce((s, x) => s + x, 0);
+    const rowCents = weights.map((w, i) => {
+      if (i === weights.length - 1) return amountCents;      // 最后一行兜底尾差
+      return totalW > 0 ? Math.round(amountCents * (w / totalW)) : 0;
+    });
+    // 扣除已分摊部分，保证合计恒等于 amountCents
+    let used = 0;
+    for (let i = 0; i < rowCents.length - 1; i++) { rowCents[i] = Math.min(rowCents[i], amountCents - used); used += rowCents[i]; }
+    if (rowCents.length) rowCents[rowCents.length - 1] = Math.max(amountCents - used, 0);
+
+    return { rowAmts: rowCents.map(x => x / 100), amount: amountCents / 100 };
   }
 
   /** 退款执行（事务内）：批次回加 + 支付原路退 + 积分扣回 + 活跃窗口冲减 */
@@ -275,15 +345,34 @@ export class RefundService {
           }
         }
       }
-      // 4) 有效消费窗口冲减：重算该单计入的有效消费（本金+现金类）按比例扣减未达标窗口
+      // 4) 有效消费窗口冲减 + **重新判定资格**
+      //    V5.0.15 修复两个漏洞：
+      //    ① 原实现只查 qualified=false 的窗口 —— 已达标窗口压根不会被冲减，
+      //       会员"消费达标拿资格 → 立刻退款"仍能参加分红（真漏洞）；
+      //    ② 结账侧用 `qualified = qualified OR ...` 单向置真，退款后不会回退。
+      //    现改为：冲减覆盖订单日期的窗口，并按门槛**重新判定** qualified，
+      //      退款后累计不足 dividend.min_window 的，取消分红资格。
+      const minWindow = await this.settings.getNum('dividend.min_window', 50);
+      // 日期一律交给 PG 用会话时区（Asia/Shanghai）转换，避免 JS 侧 String(Date) 拼出
+      // "Wed Oct 07" 这类非法日期串导致 22P02（实测踩到）
       const winRows = await cx(c,
-        `SELECT * FROM member_activity_windows WHERE member_id=$1 AND qualified=false
-          ORDER BY id DESC LIMIT 1 FOR UPDATE`, [memberId]);
-      if (winRows.length) {
-        const win = winRows[0];
+        `SELECT * FROM member_activity_windows
+          WHERE member_id=$1
+            AND ($2::timestamptz IS NULL
+                 OR (window_start <= ($2::timestamptz)::date AND window_end >= ($2::timestamptz)::date))
+          ORDER BY id DESC FOR UPDATE`, [memberId, order.created_at ?? null]);
+      for (const win of winRows) {
+        const before = Number(win.valid_total || 0);
+        const after = Math.max(r2(before - before * refundRatio), 0);
+        const qualified = after >= Number(minWindow);
         await cx(c,
-          `UPDATE member_activity_windows SET valid_total = GREATEST(valid_total - $2, 0), updated_at=now()
-            WHERE id=$1`, [win.id, r2(Number(win.valid_total) * refundRatio)]);
+          `UPDATE member_activity_windows SET valid_total=$2, qualified=$3, updated_at=now()
+            WHERE id=$1`, [win.id, after, qualified]);
+        if (Boolean(win.qualified) && !qualified) {
+          await audit(rf.store_id, user.sub, '会员', 'member.window_unqualified',
+            'member_activity_window', Number(win.id),
+            { memberId, windowId: Number(win.id), before, after, minWindow, reason: '退款后未达活跃门槛' });
+        }
       }
     }
 
@@ -341,18 +430,36 @@ export class RefundService {
         clawback = 0;
       }
     }
+    // ── V5.0.17：退货按退款占比扣回成长值（扣减后触发等级保级/缓冲判定）──
+    if (order.member_id) {
+      try {
+        const backGrowth = await memberGrowth.revokeConsume(c, {
+          memberId: Number(order.member_id), orderId: Number(rf.order_id),
+          refundAmount: Number(rf.amount), orderPayable: Number(order.payable_amount),
+        });
+        if (backGrowth > 0) await syncMemberLevel(c, Number(order.member_id));
+      } catch (e: any) {
+        console.error('[成长值回冲] 失败（不阻断退货）：', e?.message);
+      }
+    }
     await cx(c, `UPDATE sale_refunds SET status='已退款', employee_id=$2, dividend_reversed=$3 WHERE id=$1`,
       [refundId, user.sub, clawback]);
 
     // ── V4.13.1 支付状态机同步（CAS）：累计退款逐分比对——满额 unpaid/ paid→refunded，部分→part_refunded ──
+    // V5.0.18：status 同步——此前只更新 pay_status，订单 status 永远停在「已完成」，
+    //   而报表/AI/连锁按 status IN ('已退款','部分退款') 统计退款 → 恒为 0（口径与实现脱节）。
+    //   现按累计退款金额同步单据状态（与 pay_status 同一判定口径）。
     const refundedAgg = await cx(c,
       `SELECT COALESCE(SUM(amount),0) AS t FROM sale_refunds WHERE order_id=$1 AND status='已退款'`, [rf.order_id]);
     const refundedSum = Math.round(Number(refundedAgg[0]?.t ?? 0) * 100);
     const payableCents = Math.round(Number(order.payable_amount) * 100);
+    const newOrderStatus = refundedSum >= payableCents ? '已退款' : '部分退款';
     if (refundedSum >= payableCents)
-      await cx(c, `UPDATE sales_orders SET pay_status='refunded' WHERE id=$1 AND pay_status IN ('paid','part_refunded')`, [rf.order_id]);
+      await cx(c, `UPDATE sales_orders SET pay_status='refunded', status='已退款' WHERE id=$1 AND pay_status IN ('paid','part_refunded')`, [rf.order_id]);
     else
-      await cx(c, `UPDATE sales_orders SET pay_status='part_refunded' WHERE id=$1 AND pay_status='paid'`, [rf.order_id]);
+      await cx(c, `UPDATE sales_orders SET pay_status='part_refunded', status='部分退款' WHERE id=$1 AND pay_status='paid'`, [rf.order_id]);
+    // 兜底：pay_status CAS 未命中（如历史单 pay_status 异常）时仍保证 status 正确
+    await cx(c, `UPDATE sales_orders SET status=$2 WHERE id=$1 AND status='已完成'`, [rf.order_id, newOrderStatus]);
 
     await audit(rf.store_id, user.sub, '销售', 'sale.refund.execute', 'sale_refund', refundId,
       { orderId: rf.order_id, amount: Number(rf.amount), restock: rf.restock });
@@ -379,14 +486,24 @@ export class RefundService {
         [dto.orderId, user.storeId]);
       const order = orders[0];
       if (!order) throw new BizException(50070, '订单不存在', 404);
-      if (order.status !== '已完成') throw new BizException(50071, `订单状态(${order.status})不允许退款`);
-      // VQA-GAP01：退货时限——自原单创建日起算 N 个自然日（sales.refund.window_days，0=不限旧行为）
-      const winDays = await this.settings.getNum('sales.refund.window_days', 7);
-      if (winDays > 0 && order.created_at) {
-        const days = Math.floor((Date.now() - new Date(order.created_at).getTime()) / 86400000);
-        if (days > winDays)
-          throw new BizException(50077, `超出退货时限：原单创建于 ${days} 天前，限 ${winDays} 天内可退；特殊处理请店长走对账/报损通道`, 400);
-      }
+      // V5.0.18：部分退款后的订单 status 变为「部分退款」，仍需支持继续退剩余部分；
+//   「已退款」（累计退满）与未完成单照旧拒绝。
+if (!['已完成', '部分退款'].includes(order.status)) throw new BizException(50071, `订单状态(${order.status})不允许退款`);
+      // VQA-GAP01：退货时限自原单创建日起算 N 个自然日。
+      // V5.0.15：改为**逐行按商品分类**判定 —— 生鲜当天变质却仍可退 7 天不合理，
+      //   百货日化本可放宽却被一并卡死。配置 refund.window_by_category（JSON：分类名 → 天数），
+      //   命中商品自身分类或其父分类即采用；未命中回退 sales.refund.window_days（默认 7）。
+      //   0 = 不限（沿用旧行为）。逐行判定：同一单里的百货行可退、生鲜行超期，只拒绝生鲜行。
+      const defaultWin = await this.settings.getNum('sales.refund.window_days', 7);
+      let catWin: Record<string, number> = {};
+      try {
+        const raw = await this.settings.getVal('sales.refund.window_by_category')
+          ?? await this.settings.getVal('refund.window_by_category');   // 旧键兜底（迁移 166 前/未迁移库）
+        const obj = typeof raw === 'string' ? JSON.parse(raw) : (raw ?? {});
+        if (obj && typeof obj === 'object') catWin = obj as Record<string, number>;
+      } catch { /* 配置解析失败按默认处理 */ }
+      const orderAgeDays = order.created_at
+        ? Math.floor((Date.now() - new Date(order.created_at).getTime()) / 86400000) : 0;
       // P2-M8：赊账/挂账渠道订单走大客户对账冲减，禁止在线原路退（防止应收口径漂移）
       const creditPay = await cx(c,
         `SELECT COALESCE(SUM(amount),0) AS n FROM sale_payments WHERE order_id=$1 AND channel::text IN ('赊账','挂账')`, [dto.orderId]);
@@ -406,6 +523,21 @@ export class RefundService {
         if (!(it.qty > 0) || r3(it.qty) > refundable) {
           throw new BizException(50072, `明细行#${it.saleItemId}可退数量不足（可退 ${refundable}）`);
         }
+        // 逐行退货时限：按商品分类（自身分类 → 父分类 → 默认）取允许天数
+        const catRow = (await cx(c,
+          `SELECT c.name AS cat_name, pc.name AS parent_name
+             FROM products p
+             LEFT JOIN categories c  ON c.id = p.category_id
+             LEFT JOIN categories pc ON pc.id = c.parent_id
+            WHERE p.id=$1`, [line.product_id]))[0] ?? {};
+        const win = Number(catWin[String(catRow.cat_name ?? '')]
+          ?? catWin[String(catRow.parent_name ?? '')]
+          ?? defaultWin) || 0;
+        if (win > 0 && orderAgeDays > win) {
+          const catLabel = String(catRow.cat_name || catRow.parent_name || '默认');
+          throw new BizException(50077,
+            `「${catLabel}」类商品退货时限 ${win} 天，原单创建于 ${orderAgeDays} 天前已超期；生鲜等短保商品请走报损/对账通道`, 400);
+        }
         its.push({ saleItemId: it.saleItemId, qty: r3(it.qty), line });
       }
 
@@ -414,7 +546,8 @@ export class RefundService {
       const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
       const seq = await seqLock(c, 'sale_refunds', 'refund_no', `TK-${ymd}-%`);
       const refundNo = `TK-${ymd}-${String(seq[0].n).padStart(4, '0')}`;
-      const { rowAmts, amount } = this.calcRows(order, its);
+      // V5.0.15：calcRows 改为「券不回退 + 活动重算」口径，需要事务连接来重跑促销引擎
+      const { rowAmts, amount } = await this.calcRows(c, order, its);
       if (amount <= 0) throw new BizException(40003, '退款金额计算为 0，请核对明细');
 
       // 主渠道：取原单金额最大支付渠道（refund_channel 供班次现金冲减判断）

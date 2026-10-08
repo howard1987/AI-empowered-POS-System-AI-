@@ -82,11 +82,12 @@ export async function render(view) {
 
     <div class="modal-mask" id="sgModal" style="display:none">
       <div class="modal">
-        <h3 id="sgModalTitle">✍️ 预采集签字（采集即授权用于日后业务单据 5.6.8）</h3>
+        <h3 id="sgModalTitle">✍️ 预采集签字（授权用于业务单据）</h3>
         <div class="doc-head" style="grid-template-columns:1fr 1fr;border:1px dashed var(--line);border-radius:10px;padding:14px 16px">
           <div class="fld"><label class="req">签字人姓名 <button class="btn mini" id="sgAI" title="用本地 AI 识别第 1 遍签名">🤖 AI 识别</button></label>
             <input id="sgName" placeholder="如：王业务（可手填或 AI 识别）"></div>
-          <div class="fld"><label>身份备注</label><input id="sgRole" placeholder="业务员/店长（选填）"></div>
+          <div class="fld"><label>角色备注</label><input id="sgRole" list="sgRoleList" placeholder="业务员/店长（选填）">
+            <datalist id="sgRoleList"><option value="店长"></option><option value="收银员"></option><option value="仓管"></option><option value="理货员"></option><option value="收货员"></option><option value="业务员"></option><option value="供应商代表"></option></datalist></div>
           <div class="fld" style="grid-column:1/3"><label>绑定供应商业务员（选填；按识别姓名自动匹配）</label>
             <select id="sgSupplier"><option value="">— 不绑定（通用样本） —</option></select></div>
         </div>
@@ -114,7 +115,8 @@ export async function render(view) {
             <option value="供应商人员">🚚 供应商人员（业务员）</option>
             <option value="大客户人员">🤝 大客户人员（对账/确认）</option>
           </select></div>
-        <div class="fld"><label>身份备注（选填）</label><input id="sgCatRole" placeholder="如：业务员 / 店长"></div>
+        <div class="fld"><label>角色备注（选填）</label><input id="sgCatRole" list="sgCatRoleList" placeholder="如：业务员 / 店长">
+          <datalist id="sgCatRoleList"><option value="店长"></option><option value="收银员"></option><option value="仓管"></option><option value="理货员"></option><option value="收货员"></option><option value="业务员"></option><option value="供应商代表"></option></datalist></div>
         <div class="doc-foot">
           <button class="btn" id="sgCatCancel">取消</button>
           <span style="flex:1"></span>
@@ -191,7 +193,7 @@ export async function render(view) {
   }
   function openCollect() {
     resampleId = 0;
-    view.querySelector('#sgModalTitle').textContent = '✍️ 预采集签字（采集即授权用于日后业务单据 5.6.8）';
+    view.querySelector('#sgModalTitle').textContent = '✍️ 预采集签字（授权用于业务单据）';
     view.querySelector('#sgName').readOnly = false;
     view.querySelector('#sgName').value = '';
     view.querySelector('#sgRole').value = '';
@@ -311,7 +313,7 @@ export async function render(view) {
     list.innerHTML = rows.length ? `
       <table><thead><tr>
         <th style="width:34px"><input type="checkbox" id="sgAll"></th>
-        <th class="seq">序号</th><th>ID</th><th>签字人</th><th>人员分类</th><th>身份</th><th>供应商业务员</th><th>样本数</th><th>画像</th><th>状态</th><th>操作</th></tr></thead>
+        <th class="seq">序号</th><th>ID</th><th style="text-align:center">签字人</th><th>人员分类</th><th style="text-align:center">角色</th><th>供应商业务员</th><th>样本数</th><th>画像</th><th>状态</th><th>操作</th></tr></thead>
       <tbody>${rows.map((t, i) => {
         const profN = Math.max(Number(t.sample_count) || 1, (t.profile?.images || []).length);
         // 同一人员的全部签名照片路径（画像 3 遍；旧数据回落单图）——行内不摆图，点「样本数」弹窗预览
@@ -320,7 +322,10 @@ export async function render(view) {
         const n = sigImgs.length;
         return `<tr>
         <td><input type="checkbox" class="sg-chk" data-id="${t.id}"></td>
-        <td class="num seq">${(sgPage - 1) * SG_PAGE_SIZE + i + 1}</td><td>${t.id}</td><td>${esc(t.person_name)}</td><td>${catTag(t.person_cat)}${String(t.person_cat) === '待确认' ? ` <button class="btn mini" data-catfix="${t.id}" data-nm="${esc(t.person_name)}">改分类</button>` : ''}</td><td class="muted">${esc(t.role_title || '—')}</td>
+        <td class="num seq">${(sgPage - 1) * SG_PAGE_SIZE + i + 1}</td><td>${t.id}</td>
+        <td style="text-align:center">${esc(t.person_name)}</td>
+        <td><span data-catfix="${t.id}" data-nm="${esc(t.person_name)}" data-cat="${esc(t.person_cat)}" data-rl="${esc(t.role_title || '')}" style="cursor:pointer" title="点击修改人员分类/角色备注">${catTag(t.person_cat)}</span>${String(t.person_cat) === '待确认' ? ' <span class="tag y" style="cursor:default">待纠正</span>' : ''}</td>
+        <td class="muted" style="text-align:center">${esc(t.role_title || '—')}</td>
         <td class="muted">${esc(t.supplier_name || (t.supplier_id ? '#' + t.supplier_id : '—'))}</td>
         <td style="text-align:center">${n > 0
           ? `<span data-prev="${t.id}" title="点击预览签字样本" style="cursor:pointer;color:#e03131;font-weight:700;text-decoration:underline;text-underline-offset:3px">${n}</span>`
@@ -366,7 +371,7 @@ export async function render(view) {
       } });
     });
     // V4.17.0 P13②：改分类（自动推断落「待确认」的纠错入口）
-    view.querySelectorAll('[data-catfix]').forEach(b => b.onclick = () => openCatFix(Number(b.dataset.catfix), b.dataset.nm));
+    view.querySelectorAll('[data-catfix]').forEach(b => b.onclick = () => openCatFix(Number(b.dataset.catfix), b.dataset.nm, b.dataset.cat, b.dataset.rl));
     // V4.17.0 P13④：重采（整体替换画像，清理占位/乱签主通道）
     view.querySelectorAll('[data-resample]').forEach(b => b.onclick = () => openRecapture(Number(b.dataset.resample), b.dataset.nm));
     // 样本数点击 → 弹窗预览签名图（行内不摆图）
@@ -481,11 +486,11 @@ export async function render(view) {
 
   /* ── 改分类弹窗 ── */
   let catfixId = 0;
-  function openCatFix(id, name) {
+  function openCatFix(id, name, curCat, curRole) {
     catfixId = id;
     view.querySelector('#sgCatWho').textContent = name || '';
-    view.querySelector('#sgCatSel').value = '门店人员';
-    view.querySelector('#sgCatRole').value = '';
+    view.querySelector('#sgCatSel').value = ['门店人员', '供应商人员', '大客户人员'].includes(curCat) ? curCat : '门店人员';
+    view.querySelector('#sgCatRole').value = curRole || '';
     view.querySelector('#sgCatModal').style.display = 'flex';
   }
   view.querySelector('#sgCatCancel').onclick = () => { view.querySelector('#sgCatModal').style.display = 'none'; catfixId = 0; };

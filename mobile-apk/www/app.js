@@ -568,6 +568,40 @@ async function deviceName() {
  *  服务端视为未登记设备 → 每次登录都要重新配对（真机投诉「授权状态不被记住」的根因）。 */
 async function deviceCode() {
   const t = deviceType();
+  // V5.0.18g 硬件派生码（Android APK）：ANDROID_ID 按「设备+用户+应用签名」生成，卸载重装不变
+  // （仅恢复出厂才变）。APK 卸载会把 IndexedDB/localStorage 连同设备码与签名密钥全部清空——
+  // 软标识必然变成"新设备"要求重新授权。硬件派生码（HW- 前缀）+ 服务端重装自动换绑（auth.module）
+  // 实现「硬件不变、授权不变」。员工端/老板端同机同码（授权一次即可）。
+  if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
+    try {
+      const P = window.Capacitor.Plugins && window.Capacitor.Plugins.DeviceIdentity;
+      if (P && typeof P.getStableId === 'function') {
+        const r = await P.getStableId();
+        const aid = String((r && r.androidId) || '').trim().toLowerCase();
+        if (/^[0-9a-f]{8,16}$/.test(aid)) {
+          const c = 'HW-' + aid.slice(0, 8).toUpperCase();
+          try { localStorage.setItem('pwa_device_code', c); } catch { }
+          try { localStorage.setItem('boss_device_code', c); } catch { }
+          try { await idbSet('device_code', c); } catch { }
+          return c;
+        }
+      }
+    } catch { /* 插件不可用 → 回退软标识 */ }
+  }
+  // V5.0.18g 硬件派生码（桌面 EXE）：Windows MachineGuid（卸载重装 EXE 不变，重装系统才变），
+  // 由 EXE preload 暴露 DesktopShell.machineGuid——与 Android 同用 HW- 前缀，服务端同享重装自动换绑。
+  if (window.DesktopShell && typeof window.DesktopShell.machineGuid === 'function') {
+    try {
+      const g = String(await window.DesktopShell.machineGuid() || '').replace(/-/g, '').toLowerCase();
+      if (/^[0-9a-f]{16,}$/.test(g)) {
+        const c = 'HW-' + g.slice(0, 8).toUpperCase();
+        try { localStorage.setItem('pwa_device_code', c); } catch { }
+        try { localStorage.setItem('boss_device_code', c); } catch { }
+        try { await idbSet('device_code', c); } catch { }
+        return c;
+      }
+    } catch { /* EXE 旧版无此接口 → 回退软标识 */ }
+  }
   let c = '';
   try { c = String((await idbGet('device_code')) || '').trim(); } catch { c = ''; }
   if (!c) {

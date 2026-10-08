@@ -382,9 +382,14 @@ export async function render(view) {
     detailId = Number(id);
     view.querySelector('#retModalTitle').textContent = `退货单 ${o.return_no || ''}`;
     // V5.0.3：首行补展示 日期/操作员电子签字/审核人（审核人含时间；无数据显示「无」）
-    const signImgHtml = o.sign_image_path
-      ? `　操作员签字：<img src="${esc(imgUrl(o.sign_image_path))}" style="height:34px;vertical-align:middle;border:1px dashed var(--line);border-radius:6px;background:#fff" title="退货操作员电子签字">`
+    // V5.0.18g 修复主体关联：sign_image_path 是供应商业务员签名，操作员签字用 operator_sign_image_path，分开展示
+    const sigImg = (p, t) => `<img src="${esc(imgUrl(p))}" style="height:34px;vertical-align:middle;border:1px dashed var(--line);border-radius:6px;background:#fff" title="${t}">`;
+    const opSignHtml = o.operator_sign_image_path
+      ? `　操作员签字：${sigImg(o.operator_sign_image_path, `操作员${o.operator_sign_name ? '：' + o.operator_sign_name : ''}电子签字`)}` + (o.operator_sign_name ? `<span class="muted" style="font-size:11px">${esc(o.operator_sign_name)}</span>` : '')
       : '　操作员签字：无';
+    const bizSignHtml = o.sign_image_path
+      ? `　业务员签字：${sigImg(o.sign_image_path, '供应商业务员电子签字')}`
+      : '';
     view.querySelector('#retMeta').innerHTML = `
       供应商：<b>${esc(o.supplier_name || '无')}</b>　
       状态：<span class="tag ${o.status === '已审核' ? 'g' : (o.status === '已取消' || o.status === '已作废') ? 'r' : 'y'}">${esc(o.status || '无')}</span>　
@@ -392,7 +397,7 @@ export async function render(view) {
       日期：${(o.created_at || '').slice(0, 10) || '无'}　
       审核人：${o.auditor_name ? `<b>${esc(o.auditor_name)}</b>${o.audited_at_txt ? `<span class="muted">（${esc(o.audited_at_txt)}）</span>` : ''}` : '无'}　
       备注：${esc(o.remark || '无')}
-      ${signImgHtml}`;
+      ${opSignHtml}${bizSignHtml}`;
     view.querySelector('#retItems').innerHTML = its.length ? `
       <table><thead><tr><th class="seq">序号</th><th>条码</th><th>商品</th><th>单位</th><th class="num">数量</th>
         <th class="num">原批次价</th><th class="num">金额</th><th>批次</th><th>到期日期</th><th>行备注</th></tr></thead>

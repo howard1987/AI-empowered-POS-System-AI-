@@ -71,6 +71,161 @@ View.order = function (v) {
   };
 };
 
+/* ═══════════ 采购订货（V5.0.16：向供应商下单 + 采购单查询；作业页置于「移动收货」之前） ═══════════ */
+View.purchaseOrder = function (v) {
+  const lines = [];   // {product, qty, price}
+  const addLine = (p, qty = 1) => {
+    const hit = lines.find(l => Number(l.product.id) === Number(p.id));
+    if (hit) { hit.qty += qty; renderLines(); return; }
+    lines.push({ product: p, qty, price: p.costPrice || p.sellPrice || 0 });
+    renderLines();
+  };
+  v.innerHTML = `
+    <div class="seg" id="poTabs">
+      <button class="on" data-t="new">📝 新建订货</button>
+      <button data-t="list">📋 采购单查询</button>
+    </div>
+    <div id="poNew">
+      <div class="sec">供应商（可选；留空则按商品默认供应商自动分桶，多供应商拆多单）</div>
+      <div class="field"><select id="poSup"></select></div>
+      <div class="sec">期望到货日 / 备注（可选）</div>
+      <input id="poDate" type="date" class="mini-input" style="width:100%">
+      <input id="poMemo" class="mini-input" placeholder="备注（选填）" style="width:100%;margin-top:6px">
+      <div class="sec">扫码 / 搜索添加商品</div>
+      <input id="poScan" class="search" placeholder="扫描条码或输入商品名" autocomplete="off">
+      <div style="display:flex;gap:8px;margin-top:6px"><button class="mini-btn" id="poAi" style="flex:1">🤖 AI智拍（识别订货）</button></div>
+      <div class="sec">订货明细（提交生成采购单草稿，之后可在列表查询/提交审批）</div>
+      <div id="poLines"></div>
+      <div class="hint" id="poSum"></div>
+      <button class="btn ok" id="poGo">提交生成采购单</button>
+    </div>
+    <div id="poList" style="display:none">
+      <div class="sec">状态筛选</div>
+      <div class="seg" id="poStatus">
+        <button class="on" data-s="">全部</button><button data-s="草稿">草稿</button><button data-s="待审批">待审批</button>
+        <button data-s="已下单">已下单</button><button data-s="到货中">到货中</button><button data-s="已完成">已完成</button>
+      </div>
+      <div class="field"><select id="poListSup"><option value="">全部供应商</option></select></div>
+      <div id="poRows"></div>
+    </div>`;
+
+  fillSuppliers($('#poSup'));
+  (async () => {
+    try {
+      const list = unwrap(await call('GET', '/purchase/suppliers')) || [];
+      $('#poListSup').innerHTML = '<option value="">全部供应商</option>' +
+        list.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+    } catch { /* 供应商加载失败不阻断 */ }
+  })();
+
+  // tab 切换
+  const showTab = (t) => {
+    $('#poNew').style.display = t === 'new' ? '' : 'none';
+    $('#poList').style.display = t === 'list' ? '' : 'none';
+    $('#poTabs').querySelectorAll('[data-t]').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+    if (t === 'list') loadPoList();
+  };
+  $('#poTabs').querySelectorAll('[data-t]').forEach(b => b.onclick = () => showTab(b.dataset.t));
+
+  // ── 新建订货 ──
+  $('#poAi').onclick = () => aiAddLines('order', 'AI 多商品识别订货', (p, n) => addLine(p, n));
+  Scanner.attach($('#poScan'), async key => {
+    await scanResolve(key, p => { addLine(p); $('#poScan').value = ''; },
+      async (kw, aiItems) => {
+        if (aiItems) return addAiFallback(aiItems, p => addLine(p));
+        if (!kw) return;
+        const p2 = await lookupProduct(kw);
+        if (p2) { addLine(p2); $('#poScan').value = ''; } else toast('仍未找到商品：' + kw);
+      });
+  });
+  const linesBox = $('#poLines');
+  function renderLines() {
+    if (!lines.length) linesBox.innerHTML = '<div class="empty">暂无明细，扫一扫添加</div>';
+    else {
+      linesBox.innerHTML = lines.map((l, i) => `
+        <div class="row">
+          <div class="grow">
+            <div class="t">${esc(l.product.name)} <span class="pill gray">${esc(l.product.barcode || '—')}</span></div>
+            <div class="s">进价 ¥<input class="mini-input" data-price="${i}" value="${money(l.price)}" style="width:76px"></div>
+          </div>
+          <div class="qty"><button data-m="${i}">−</button>${qtyInputHtml(i, l.qty)}<button data-p="${i}">＋</button></div>
+          <button class="mini-btn danger" data-d="${i}">删</button>
+        </div>`).join('');
+      linesBox.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { const i = +b.dataset.m; lines[i].qty = Math.max(0, lines[i].qty - 1); renderLines(); });
+      linesBox.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { lines[+b.dataset.p].qty++; renderLines(); });
+      bindQtyInput(linesBox, lines, 'qty', renderLines);
+      linesBox.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { lines.splice(+b.dataset.d, 1); renderLines(); });
+      linesBox.querySelectorAll('[data-price]').forEach(inp => inp.onchange = () => { lines[+inp.dataset.price].price = Number(inp.value) || 0; });
+    }
+    $('#poSum').textContent = `共 ${lines.length} 种 / ${lines.reduce((s, l) => s + l.qty, 0)} 件 · 预估 ¥${money(lines.reduce((s, l) => s + l.qty * l.price, 0))}`;
+  }
+  renderLines();
+  $('#poGo').onclick = async () => {
+    if (!lines.length) { toast('请先添加订货商品'); return; }
+    const supId = Number($('#poSup').value) || 0;
+    const expectArrival = $('#poDate').value || undefined;
+    const remark = ($('#poMemo').value || '').trim() || undefined;
+    try {
+      const d = await call('POST', '/purchase/orders', {
+        ...(supId ? { supplierId: supId } : {}),
+        ...(expectArrival ? { expectArrival } : {}),
+        ...(remark ? { remark } : {}),
+        items: lines.map(l => ({ productId: l.product.id, orderQty: l.qty, price: l.price || undefined })),
+        source: '订货申请', remark: remark || '移动端采购订货',
+      });
+      toast(d.multi ? `已按供应商拆为 ${d.docCount} 张采购单` : `采购单已生成：${d.poNo}（草稿）`);
+      lines.length = 0; renderLines(); $('#poSup').value = ''; $('#poMemo').value = '';
+      showTab('list');
+    } catch (e) { toast(e.message); }
+  };
+
+  // ── 采购单查询 ──
+  const poStatus = $('#poStatus');
+  async function loadPoList() {
+    const s = poStatus.querySelector('.on')?.dataset.s || '';
+    const sid = Number($('#poListSup').value) || 0;
+    try {
+      const list = unwrap(await call('GET', '/purchase/orders' + (s || sid ? '?' : '') +
+        (s ? 'status=' + encodeURIComponent(s) : '') + (s && sid ? '&' : '') + (sid ? 'supplierId=' + sid : ''))) || [];
+      const box = $('#poRows');
+      if (!list.length) { box.innerHTML = '<div class="empty">暂无采购单</div>'; return; }
+      box.innerHTML = list.map(o => `
+        <div class="row" data-po="${o.id}" style="cursor:pointer">
+          <div class="grow">
+            <div class="t">${esc(o.po_no)} <span class="pill ${o.status === '已完成' ? 'blue' : o.status === '草稿' ? 'gray' : 'green'}">${esc(o.status)}</span></div>
+            <div class="s">${esc(o.supplier_name || '')} · ${o.item_count ?? '?'} 项 · ${esc(o.expect_arrival || '—')} · ¥${money(o.total_amount || 0)}</div>
+          </div>
+          <span class="pill gray">详情 ›</span>
+        </div>`).join('');
+      box.querySelectorAll('[data-po]').forEach(r => r.onclick = () => showPoDetail(Number(r.dataset.po)));
+    } catch (e) { $('#poRows').innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>'; }
+  }
+  poStatus.querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
+    poStatus.querySelectorAll('[data-s]').forEach(x => x.classList.toggle('on', x === b));
+    loadPoList();
+  });
+  $('#poListSup').onchange = loadPoList;
+
+  async function showPoDetail(id) {
+    try {
+      const o = await call('GET', '/purchase/orders/' + id);
+      const m = document.createElement('div');
+      m.className = 'modal';
+      m.innerHTML = `<div class="sheet">
+        <h3>📋 ${esc(o.po_no || '')}</h3>
+        <div class="hint">供应商 ${esc(o.supplier_name || '')} · 状态 ${esc(o.status || '')} · 期望到货 ${esc(o.expect_arrival || '—')}<br>合计 ¥${money(o.total_amount || 0)} · ${(o.items || []).length} 项</div>
+        <div style="margin-top:8px;max-height:46vh;overflow:auto">${(o.items || []).map(it => `
+          <div class="row"><div class="grow"><div class="t">${esc(it.product_name || '')}</div>
+          <div class="s">订 ${Number(it.order_qty || 0)} · 已到 ${Number(it.arrived_qty || 0)} · 进价 ¥${money(it.price || 0)}</div></div></div>`).join('')}</div>
+        <button class="btn ghost" id="poDetailClose" style="width:100%;margin-top:12px">关闭</button>
+      </div>`;
+      document.body.appendChild(m);
+      m.querySelector('#poDetailClose').onclick = () => m.remove();
+      m.onclick = e => { if (e.target === m) m.remove(); };
+    } catch (e) { toast(e.message); }
+  }
+};
+
 /* ═══════════ 配货拣货（6.11：线上订单 → 扫码校验 → 缺货登记 → 完成） ═══════════ */
 View.pick = function (v) {
   const filter = '待拣货';
@@ -657,23 +812,41 @@ View.aiTask = async function (v, arg) {
   async function loadTaskSamples() {
     const box = $('#aiSamples');
     if (!box) return;
+    // V5.0.18g 修复：改调工单详情接口（/ai/orders/:id 按工单返回全部样本、无分页）——
+    // 原调 /ai/samples 是全店样本倒序分页（默认 10 条），新样本一多本工单样本就被挤出列表（只显示 3 张的根因）
     try {
-      const rows = unwrap(await call('GET', '/ai/samples'));
-      // 本工单样本：新数据按 task_id 关联；旧数据（无 task_id）回退 annotation.taskId
-      const mine = (rows || []).filter(s => s.image_path && (s.task_id ? Number(s.task_id) === arg.id : (s.annotation && Number(s.annotation.taskId) === arg.id)));
+      const d = unwrap(await call('GET', '/ai/orders/' + arg.id));
+      const mine = ((d && d.samples) || []).filter(s => s.image_path);
       if (!mine.length) { box.classList.add('hidden'); return; }
       box.classList.remove('hidden');
       box.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:8px">` + mine.map(s => `
-        <div data-img="${esc(s.image_path)}" style="cursor:zoom-in;text-align:center;width:70px">
-          <img src="${esc(s.image_path)}" loading="lazy" style="width:64px;height:64px;border-radius:8px;object-fit:cover;border:1px solid var(--line)">
+        <div style="cursor:zoom-in;text-align:center;width:70px">
+          <img data-path="${esc(s.image_path)}" style="width:64px;height:64px;border-radius:8px;object-fit:cover;border:1px solid var(--line);background:#f4f4f4">
           <div class="s" style="font-size:10.5px;color:var(--ink-3)">${esc(s.angle || '样本')}</div>
         </div>`).join('') + `</div>`;
-      box.querySelectorAll('[data-img]').forEach(el => el.onclick = () => {
-        const lb = document.createElement('div');
-        lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:999;display:grid;place-items:center;padding:24px';
-        lb.innerHTML = `<img src="${el.dataset.img}" style="max-width:92vw;max-height:88vh;border-radius:12px">`;
-        lb.onclick = () => lb.remove();
-        document.body.appendChild(lb);
+      // V5.0.18g 图片加载改为 fetch(blob)：/uploads 受鉴权保护（V4.28.5 F-09，401），
+      // 且 APK 跨源 <img> 会被 PWA CSP img-src 'self' 拦截——fetch 带 Bearer 取 blob 再 objectURL，
+      // CSP 允许 blob:，同源桌面端走同一通道行为一致。
+      const tok = (typeof TOKEN !== 'undefined' && TOKEN) || (localStorage.getItem('pwa_token') || '');
+      const loadBlob = async p => {
+        try {
+          const res = await fetch(currentApiBase() + p, { headers: tok ? { authorization: 'Bearer ' + tok } : {} });
+          if (!res.ok) return '';
+          return URL.createObjectURL(await res.blob());
+        } catch { return ''; }
+      };
+      box.querySelectorAll('img[data-path]').forEach(el => {
+        loadBlob(el.dataset.path).then(src => {
+          if (!src) return;
+          el.src = src;
+          el.parentElement.onclick = () => {
+            const lb = document.createElement('div');
+            lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:999;display:grid;place-items:center;padding:24px';
+            lb.innerHTML = `<img src="${src}" style="max-width:92vw;max-height:88vh;border-radius:12px">`;
+            lb.onclick = () => lb.remove();
+            document.body.appendChild(lb);
+          };
+        });
       });
     } catch { /* 静默 */ }
   }

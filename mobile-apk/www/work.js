@@ -716,6 +716,7 @@ View.work = function (v) {
       <div class="wh-s" id="wPb">价格表同步中…</div>
     </div>
     <div class="grid">
+      <div class="entry" id="wPo"><div class="eic">📝</div><div class="et">采购订货</div><div class="es">向供应商下单 · 查单</div></div>
       <div class="entry" id="wReceive"><div class="eic">📦</div><div class="et">移动收货</div><div class="es">扫码/送货单OCR · 生产日期</div></div>
       <div class="entry" id="wRet"><div class="eic">↩️</div><div class="et">采购退货</div><div class="es">批次归属 · 拍照</div></div>
       <div class="entry" id="wCount"><div class="eic">🧮</div><div class="et">移动盘点</div><div class="es">扫码录实盘数</div></div>
@@ -762,6 +763,7 @@ View.work = function (v) {
     if (!alive) toast('⚠️ 服务器不可达：进入离线应急收银（本地价目计价，联网自动补传）');
     push('移动收银', View.checkout, alive ? undefined : { emergency: true });
   };
+  $('#wPo').onclick = () => push('采购订货', View.purchaseOrder);
   $('#wReceive').onclick = () => push('移动收货', View.receive);
   $('#wRet').onclick = () => push('采购退货', View.ret);
   $('#wCount').onclick = () => push('移动盘点', View.count);
@@ -906,10 +908,138 @@ View.promo = function (v) {
   loadCoupon();
 };
 
+// ── V5.0.16 新增商品弹窗（收货遇新商品时建档，手机适配底部抽屉；字段与后台商品建档一致）──
+//   返回 Promise<商品|null>；确认后已 POST /products 建档并写入商品档案，再由调用方加入收货明细。
+function newProductModal(opts = {}) {
+  return new Promise(res => {
+    const bc = String(opts.barcode || '').trim();
+    const m = document.createElement('div');
+    m.className = 'modal';
+    m.innerHTML = `<div class="sheet">
+      <h3>➕ 新增商品（建档后自动加入明细）</h3>
+      <div class="hint">${bc ? '条码 <b>' + esc(bc) + '</b> 未匹配到商品档案' : '未匹配到商品档案'}<br>请补全信息建档，带 <b>*</b> 为必填</div>
+      <div style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
+        <input id="npName" class="mini-input" placeholder="商品名称 *" style="width:100%">
+        <input id="npBc" class="mini-input" placeholder="条码" value="${esc(bc)}" style="width:100%">
+        <div style="display:flex;gap:8px">
+          <input id="npUnit" class="mini-input" placeholder="单位 *" value="件" style="flex:1;min-width:0">
+          <input id="npSpec" class="mini-input" placeholder="规格" style="flex:1;min-width:0">
+        </div>
+        <div style="display:flex;gap:8px">
+          <input id="npPrice" class="mini-input" type="number" step="0.01" placeholder="售价 *" style="flex:1;min-width:0">
+          <input id="npKeep" class="mini-input" type="number" placeholder="保质期(天)" style="flex:1;min-width:0">
+        </div>
+        <div class="field"><select id="npCat"><option value="">分类（可选）</option></select></div>
+        <div class="seg" id="npAttr">
+          <button class="on" data-a="track">记库存</button>
+          <button data-a="weigh">称重</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn ghost" id="npCancel" style="flex:1">取消</button>
+        <button class="btn ok" id="npOk" style="flex:2">确认建档并加入</button>
+      </div>
+    </div>`;
+    document.body.appendChild(m);
+    // 记库存/称重互斥二选一（V5.0.16）
+    let attr = 'track';
+    const attrBox = m.querySelector('#npAttr');
+    attrBox.querySelectorAll('[data-a]').forEach(b => b.onclick = () => {
+      attr = b.dataset.a;
+      attrBox.querySelectorAll('[data-a]').forEach(x => x.classList.toggle('on', x === b));
+    });
+    (async () => {
+      try {
+        const cats = unwrap(await call('GET', '/products/categories')) || [];
+        const sel = m.querySelector('#npCat');
+        if (cats.length) sel.innerHTML = '<option value="">分类（可选）</option>' +
+          cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+      } catch { /* 分类可选，拉取失败不阻断 */ }
+    })();
+    const done = (val) => { m.remove(); res(val); };
+    m.querySelector('#npCancel').onclick = () => done(null);
+    m.onclick = e => { if (e.target === m) done(null); };
+    m.querySelector('#npOk').onclick = async () => {
+      const name = (m.querySelector('#npName').value || '').trim();
+      const unit = (m.querySelector('#npUnit').value || '').trim();
+      const priceRaw = m.querySelector('#npPrice').value;
+      const price = Number(priceRaw);
+      if (!name) return toast('商品名称必填');
+      if (!unit) return toast('单位必填');
+      if (priceRaw === '' || Number.isNaN(price) || price < 0) return toast('售价必填且不能为负');
+      const payload = {
+        name, base_unit: unit, sell_price: price,
+        barcode: (m.querySelector('#npBc').value || '').trim() || undefined,
+        spec: (m.querySelector('#npSpec').value || '').trim() || undefined,
+        keepDays: Number(m.querySelector('#npKeep').value) || undefined,
+        trackInventory: attr === 'track', isWeighted: attr === 'weigh',
+      };
+      const cid = Number(m.querySelector('#npCat').value) || 0;
+      if (cid) payload.categoryId = cid;
+      const btn = m.querySelector('#npOk');
+      btn.disabled = true; btn.textContent = '建档中…';
+      try {
+        const created = unwrap(await call('POST', '/products', payload));
+        done(created ? normProduct(created) : null);
+        toast('已建档并加入明细：' + name);
+      } catch (e) {
+        btn.disabled = false; btn.textContent = '确认建档并加入';
+        toast(e.message);
+      }
+    };
+  });
+}
+
 // ── 移动收货（POST /purchase/inbounds）──
 View.receive = function (v) {
-  const lines = [];   // {product, qty, unitCost, productionDate, ordered?, arrived?}
+  const lines = [];   // {product, qty, unitCost, productionDate, ordered?, arrived?, poExtra?}
   let curPoId = 0, curPoNo = '';
+  // ── V5.0.16 近似采购单自动关联：未手动选采购单时，按已录入收货商品相似度（后端 Dice 覆盖≥70%）检测，
+  //    命中则提示用户是否关联。关联后：已录入商品保持不变排在前面，采购单未录入项补进来且商品名标红。
+  let poDetectTimer = null, poDetecting = false, lastSuggestedPo = 0;
+  function scheduleDetect() {
+    clearTimeout(poDetectTimer);
+    poDetectTimer = setTimeout(detectPo, 700);   // 连续录入时防抖，避免频繁请求/弹窗
+  }
+  async function detectPo() {
+    if (poDetecting || curPoId) return;                       // 已关联则不再检测
+    const supplierId = Number($('#rcSup').value) || 0;
+    if (!supplierId || !lines.length) return;
+    poDetecting = true;
+    try {
+      const r = unwrap(await call('POST', '/purchase/inbounds/po-suggest', {
+        supplierId,
+        items: lines.map(l => ({ productId: l.product.id, barcode: l.product.barcode || '', name: l.product.name })),
+      }));
+      if (!r?.matched || !r.po) return;
+      if (Number(r.po.id) === lastSuggestedPo) return;         // 同一单不重复提示
+      const yes = await pwaConfirm('检测到近似采购单，是否关联？',
+        `采购单 <b>${esc(r.po.poNo)}</b>${r.po.supplierName ? '（' + esc(r.po.supplierName) + '）' : ''} 与当前已录入商品匹配度 <b>${r.score}%</b>。<br><br>关联后：<br>· <b>已录入商品保持不变</b>并排在前面<br>· 采购单中<span style="color:#d33"><b>尚未录入</b></span>的商品会补充进来，<span style="color:#d33"><b>商品名标红</b></span>提醒重点核对`,
+        { okText: '关联采购单' });
+      if (!yes) { lastSuggestedPo = Number(r.po.id); return; }
+      linkPo(r);
+    } catch { /* 检测失败静默，不阻断正常收货录入 */ }
+    finally { poDetecting = false; }
+  }
+  function linkPo(r) {
+    curPoId = Number(r.po.id);
+    curPoNo = r.po.poNo || '';
+    const sel = $('#rcPo'); if (sel) { sel.value = String(curPoId); }   // 同步下拉选中
+    let added = 0;
+    for (const it of (r.items || [])) {
+      if (it.covered) continue;                                   // 已录入 → 保持不变
+      const remain = Number(it.orderQty) - Number(it.arrivedQty || 0);
+      if (!(remain > 0)) continue;
+      lines.push({ product: { id: it.productId, name: it.name, barcode: '', spec: '',
+                             unit: it.baseUnit || '', sellPrice: 0, costPrice: it.price },
+                   qty: remain, unitCost: Number(it.price || 0), productionDate: today(),
+                   poExtra: true });                                // poExtra → 渲染时商品名标红
+      added++;
+    }
+    lastSuggestedPo = curPoId;
+    renderLines();
+    toast(added ? `已关联采购单 ${curPoNo}：补充 ${added} 项（商品名标红，请核对实物）` : `已关联采购单 ${curPoNo}：已录入商品与采购单一致`);
+  }
   const addLine = (p, qty = 1) => {
     const hit = lines.find(l => Number(l.product.id) === Number(p.id));
     if (hit) { hit.qty += qty; renderLines(); return; }
@@ -923,6 +1053,7 @@ View.receive = function (v) {
     }
     lines.push({ product: p, qty, unitCost: p.costPrice || p.sellPrice || 0, productionDate: '' });   // V4.14.1：生产日期默认空，点击弹日期选择器手选
     renderLines();
+    scheduleDetect();   // V5.0.16：新增商品后自动检测近似采购单
   };
   v.innerHTML = `
     <div class="sec">供应商（选后自动提取该供应商未收完采购单）</div>
@@ -994,8 +1125,12 @@ View.receive = function (v) {
       if (aiItems) return addAiFallback(aiItems, p => addLine(p));
       if (!kw) return;
       const p2 = await lookupProduct(kw);
-      if (p2) { addLine(p2); $('#rcScan').value = ''; toast(`已添加 ${p2.name}`); }
-      else toast('仍未找到商品：' + kw);
+      if (p2) { addLine(p2); $('#rcScan').value = ''; toast(`已添加 ${p2.name}`); return; }
+      // V5.0.16：未匹配到商品档案 → 弹「新增商品」建档，确认后自动加入本单（替代原先仅 toast 提示）
+      const raw = String(kw).trim();
+      const isBc = /^\d{8,14}$/.test(raw);
+      const np = await newProductModal({ barcode: isBc ? raw : '', name: isBc ? '' : raw });
+      if (np) { addLine(np); $('#rcScan').value = ''; }
     });
   });
   const linesBox = $('#rcLines');
@@ -1005,7 +1140,7 @@ View.receive = function (v) {
       linesBox.innerHTML = lines.map((l, i) => `
         <div class="recv-line">
           <div class="rl-top">
-            <div class="t">${esc(l.product.name)}<span class="rl-meta">${esc(l.product.spec || l.product.unit || '')} · 进价 ¥${money(l.unitCost)}${l.ordered != null ? ` · 订购 ${l.ordered}/已到 ${l.arrived ?? 0}` : ''}</span><span class="pill gray">${esc(l.product.barcode || '—')}</span></div>
+            <div class="t">${l.poExtra ? `<span style="color:#d33;font-weight:700">${esc(l.product.name)}</span> <span class="pill red">采购单补录·请核对</span>` : esc(l.product.name)}<span class="rl-meta">${esc(l.product.spec || l.product.unit || '')} · 进价 ¥${money(l.unitCost)}${l.ordered != null ? ` · 订购 ${l.ordered}/已到 ${l.arrived ?? 0}` : ''}</span><span class="pill gray">${esc(l.product.barcode || '—')}</span></div>
             <button class="mini-btn danger" data-d="${i}">删</button>
           </div>
           <div class="rl-grid">

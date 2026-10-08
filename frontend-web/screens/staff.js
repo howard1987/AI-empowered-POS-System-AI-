@@ -1,6 +1,7 @@
-import { get, post, must, esc, dt, toast, del, imgUrl } from '../api.js';
+import { get, post, put, must, esc, dt, toast, del, imgUrl } from '../api.js';
 import { confirmBox, promptBox, zoomImg } from '../ui.js';
 import { openCollectPad } from './signpad.js';
+import { openDetailModal, paginate, bindPager } from '../common-ui.js';
 
 /** 员工与权限：员工弹窗创建（工号留空自动 SY/CN/DZ/EM 前缀）+ 自定义角色（权限点勾选矩阵） */
 export async function render(view) {
@@ -20,13 +21,16 @@ export async function render(view) {
     <div class="card">
       <div class="doc-tools">
         <span style="font-weight:700;font-size:14.5px">员工列表</span>
-        <span class="muted" style="font-size:11.5px">工号规则：收银员 SY0001 · 仓管 CN0001 · 店长 DZ0001 · 通用 EM0001（创建时留空自动生成）</span>
+        <span class="muted" style="font-size:11.5px">工号规则：收银员 SY0001 · 仓管 CN0001 · 店长 DZ0001 · 通用 EM0001（创建时留空自动生成）· 删除规则：停用满 90 天后方可删除；无业务记录物理删除，有业务记录转「注销归档」（单据仍可追溯操作人）</span>
         <span style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <label style="display:flex;gap:4px;align-items:center;font-size:12px;cursor:pointer" title="勾选后列表包含已注销账号，可恢复入职（原工号原档案复用）">
+            <input type="checkbox" id="eShowArch">显示已注销</label>
           <span id="eEmpOps" style="display:none;gap:6px;align-items:center">
             <button class="btn sm pri" id="eOpRehire">▶ 复职</button>
             <button class="btn sm" id="eOpReset">🔑 重置密码</button>
             <button class="btn sm" id="eOpAuth">🔢 授权码</button>
             <button class="btn sm" id="eOpSig">✍️ 签名</button>
+            <button class="btn sm pri" id="eOpPerm">🔐 权限</button>
             <button class="btn sm" id="eOpDel" style="color:#c0392b;border-color:#e6b0aa">🗑 删除</button>
           </span>
           <button class="btn" id="rNewRole">🎭 新建角色</button>
@@ -175,14 +179,22 @@ export async function render(view) {
   };
 
   async function emps() {
-    const rows = await must(get('/auth/employees'));
+    // V5.0.18g：勾选「显示已注销」→ 带 archived=1 拉取（含已注销，供恢复入职）
+    const archOn = !!view.querySelector('#eShowArch')?.checked;
+    const rows = await must(get('/auth/employees' + (archOn ? '?archived=1' : '')));
     const arr = rows.items || rows || [];
+    // V5.0.18g：员工列表分页（10 条/页；empSel 勾选与 syncBat 仍按全量 arr 工作，跨页勾选不丢）
+    const pg = paginate(arr, window.__empPage || 1, 10);
+    window.__empPage = pg.page;
+    const paged = pg.slice;
     const empSel = window.__empSel || (window.__empSel = new Set());   // V4.14.9 批量勾选（页面缓存内保持）
     // V5.0.2：员工电子签名预览（签字样本按 person_name 匹配最新一张）
+    // V5.0.18g 修复「采集后仍显示未采集」：get() 返回完整 {code,msg,data}——items 在 data.items，
+    // 旧代码读 sg.items 恒 undefined → sigMap 恒空（与「get() 不解包」系列同款坑）
     const sigMap = new Map();
     try {
       const sg = await get('/purchase/signatures').catch(() => null);
-      for (const t of (sg?.items || [])) {
+      for (const t of ((sg?.data && sg.data.items) || sg?.items || [])) {
         const nm = String(t.person_name || '').trim();
         if (nm && t.image_path && !sigMap.has(nm)) sigMap.set(nm, t.image_path);
       }
@@ -194,30 +206,32 @@ export async function render(view) {
         <span class="muted" style="font-size:12px" id="eSelN"></span>
       </div>
       ${arr.length ? `
-      <table><thead><tr><th style="width:34px"><input type="checkbox" id="eChkAll" title="全选/取消全选（ADMIN 除外）" ${arr.length && arr.every(e => empSel.has(Number(e.id))) ? 'checked' : ''}></th><th class="seq">序号</th><th>工号</th><th>账户名</th><th>姓名</th><th>手机</th><th>角色</th><th>状态</th><th>授权码</th><th>创建日期</th><th>最近登录</th><th>签名</th><th></th></tr></thead>
-      <tbody>${arr.map((e, i) => `<tr>
+      <table><thead><tr><th style="width:34px"><input type="checkbox" id="eChkAll" title="全选/取消全选（当前页；ADMIN 除外）" ${paged.length && paged.every(e => empSel.has(Number(e.id))) ? 'checked' : ''}></th><th class="seq">序号</th><th>工号</th><th>账户名</th><th>姓名</th><th>手机</th><th>角色</th><th>状态</th><th>授权码</th><th>创建日期</th><th>最近登录</th><th>签名</th><th>操作</th></tr></thead>
+      <tbody>${paged.map((e, i) => `<tr>
         <td onclick="event.stopPropagation()"><input type="checkbox" data-echk="${e.id}" ${empSel.has(Number(e.id)) ? 'checked' : ''}></td>
-        <td class="num seq">${i + 1}</td><td><b>${esc(e.empNoOfficial || e.empNo)}</b></td><td class="muted" style="font-family:var(--mono)">${esc(e.empNo)}</td><td>${esc(e.name)}</td><td>${esc(e.phone || '—')}</td>
+        <td class="num seq">${(pg.page - 1) * 10 + i + 1}</td><td><b>${esc(e.empNoOfficial || e.empNo)}</b></td><td class="muted" style="font-family:var(--mono)">${esc(e.empNo)}</td><td>${esc(e.name)}</td><td>${esc(e.phone || '—')}</td>
         <td>${(e.roles || []).map(r => `<span class="tag b">${esc(r.name)}</span>`).join(' ') || '<span class="muted">无</span>'}</td>
-        <td><span class="tag ${e.status === '在职' ? 'g' : 'r'}">${esc(e.status)}</span></td>
+        <td><span class="tag ${e.status === '在职' ? 'g' : e.status === '已注销' ? '' : 'r'}">${esc(e.status)}</span></td>
         <td>${e.authCodeSet ? '<span class="tag g" title="收银员改价/打折时，该工号可现场授权">已设置</span>' : '<span class="muted" title="未设置：该工号无法在收银台审批改价/打折">未设置</span>'}</td>
         <td class="muted">${e.createdAt ? dt(e.createdAt).slice(0, 10) : '—'}</td>
         <td class="muted">${e.lastLoginAt ? dt(e.lastLoginAt) : '从未'}</td>
         <td style="white-space:nowrap">${sigMap.get(String(e.name).trim())
           ? `<img src="${imgUrl(sigMap.get(String(e.name).trim()))}" data-sigv="${esc(e.name)}" style="max-height:30px;border:1px dashed var(--line);border-radius:5px;cursor:zoom-in;background:#fff" title="电子签名预览（点击放大）">
-             <span class="tag g" data-resig="${esc(e.name)}" style="cursor:pointer" title="点击补采/重采">已采集 · 重采</span>`
-          : '<span class="tag y" data-resig="' + esc(e.name) + '" style="cursor:pointer" title="点击采集签名">未采集 · 采集</span>'}</td>
+             <span class="tag g" data-resig="${esc(e.name)}" data-rl="${esc((e.roles || []).map(r => r.name).join('/'))}" style="cursor:pointer" title="点击补采/重采">已采集 · 重采</span>`
+          : '<span class="tag y" data-resig="' + esc(e.name) + '" data-rl="' + esc((e.roles || []).map(r => r.name).join('/')) + '" style="cursor:pointer" title="点击采集签名">未采集 · 采集</span>'}</td>
         <td style="white-space:nowrap">
+          ${e.empNo !== 'ADMIN' && e.status === '已注销' ? `<button class="btn sm pri" data-restore="${e.id}" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}" title="恢复为「停用」状态，原工号原档案复用">♻️ 恢复入职</button>` : ''}
           ${e.empNo !== 'ADMIN' && e.status === '在职' ? `<button class="btn sm warn" data-t="${e.id}" data-s="停用" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}">停用</button>` : ''}
           <span style="display:none">
             ${e.empNo !== 'ADMIN' && e.status !== '在职' ? `<button class="btn sm pri" data-t="${e.id}" data-s="在职" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}">复职</button>` : ''}
             <button class="btn sm" data-rp="${e.id}" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}">重置密码</button>
             <button class="btn sm" data-ac="${e.id}" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}" data-set="${e.authCodeSet ? 1 : 0}" title="店长授权码">授权码</button>
-            <button class="btn sm" data-sig="${e.id}" data-nm="${esc(e.name)}" title="采集该员工电子签名">✍️ 签名</button>
-            ${e.status !== '在职' && e.empNo !== 'ADMIN' ? `<button class="btn sm" data-del="${e.id}" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}" title="仅可删除无任何业务记录的停用账号">删除</button>` : ''}
+            <button class="btn sm" data-sig="${e.id}" data-nm="${esc(e.name)}" data-rl="${esc((e.roles || []).map(r => r.name).join('/'))}" title="采集该员工电子签名">✍️ 签名</button>
+            ${e.empNo !== 'ADMIN' && e.status === '在职' ? `<button class="btn sm pri" data-perm="${e.id}" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}" title="配置该员工的有效权限（在角色权限基础上增减）">🔐 权限</button>` : ''}
+            ${e.status === '停用' && e.empNo !== 'ADMIN' ? `<button class="btn sm" data-del="${e.id}" data-no="${esc(e.empNo)}" data-nm="${esc(e.name)}" title="${(() => { const d = e.disabled_at ? Math.floor((Date.now() - new Date(e.disabled_at).getTime()) / 86400000) : null; return d == null ? '停用账号（缺少停用时间，重新停用一次后开始 90 天冷静期）' : d >= 90 ? `已停用 ${d} 天，达到 90 天可删除` : `已停用 ${d} 天，满 90 天（还差 ${90 - d} 天）后方可删除`; })()}">删除</button>` : ''}
           </span>
         </td>
-      </tr>`).join('')}</tbody></table>` : '<div class="empty">暂无员工</div>'}`;
+      </tr>`).join('')}</tbody></table>${pg.bar}` : '<div class="empty">暂无员工</div>'}`;
     // V4.14.9 批量停用/复职
     const syncBat = () => {
       const n = empSel.size;
@@ -232,11 +246,15 @@ export async function render(view) {
         ops.style.display = one ? 'inline-flex' : 'none';
         if (one) {
           ops.querySelector('#eOpRehire').style.display = one.status === '停用' ? '' : 'none';
-          ops.querySelector('#eOpDel').style.display = one.status !== '在职' ? '' : 'none';
+          ops.querySelector('#eOpDel').style.display = one.status === '停用' ? '' : 'none';
+          // V5.0.18g：权限按钮仅对在职非 ADMIN 员工显示（与行内按钮条件一致）
+          ops.querySelector('#eOpPerm').style.display = (one.status === '在职' && one.empNo !== 'ADMIN') ? '' : 'none';
         }
       }
     };
     syncBat();
+    // V5.0.18g：员工列表翻页
+    bindPager(view.querySelector('#eList'), p => { window.__empPage = p; emps(); });
     // V5.0.2：工具条按钮 → 触发行内隐藏按钮（复用既有确认/留痕流程）
     const fireRowBtn = (sel, attr) => { const b = view.querySelector(`[${attr}="${sel}"]`); if (b) b.click(); };
     const oneId = () => [...empSel][0];
@@ -244,6 +262,18 @@ export async function render(view) {
     view.querySelector('#eOpReset') && (view.querySelector('#eOpReset').onclick = () => { const id = oneId(); if (id) fireRowBtn(id, 'data-rp'); });
     view.querySelector('#eOpAuth') && (view.querySelector('#eOpAuth').onclick = () => { const id = oneId(); if (id) fireRowBtn(id, 'data-ac'); });
     view.querySelector('#eOpSig') && (view.querySelector('#eOpSig').onclick = () => { const id = oneId(); if (id) fireRowBtn(id, 'data-sig'); });
+    view.querySelector('#eOpPerm') && (view.querySelector('#eOpPerm').onclick = () => { const id = oneId(); if (id) fireRowBtn(id, 'data-perm'); });
+    // V5.0.18g：显示已注销开关 → 刷新列表
+    view.querySelector('#eShowArch') && (view.querySelector('#eShowArch').onchange = () => emps());
+    // V5.0.18g：已注销员工恢复入职（恢复为停用态，再复职；原工号原档案复用）
+    view.querySelectorAll('[data-restore]').forEach(b => b.onclick = async () => {
+      const ok = await confirmBox({ title: '恢复入职', okText: '确认恢复',
+        html: `将 <b>${esc(b.dataset.nm)}（${esc(b.dataset.no)}）</b> 从「已注销」恢复为「停用」状态。<br>
+          <span class="muted">原工号原档案复用，历史单据与操作人关联连续。恢复后请：重置密码 → 设置授权码（如需）→ 复职；签名需重新采集。</span>` });
+      if (!ok) return;
+      await must(post(`/auth/employees/${b.dataset.restore}/restore`, {}), '已恢复为「停用」状态，请重置密码后复职');
+      await emps();
+    });
     view.querySelector('#eOpDel') && (view.querySelector('#eOpDel').onclick = () => { const id = oneId(); if (id) fireRowBtn(id, 'data-del'); });
     // 签名预览放大
     view.querySelectorAll('[data-sigv]').forEach(img => img.onclick = () => zoomImg(img.src));
@@ -251,6 +281,7 @@ export async function render(view) {
     view.querySelectorAll('[data-resig]').forEach(t => t.onclick = () => {
       openCollectPad(view, {
         personName: t.dataset.resig,
+        roleTitle: t.dataset.rl || '员工',   // V5.0.18g：员工角色正确传入
         title: `✍️ 采集签字 · ${t.dataset.resig}（员工）`,
         tip: '采集后存入「系统 → 授权管理」签字样本；对账确认/单据签字可自动带出',
         onDone: () => emps(),
@@ -316,11 +347,11 @@ export async function render(view) {
       if (!ok) return;
       await must(post(`/auth/employees/${b.dataset.rp}/reset-password`, { newPassword: pwd }), '密码已重置');
     });
-    // VQA（需求3）：删除已停用员工——服务端强校验「停用 + 无任何业务记录」，有记录会拒绝并提示保留停用
+    // VQA（需求3）+ V5.0.18g：删除已停用员工——需停用满 90 天；无业务记录物理删除，有记录转「注销归档」（单据仍可追溯）
     view.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
       const ok = await confirmBox({ title: '删除停用员工', okText: '确认删除', okClass: 'danger',
-        html: `将物理删除 <b>${esc(b.dataset.nm)}（${esc(b.dataset.no)}）</b>。<br>
-          <span class="muted">仅「停用」且无任何业务记录（订单/班次/审批/日志等）的账号可删除；有记录会被服务端拒绝并提示保留停用，以满足审计追溯。</span>` });
+        html: `将删除 <b>${esc(b.dataset.nm)}（${esc(b.dataset.no)}）</b>。<br>
+          <span class="muted">仅「停用满 90 天」的账号可删除：无任何业务记录 → 物理删除；有业务记录 → 转「注销归档」（登录作废、敏感字段清除，历史单据与操作人姓名完整保留以满足审计追溯）。</span>` });
       if (!ok) return;
       await must(del(`/auth/employees/${b.dataset.del}`), `已删除员工 ${b.dataset.no}`);
       await emps();
@@ -353,14 +384,65 @@ export async function render(view) {
         code ? '授权码已保存' : '授权码已清除');
     });
     // V4.14.2：员工电子签名采集（存入签字样本，无供应商绑定 → 通用样本）
+    // V5.0.18g：采集完成后必须刷新列表（此前 onDone 为空 → 签名列恒显示"未采集"）
     view.querySelectorAll('[data-sig]').forEach(b => b.onclick = () => {
       openCollectPad(view, {
         personName: b.dataset.nm,
+        roleTitle: b.dataset.rl || '员工',   // V5.0.18g：员工角色正确传入 → 存为签字样本 role_title（授权管理「角色」列）
         title: `✍️ 采集签字 · ${b.dataset.nm}（员工）`,
         tip: '采集后存入「系统 → 授权管理」签字样本；对账确认/单据签字可自动带出',
-        onDone: () => {},
+        onDone: () => emps(),
       });
     });
+    // V5.0.18g：员工级权限配置（复选框列出全部权限点；有效权限 = 角色权限 ∪ 勾选 − 取消勾选的角色权限）
+    view.querySelectorAll('[data-perm]').forEach(b => b.onclick = () => openEmpPerms(b.dataset.perm, b.dataset.no, b.dataset.nm));
+  }
+
+  async function openEmpPerms(empId, empNo, empName) {
+    let d;
+    try { d = await must(get(`/auth/employees/${empId}/perms`)); } catch (e) { toast(String(e.message || e)); return; }
+    const base = new Set(d.base || []);
+    const allow = new Set(d.allow || []);
+    const deny = new Set(d.deny || []);
+    // 当前有效权限 = (角色 ∪ allow) − deny
+    const effective = new Set([...base].filter(c => !deny.has(c)).concat([...allow].filter(c => !deny.has(c))));
+    // 按模块分组（保持后端顺序）
+    const groups = [];
+    const byMod = new Map();
+    for (const p of (d.catalog || [])) {
+      if (!byMod.has(p.module)) { byMod.set(p.module, []); groups.push(p.module); }
+      byMod.get(p.module).push(p);
+    }
+    const body = groups.map(mod => `
+      <div style="margin:0 0 10px">
+        <div style="font-weight:800;font-size:12.5px;margin-bottom:4px;color:var(--pri)">${esc(mod || '其他')}</div>
+        <div style="display:flex;gap:4px 14px;flex-wrap:wrap">
+          ${(byMod.get(mod) || []).map(p => {
+            const on = effective.has(p.code);
+            const isBase = base.has(p.code);
+            const risk = p.risk === 'high' ? ' <span style="color:#c0392b;font-size:10.5px">高危</span>' : '';
+            return `<label style="display:flex;gap:4px;align-items:center;font-size:12px;min-width:200px">
+              <input type="checkbox" data-permcode="${esc(p.code)}" ${on ? 'checked' : ''}>
+              <span>${esc(p.name || p.code)}${risk}${isBase ? ' <span class="tag b" style="font-size:10px;padding:0 4px" title="来自该员工绑定的角色">角色</span>' : ''}</span></label>`;
+          }).join('')}
+        </div>
+      </div>`).join('');
+    const modal = openDetailModal(`🔐 员工权限 · ${esc(empName)}（${esc(empNo)}）`, `
+      <div class="muted" style="font-size:12px;margin-bottom:8px">
+        勾选 = 授予该权限。带 <span class="tag b" style="font-size:10px;padding:0 4px">角色</span> 标记的来自其绑定角色（取消勾选 = 对该员工单独收回）；
+        新勾选 = 对该员工单独授予。变更<b>在该员工下次登录后生效</b>（权限随登录态下发）。</div>
+      ${body}
+      <button class="btn pri" id="empPermSave" style="width:100%;margin-top:6px">保存权限配置</button>`);
+    const mask = modal.mask;
+    mask.querySelector('#empPermSave').onclick = async () => {
+      const checked = [...mask.querySelectorAll('input[data-permcode]:checked')].map(c => c.dataset.permcode);
+      const allow = checked.filter(c => !base.has(c));          // 新增授予（角色没有的）
+      const deny = [...base].filter(c => !checked.has(c));      // 角色有但被取消 = 单独收回
+      try {
+        await must(put(`/auth/employees/${empId}/perms`, { allow, deny }), '权限配置已保存（员工下次登录生效）');
+        modal.close();
+      } catch (e) { toast(String(e.message || e)); }
+    };
   }
 
   async function roleList() {

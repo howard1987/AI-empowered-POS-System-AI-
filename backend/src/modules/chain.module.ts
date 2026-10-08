@@ -1631,7 +1631,7 @@ async function reconAggregate(from: string, to: string, storeId?: number): Promi
            FROM sale_payments sp WHERE sp.order_id = o.id
        ) pm ON true
       WHERE o.status IN ('已完成','部分退款')
-        AND o.created_at::date >= $1::date AND o.created_at::date <= $2::date
+        AND COALESCE(o.pay_paid_at, o.created_at)::date >= $1::date AND COALESCE(o.pay_paid_at, o.created_at)::date <= $2::date
         AND ($3::bigint IS NULL OR o.store_id = $3::bigint)
       GROUP BY o.store_id, st.name
       ORDER BY o.store_id`, [from, to, storeId ?? null]);

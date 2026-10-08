@@ -14,7 +14,7 @@ import { readFileSync, existsSync } from 'fs';
 import { basename } from 'path';
 import { clipcnEmbedImage, clipcnEmbedText, cnCosine, clipcnReady, CLIPCN_MODEL_TAG } from './ai.clipcn';
 import { ppshituEmbedImage, ppshituReady, PPSHITU_MODEL_TAG } from './ai.ppshitu';
-import { segmentItems, cropItemBase64, SegBox, SegResult } from './ai.seg';
+import { segmentItemsFromImg, cropFromImg, SegBox, SegResult } from './ai.seg';
 import { segmentItemsYolo } from './ai.seg.yolo';
 import { UPLOADS_DIR, uploadsFilePath, saveUploadImage } from '../common/uploads';
 
@@ -114,6 +114,18 @@ export async function embMultiMinConf(): Promise<number> {
   if (await featureEngine() === 'ppshitu') return embMinConf();
   const r = await q(`SELECT value FROM system_settings WHERE setting_key='ai.multi.min_conf'`);
   return r.length ? Number(r[0].value ?? 0.85) : 0.85;
+}
+
+/** V5.0.18g 候选展示阈值：低于该图像相似度的检索结果不进候选卡片（纯展示过滤，
+ *  不影响自动命中线 gateClip）。上百 SKU 建库后防噪声商品淹没候选列表、收银员更快锁定目标。
+ *  PP 空间：跨商品噪声 ≤0.09、类内 0.1~0.85 → 默认 0.10 挡噪声不误伤；CLIP 量纲整体高 → 0.40。 */
+export async function embCandMinConf(): Promise<number> {
+  if (await featureEngine() === 'ppshitu') {
+    const r = await q(`SELECT value FROM system_settings WHERE setting_key='ai.emb.pp.cand_min_conf'`);
+    return r.length && r[0].value != null && r[0].value !== '' ? Number(r[0].value) : 0.10;
+  }
+  const r = await q(`SELECT value FROM system_settings WHERE setting_key='ai.emb.cand_min_conf'`);
+  return r.length && r[0].value != null && r[0].value !== '' ? Number(r[0].value) : 0.40;
 }
 
 /** 引擎就绪（供 ai.module 判断是否启用向量检索层）：任一特征引擎就绪即可 */
@@ -271,17 +283,29 @@ async function rerankCandidates(storeId: number, imageVector: number[], best: Ma
       reranked = true;
     }
   }
-  return { candidates: candidates.slice(0, Math.max(1, topK)), reranked };
+  // V5.0.18g：候选展示阈值——低于该图像相似度（rawImgSim，非融合 conf，防文本 rerank 绕过）
+  // 的结果不进候选卡片；自动命中判定 gateClip 独立不受影响
+  const candMin = await embCandMinConf();
+  const filtered = candidates.filter(c => (c.rawImgSim ?? c.conf) >= candMin);
+  return { candidates: filtered.slice(0, Math.max(1, topK)), reranked };
 }
 
-/** 加载门店可检索样本行（图像向量已索引；多件逐框复用，一次查询）——按当前特征引擎的 tag 过滤 */
+/** 加载门店可检索样本行（图像向量已索引；多件逐框复用，一次查询）——按当前特征引擎的 tag 过滤。
+ *  V5.0.18g：15s TTL 缓存——自动识别轮每 1.5s 一帧，每帧都全量查样本表纯浪费；索引/审核
+ *  侧有静默延迟的场景最多延 15s 生效（一键重建索引会换 tag 自动失效）。 */
+let _searchRowsCache: { key: string; at: number; rows: any[] } | null = null;
 async function loadSearchRows(storeId: number) {
-  return q(
+  const tag = await activeTag();
+  const key = `${storeId}|${tag}`;
+  if (_searchRowsCache && _searchRowsCache.key === key && Date.now() - _searchRowsCache.at < 15_000) return _searchRowsCache.rows;
+  const rows = await q(
     `SELECT s.product_id, p.name AS product_name, s.image_path, s.embedding
        FROM ai_samples s JOIN products p ON p.id = s.product_id
       WHERE s.store_id=$1 AND s.status IN ${READY_STATUS} AND s.image_path LIKE '/uploads/%'
         AND s.embedding IS NOT NULL AND s.emb_model=$2 AND ${PRODUCT_VISIBLE('$1')} AND p.status=1`,
-    [storeId, await activeTag()]);
+    [storeId, tag]);
+  _searchRowsCache = { key, at: Date.now(), rows };
+  return rows;
 }
 
 /**
@@ -323,9 +347,13 @@ export interface EmbMultiResult {
  */
 export async function embSearchMulti(frameBase64: string, storeId: number, topK = 3): Promise<EmbMultiResult> {
   const t0 = Date.now();
+  // V5.0.18g 性能：整帧 jimp 解码一次，分割与逐件裁剪全部复用（此前 N+1 次全图解码，
+  // 大图每次 300~500ms，是多商品识别最大耗时项）
+  const { Jimp } = await import('jimp');
+  const img = await Jimp.read(Buffer.from(String(frameBase64 || '').replace(/^data:image\/\w+;base64,/, ''), 'base64'));
   // V4.27.0：YOLO 检测式定位优先（ai.seg.model_id），未配置/推理失败 → 轮廓分割兜底，链路不阻断
   const yoloSeg = await segmentItemsYolo(frameBase64).catch((): SegResult | null => null);
-  const seg = yoloSeg ?? await segmentItems(frameBase64);
+  const seg = yoloSeg ?? await segmentItemsFromImg(img);
   const segEngine: 'yolo' | 'contour' = yoloSeg ? 'yolo' : 'contour';
   /* V5.0.12 主体优先：只要分割出 ≥1 个主体框就走"逐件裁剪检索"——
    * 裁剪后的 crop 是商品本体主导，消除了全帧嵌入被台面/背景主导导致的
@@ -353,7 +381,7 @@ export async function embSearchMulti(frameBase64: string, storeId: number, topK 
      * 且前端红框始终有得画。 */
     const w0 = seg.w, h0 = seg.h;
     if (!w0 || !h0) return { multi: false, boxes: [], crops: [], sampleTotal: 0, segMs: seg.ms, ms: Date.now() - t0, framePath: null, segEngine };
-    boxes = [{ x: Math.round(w0 * 0.2), y: Math.round(h0 * 0.2), w: Math.round(w0 * 0.6), h: Math.round(h0 * 0.6), frac: 0.36 }];
+    boxes = [{ x: Math.round(w0 * 0.2), y: Math.round(h0 * 0.2), w: Math.round(w0 * 0.6), h: Math.round(h0 * 0.6), frac: 0.36, virtual: true }];
   }
   const rows = await loadSearchRows(storeId);
   const w = await rerankTextWeight();
@@ -361,7 +389,7 @@ export async function embSearchMulti(frameBase64: string, storeId: number, topK 
   for (const box of boxes) {
     const ct0 = Date.now();
     try {
-      const cropB64 = await cropItemBase64(frameBase64, box);
+      const cropB64 = await cropFromImg(img, box);
       const { vector } = await embedImage(cropB64);
       const { candidates, reranked } = await rerankCandidates(storeId, vector, bestByProduct(vector, rows), topK, w);
       crops.push({ box, candidates, reranked, ms: Date.now() - ct0 });

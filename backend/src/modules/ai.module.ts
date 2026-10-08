@@ -85,8 +85,9 @@ function gateClip(cands: any[], minConf: number, strictConf: number, margin: num
 /** 模型文件目录（backend/models，相对脚本目录自动适配） */
 const MODELS_DIR = join(__dirname, '..', '..', 'models');
 
-/** V4.16.0 P6 候选卡片增强：补齐差异对比字段（类别/售价/单位/规格）+ 近30天销量（使用频率）。
- *  频率只影响候选卡片「展示顺序」（conf + 频率加成 ≤0.03），绝不影响三门槛命中判定（"融合分只排序"铁律不变）。 */
+/** V4.16.0 P6 候选卡片增强：补齐差异对比字段（类别/售价/单位/规格）+ 近30天销量（展示参考）。
+ *  V5.0.18g：候选卡片改纯置信度降序（用户口径），近30天销量仅作展示参考；ai.rerank.freq_weight
+ *  随之失效已删除（迁移 183）。 */
 async function enrichCandidates(storeId: number, candidates: any[]): Promise<any[]> {
   if (!candidates.length) return candidates;
   const ids = [...new Set(candidates.map(c => Number(c.productId)).filter(Boolean))];
@@ -103,8 +104,6 @@ async function enrichCandidates(storeId: number, candidates: any[]): Promise<any
        FROM products p LEFT JOIN categories c ON c.id=p.category_id
       WHERE p.id = ANY($1::bigint[])`, [ids]);
     const m = new Map(rows.map((r: any) => [Number(r.id), r]));
-    const fwRow = await q(`SELECT value FROM system_settings WHERE setting_key='ai.rerank.freq_weight'`);
-    const fw = Math.min(0.1, Math.max(0, Number(fwRow[0]?.value ?? 0.03) || 0));
     for (const c of candidates) {
       const r = m.get(Number(c.productId));
       if (!r) continue;
@@ -119,9 +118,11 @@ async function enrichCandidates(storeId: number, candidates: any[]): Promise<any
                           maxG: r.weight_max_g != null ? Number(r.weight_max_g) : null };
       }
       c.freq = Math.round(Number(r.freq30) * 100) / 100;
-      c._score = (c.conf ?? 0) + fw * Math.min(1, (c.freq ?? 0) / 100);
+      // V5.0.18g：按用户口径改为纯置信度降序——近 30 天消费频率仅作展示参考（freq 字段），
+      // 不再混入排序权重（此前 _score = conf + 频率加权，会出现低置信高频商品排前的"乱序"观感）
+      c._score = c.conf ?? 0;
     }
-    return candidates.sort((a, b) => (b._score ?? b.conf ?? 0) - (a._score ?? a.conf ?? 0));
+    return candidates.sort((a, b) => (b.conf ?? 0) - (a.conf ?? 0));
   } catch { return candidates; }   // 增强失败不影响识别主链路
 }
 /** 上传图片目录（V4.15.5：统一走 common/uploads，支持 AI_UPLOADS_DIR 外置与按月子目录） */
@@ -181,7 +182,10 @@ export class AiController {
     let usedFallback = false, fallbackModel: string | null = null;
     let notice = '';
     let imagePath: string | null = null;
-    /* V4.10.1 识别分层：barcode（前端条码先行，conf=1）→ clip（向量检索，毫秒级）→ vl → dhash / onnx */
+    /* V4.10.1 识别分层：barcode（前端条码先行，conf=1）→ emb（向量检索，毫秒级）→ vl → dhash / onnx
+ * V5.0.17b 正名：向量检索层原名 clip/clip-multi/clip-cand（V4.11 时代 Chinese-CLIP 是主力），
+ * 自 V5.0.13 起默认编码器已切换为 PP-ShiTuV2（ai.feature.engine 路由，CLIP 仅为回滚引擎），
+ * layer 名同步改为 emb/emb-multi/emb-cand，避免日志/排查时误判在用 CLIP。 */
     let layer = 'barcode';
     let candidates: any[] = [];      // 候选卡片（Top-K，未自动命中时供店员点选确认）
     let clipMs = 0;
@@ -191,7 +195,7 @@ export class AiController {
      *      ① 原始图像相似度 ≥ strict_conf(0.97)：近乎样本复拍，直接命中；
      *      ② min_conf(0.90) ≤ 原始图像 < strict 且 Top1−Top2 ≥ margin(0.03)：明显领先，命中；
      *      ③ 达标但边距不足：若 rerank 后文本信号与 Top1 同向（top1.textSim > top2.textSim）→ 仍命中
-     *         （瓶身品牌字可读出时的强佐证）；否则 layer='clip-cand' 跳过 VL 慢兜底，返回候选卡片店员点选；
+     *         （瓶身品牌字可读出时的强佐证）；否则 layer='emb-cand' 跳过 VL 慢兜底，返回候选卡片店员点选；
      *      ④ 原始图像 < min_conf：灰图/未建库商品 → 照旧走 VL/dHash 链路。 ── */
     let clipAmbiguous = false;
     /** V4.16.0 P6 易混 SKU 补拍提示：相近候选无法自动区分时，引导店员补拍侧面/背面样本建库增强 */
@@ -221,7 +225,11 @@ export class AiController {
           const cropHits: { productId: number; name: string; conf: number; cropBox: any }[] = [];   // V4.27.4 多品同拍采集：逐件命中明细
           let ambCrops = 0, lowCrops = 0;
           for (const crop of em.crops) {
-            const g = gateClip(crop.candidates, minConf, strictConf, margin);
+            // V5.0.18g：分割失败兜底框（virtual）与占画面过半的大框 = 未真正分割，crop 是多商品混合区，
+            // 检索置信不可靠 → 提高自动采信门槛（低置信只落候选卡，不自动 matched，防"宜简 0.16 误采信"）
+            const boxAny = crop.box as any;
+            const minConfCrop = (boxAny.virtual || boxAny.frac > 0.5) ? Math.max(minConf, 0.3) : minConf;
+            const g = gateClip(crop.candidates, minConfCrop, strictConf, margin);
             if (g.hit) {
               const it = counts.get(g.hit.productId) || { productId: g.hit.productId, name: g.hit.name, count: 0, conf: 0, rawImgSim: 0 };
               it.count += 1;
@@ -241,11 +249,13 @@ export class AiController {
               }
             }
           }
-          layer = 'clip-multi';
+          layer = 'emb-multi';
           multiDone = true;
           clipMs = em.ms;
-          result = [...counts.values()].map(it => ({ productId: it.productId, name: it.name, count: it.count, conf: it.conf, rawImgSim: it.rawImgSim ?? null, matched: true }));
-          candidates = [...candCards.values()];
+          // V5.0.18g：自动命中件与候选卡片均按置信度降序（原先按分割框处理顺序/Map 插入序）
+          result = [...counts.values()].map(it => ({ productId: it.productId, name: it.name, count: it.count, conf: it.conf, rawImgSim: it.rawImgSim ?? null, matched: true }))
+            .sort((a, b2) => b2.conf - a.conf);
+          candidates = [...candCards.values()].sort((a, b2) => (b2.conf ?? 0) - (a.conf ?? 0));
           // V4.27.4 多品同拍采集：逐件命中明细（同品取最高置信，≤10 个），供前端裁剪入样本库
           const bestBy = new Map<number, { productId: number; name: string; conf: number; cropBox: any }>();
           for (const c of cropHits) {
@@ -255,7 +265,9 @@ export class AiController {
           cropSamples = [...bestBy.values()].sort((a, b2) => b2.conf - a.conf).slice(0, 10);
           // V4.27.5 逐件全量明细（含未命中件）：收银员对"待确认/未识别"件手动指定正确商品后可采
           cropDetail = em.crops.slice(0, 12).map(crop => {
-            const g = gateClip(crop.candidates, minConf, strictConf, margin);
+            const boxAny2 = crop.box as any;
+            const minConfCrop2 = (boxAny2.virtual || boxAny2.frac > 0.5) ? Math.max(minConf, 0.3) : minConf;
+            const g = gateClip(crop.candidates, minConfCrop2, strictConf, margin);
             return {
               cropBox: crop.box,
               hit: !!g.hit,
@@ -291,7 +303,7 @@ export class AiController {
      *      ① 原始图像相似度 ≥ strict_conf(0.97)：近乎样本复拍，直接命中；
      *      ② min_conf(0.90) ≤ 原始图像 < strict 且 Top1−Top2 ≥ margin(0.03)：明显领先，命中；
      *      ③ 达标但边距不足：若 rerank 后文本信号与 Top1 同向（top1.textSim > top2.textSim）→ 仍命中
-     *         （瓶身品牌字可读出时的强佐证）；否则 layer='clip-cand' 跳过 VL 慢兜底，返回候选卡片店员点选；
+     *         （瓶身品牌字可读出时的强佐证）；否则 layer='emb-cand' 跳过 VL 慢兜底，返回候选卡片店员点选；
      *      ④ 原始图像 < min_conf：灰图/未建库商品 → 照旧走 VL/dHash 链路。 ── */
     let clipRan = false;   // V5.0.12：CLIP 层是否已完整跑完（用于下方 yolo 分支优雅降级）
     if (!multiDone && b.imageBase64 && (await embEnabled()) && embModelReady()) {
@@ -303,12 +315,12 @@ export class AiController {
         const g = gateClip(candidates, await embMinConf(), await embStrictConf(), await embMargin());
         const top1 = candidates[0], top2 = candidates[1];
         if (g.hit) {
-          layer = 'clip';
+          layer = 'emb';
           result = [{ productId: g.hit.productId, name: g.hit.name, count: 1, conf: g.hit.conf, rawImgSim: g.hit.rawImgSim ?? null, matched: true }];
           imagePath = es.framePath;
           notice = `向量检索命中「${g.hit.name}」（图像相似度 ${Math.round((g.hit.rawImgSim ?? g.hit.conf) * 100)}%${g.textAgree ? `，瓶身文字佐证 ${Math.round(g.hit.textSim! * 100)}%` : ''}，图像编码+检索 ${clipMs}ms）`;
         } else if (g.ambiguous) {
-          layer = 'clip-cand';
+          layer = 'emb-cand';
           clipAmbiguous = true;
           notice = `「${top1.name}」(${Math.round((top1.rawImgSim ?? top1.conf) * 100)}%) 与「${top2.name}」(${Math.round((top2.rawImgSim ?? top2.conf) * 100)}%) 外观相近，请从候选卡片点选确认`;
           // V4.16.0 P6 易混补拍提示（建库增强后可自动区分）
@@ -369,7 +381,7 @@ export class AiController {
           } else {
             /* 低于 min_conf（未建库/背景噪声）：不返回候选卡片——
              * "识别只认真实样本，不猜"。返回空结果 + 可行动提示。 */
-            layer = 'clip';
+            layer = 'emb';
             result = [];
             candidates = [];
             notice = '未识别出商品：与已建库样本相似度过低。请对准商品正面重试；若该商品还没采集过样本，请先在「AI 训练采集」建库';
@@ -639,9 +651,9 @@ export class AiController {
         throw new BizException(40003, '该商品不在本任务的采集明细内（请按任务商品明细采集）');
       }
       for (const img of images) {
-        // P1-H3 写入侧收口：路径不得含 ..、不得盘符/根绝对；/uploads/ 前缀外仅容忍 img:// 历史占位（读取端 uploadsFilePath 已白名单化）
+        // P1-H3 写入侧收口：路径不得含 ..、不得盘符/反斜杠根绝对；前导 / 交由下方白名单约束（/uploads/ 为合法 URL 前缀，读取端 uploadsFilePath 已白名单化）
         const ip = String(img.path || '');
-        if (!ip || ip.includes('..') || /^[a-zA-Z]:|^[/\\]/.test(ip) || !/^(\/uploads\/|img:\/\/)/.test(ip)) {
+        if (!ip || ip.includes('..') || /^[a-zA-Z]:|^\\/.test(ip) || !/^(\/uploads\/|img:\/\/)/.test(ip)) {
           throw new BizException(40003, `样本图片路径不合法：${ip.slice(0, 64)}`);
         }
         const ann = { ...(b.annotation || {}), angle: img.angle };
@@ -687,22 +699,20 @@ export class AiController {
     const p = await q1(`SELECT id, store_id FROM products WHERE id=$1 AND deleted_at IS NULL`, [Number(b.productId)]);
     if (!p) throw new BizException(40404, '商品不存在', 404);
     return tx(async c => {
-      // V5.0.1：自由训练也纳入工单体系——按提交批次自动生成/归并当日「自由训练采集」工单
-      // （AICJ+日期-FREE），样本挂 task_id 可溯源；训练台任务工单表格直接可见。
-      const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      const taskNo = `AICJ${ymd}-FREE`;
-      let task = await cx(c, `SELECT id FROM ai_tasks WHERE task_no=$1`, [taskNo]);
-      if (!task.length) {
-        task = await cx(c,
-          `INSERT INTO ai_tasks (store_id, task_type, task_no, scope, target_count, assigned_to, created_by, remark)
-           VALUES ($1,'采集',$2,$3,$4,$5,$6,'自由训练（随手拍）按提交批次自动生成') RETURNING id`,
-          [p.store_id, taskNo, JSON.stringify({ free: true }), images.length, user.sub, user.sub]);
-      } else {
-        await cx(c, `UPDATE ai_tasks SET target_count = target_count + $2 WHERE id=$1`, [task[0].id, images.length]);
-      }
+      // V5.0.18g：随手拍每批独立工单——工单号与采集任务同规则（AICJ+本地日期+4位日序号顺延），
+      // 不再用 AICJ+日期-FREE 合并单（此前同日多次采集全部并进一张 FREE 工单，第一批审核完成后
+      // 第二批挂进"已完成"工单，绕过了审核流程）。ymd 同时从 UTC 改为本地日期（与 createTask 一致）。
+      const ymd = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '');
+      await seqLock(c, 'ai_tasks', 'task_no', `AICJ${ymd}-%`);
+      const seq = await cx(c, `SELECT count(*)+1 AS n FROM ai_tasks WHERE task_no LIKE $1`, [`AICJ${ymd}-%`]);
+      const taskNo = `AICJ${ymd}-${String(seq[0].n).padStart(4, '0')}`;
+      const task = await cx(c,
+        `INSERT INTO ai_tasks (store_id, task_type, task_no, scope, target_count, done_count, progress, assigned_to, created_by, remark)
+         VALUES ($1,'采集',$2,$3,$4,$4,100,$5,$6,'随手拍采集（免任务直接拍照）按提交批次自动生成') RETURNING id`,
+        [p.store_id, taskNo, JSON.stringify({ free: true }), images.length, user.sub, user.sub]);
       for (const img of images) {
-        const ip = String(img.path || ''); // P1-H3 写入侧收口（同采集任务）
-        if (!ip || ip.includes('..') || /^[a-zA-Z]:|^[/\\]/.test(ip) || !/^(\/uploads\/|img:\/\/)/.test(ip)) {
+        const ip = String(img.path || ''); // P1-H3 写入侧收口（同采集任务；黑名单不含前导 /——/uploads/ 为合法 URL 前缀，由白名单约束）
+        if (!ip || ip.includes('..') || /^[a-zA-Z]:|^\\/.test(ip) || !/^(\/uploads\/|img:\/\/)/.test(ip)) {
           throw new BizException(40003, `样本图片路径不合法：${ip.slice(0, 64)}`);
         }
         const ann = { ...(b.annotation || {}), angle: img.angle, free: true };
@@ -712,7 +722,7 @@ export class AiController {
           [p.store_id, b.productId, img.path, JSON.stringify(ann), task[0].id]);
       }
       await audit(p.store_id, user.sub, 'AI', 'ai.sample.free', 'product', Number(b.productId), { count: images.length, taskNo });
-      return { sampleCount: images.length, taskNo, note: `随手拍样本已入库（已归入工单 ${taskNo}），等待店长审核` };
+      return { sampleCount: images.length, taskNo, note: `随手拍样本已入库（工单 ${taskNo}），等待店长审核` };
     });
   }
 

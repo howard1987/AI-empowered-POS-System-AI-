@@ -1,5 +1,5 @@
 import { Module, Controller, Get, Post, Body, Param, Query, ParseIntPipe } from '@nestjs/common';
-import { q, q1, tx, cx, r2, r3, audit, seqLock } from '../common/db';
+import { q, q1, tx, cx, r2, r3, r4, audit, seqLock } from '../common/db';
 import { curStore, curEmp } from '../common/context';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
@@ -336,7 +336,10 @@ class InventoryController {
     });
   }
 
-  /** 盘点差异生效（auditCount 与盘点任务审核共用）：盘亏 FIFO 扣批、盘盈调增即时库存 */
+  /** 盘点差异生效（auditCount 与盘点任务审核共用）：盘亏 FIFO 扣批、盘盈建批次入库
+   *  V5.0.16 修复：盘盈原先只改 inventory_current + 写 batch_id=NULL/unit_cost=0 的流水，
+   *  而 FIFO 出库只扫 batches 表 → 盘盈数量永远无法被销售消耗，造成「账面有货但卖不出」的长期漂移。
+   *  现盘盈同样生成批次（成本取最近一次入库价/供应商进价），使其可被 FIFO/FEFO 正常消耗。 */
   private async applyCountDiffs(c: any, countId: number, employeeId: number) {
     const items = await cx(c, `SELECT * FROM inventory_count_items WHERE count_id=$1 FOR UPDATE`, [countId]);
     let diffTotal = 0;
@@ -349,16 +352,47 @@ class InventoryController {
         const cost = await this.applyOutStock(c, allocs, 'count', countId, it.id, '售罄', employeeId);
         await cx(c, `UPDATE inventory_count_items SET diff_cost=$2 WHERE id=$1`, [it.id, r2(cost)]);
       } else {
+        const batchId = await this.createGainBatch(c, it.product_id, diff, `PY-${countId}-${it.id}`);
         await cx(c,
           `UPDATE inventory_current SET qty_total = qty_total + $2, updated_at=now()
             WHERE store_id=${curStore()} AND product_id=$1`, [it.product_id, diff]);
         await cx(c,
           `INSERT INTO stock_flows (store_id, product_id, batch_id, direction, qty, unit_cost, ref_type, ref_id, ref_item_id, employee_id)
-           VALUES (${curStore()},$1,NULL,'入库',$2,0,'count',$3,$4,$5)`,
-          [it.product_id, diff, countId, it.id, employeeId]);
+           VALUES (${curStore()},$1,$2,'入库',$3,$4,'count',$5,$6,$7)`,
+          [it.product_id, batchId, diff, await this.gainUnitCost(c, it.product_id), countId, it.id, employeeId]);
       }
     }
     return diffTotal;
+  }
+
+  /** 盘盈/调整入库的成本口径：最近批次成本 → 供应商进价 → 标准成本 → 0（V5.0.16） */
+  private async gainUnitCost(c: any, productId: number): Promise<number> {
+    const b = await cx(c,
+      `SELECT inbound_cost FROM batches WHERE store_id=${curStore()} AND product_id=$1
+        ORDER BY inbound_date DESC, id DESC LIMIT 1`, [productId]);
+    if (b[0] && Number(b[0].inbound_cost) > 0) return r4(Number(b[0].inbound_cost));
+    const s = await cx(c,
+      `SELECT price FROM supplier_product_prices WHERE product_id=$1 ORDER BY id DESC LIMIT 1`, [productId]);
+    if (s[0] && Number(s[0].price) > 0) return r4(Number(s[0].price));
+    const std = await cx(c, `SELECT standard_cost FROM products WHERE id=$1`, [productId]);
+    return std[0] && Number(std[0].standard_cost) > 0 ? r4(Number(std[0].standard_cost)) : 0;
+  }
+
+  /** 生成一个盘盈/调整入库批次（生产日期按当天、到期日按商品保质期推算），返回 batch_id
+   *  supplier_id 取商品主供应商（无则 0，与组合品建批次口径一致）。 */
+  private async createGainBatch(c: any, productId: number, qty: number, batchNo: string): Promise<number> {
+    const meta = await cx(c,
+      `SELECT p.keep_days, p.supplier_default_id FROM products p WHERE p.id=$1`, [productId]);
+    const keepDays = Number(meta[0]?.keep_days || 0) || 365;
+    const supplierId = Number(meta[0]?.supplier_default_id || 0) || 0;
+    const cost = await this.gainUnitCost(c, productId);
+    const bt = await cx(c,
+      `INSERT INTO batches (store_id, product_id, supplier_id, inbound_order_id, batch_no, inbound_date,
+                            production_date, expiry_date, inbound_cost, inbound_qty, remain_qty, status)
+       VALUES (${curStore()},$1,$2,NULL,$3,CURRENT_DATE,CURRENT_DATE,
+               CURRENT_DATE + ($4 || ' days')::interval, $5,$6,$6,'在库') RETURNING id`,
+      [productId, supplierId, batchNo, String(keepDays), cost, qty]);
+    return Number(bt[0].id);
   }
 
   /** V4.28.2 P0-5：受影响商品库存快照上行（'inventory' 实体 → 总部 upsert inventory_current；
@@ -817,6 +851,51 @@ class InventoryController {
         [id, reason, user.sub]);
       await audit(curStore(), user.sub, '进销存', 'count.reject', 'inventory_count', id, { no: cnt.count_no, reason });
       return { id, status: '已驳回', rejectReason: reason };
+    });
+  }
+
+  /**
+   * V5.0.16 库存快速调整通道（少量商品即时纠偏）：
+   *   盘点单适合大批量实盘，但「少量商品临时纠偏」（破损试吃、样品补录、录入误差）要走建单+审核，过于繁琐。
+   *   本接口一次提交若干商品的正负调整、立即生效并全量留痕（审计含原因与逐项结果）。
+   *   正数=盘盈入库（**生成批次**，可被 FIFO/FEFO 正常消耗）；负数=盘亏出库（FIFO 扣批，批次不足直接拒绝，不允许负库存）。
+   *   必须填写调整原因以满足可追溯；权限复用「盘点差异审核」stock.count.audit。
+   */
+  @RequirePerms('stock.count.audit')
+  @Post('adjust')
+  async quickAdjust(@Body() b: { items?: { productId: number; qty: number }[]; reason?: string },
+                    @CurrentUser() user: AuthUser) {
+    const reason = String(b.reason || '').trim();
+    if (!reason) throw new BizException(40003, '库存调整必须填写原因（留痕可追溯）');
+    const items = (Array.isArray(b.items) ? b.items : [])
+      .filter((x: any) => Number(x?.productId) > 0 && Number(x?.qty) !== 0);
+    if (!items.length) throw new BizException(40003, '请至少填写一个调整商品与数量（数量 0 视为无效）');
+    return tx(async c => {
+      const seqs = await seqLock(c, 'batches', 'batch_no', `ADJ-${today()}-%`);
+      const detail: any[] = [];
+      for (const it of items) {
+        const pid = Number(it.productId);
+        const dq = r3(Number(it.qty));
+        const prows = await cx(c, `SELECT id, name FROM products WHERE id=$1 AND deleted_at IS NULL`, [pid]);
+        if (!prows[0]) throw new BizException(40404, `商品#${pid} 不存在`, 404);
+        if (dq > 0) {
+          const batchNo = `ADJ-${today()}-${String(seqs[0].n++).padStart(3, '0')}`;
+          const bid = await this.createGainBatch(c, pid, dq, batchNo);
+          const cost = await this.gainUnitCost(c, pid);
+          await cx(c, `UPDATE inventory_current SET qty_total = qty_total + $2, updated_at=now()
+            WHERE store_id=${curStore()} AND product_id=$1`, [pid, dq]);
+          await cx(c, `INSERT INTO stock_flows (store_id, product_id, batch_id, direction, qty, unit_cost, ref_type, ref_id, ref_item_id, employee_id)
+            VALUES (${curStore()},$1,$2,'入库',$3,$4,'adjust',0,0,$5)`, [pid, bid, dq, cost, user.sub]);
+          detail.push({ productId: pid, name: prows[0].name, qty: dq, dir: '盘盈', batchNo, unitCost: cost });
+        } else {
+          const allocs = await this.fifoAlloc(c, pid, -dq, false);
+          const cost = await this.applyOutStock(c, allocs, 'adjust', 0, 0, '售罄', user.sub);
+          detail.push({ productId: pid, name: prows[0].name, qty: dq, dir: '盘亏', cost: r2(cost) });
+        }
+      }
+      await audit(curStore(), user.sub, '进销存', 'inventory.adjust', 'product', null, { reason, items: detail });
+      await this.snapInventory(c, items.map((x: any) => Number(x.productId)));
+      return { ok: true, reason, items: detail };
     });
   }
 

@@ -73,7 +73,7 @@ export class FraudController {
     const trend = await q(
       `SELECT d::date AS d,
               (SELECT COUNT(*)::int FROM sale_items si JOIN sales_orders so ON so.id=si.order_id
-                WHERE so.store_id=$1 AND ${DONE} AND so.created_at::date=d
+                WHERE so.store_id=$1 AND ${DONE} AND COALESCE(so.pay_paid_at, so.created_at)::date=d
                   AND (si.price_changed OR (si.origin_price > si.unit_price
                        AND (si.origin_price - si.unit_price) / NULLIF(si.origin_price,0) > $2))) AS disc_lines,
               (SELECT COUNT(*)::int FROM sale_refunds WHERE store_id=$1 AND created_at::date=d) AS refund_bills,

@@ -366,7 +366,8 @@ window.CashierShell = (function () {
   let csTable = null;         // 当前挂的堂食台位 {id,name}（结算页选择，落单后复位）
   let memSearchResults = [];  // V4.25.8：会员搜索结果缓存（回车二次确认用）
   // V4.22.0 本机设置（按收银台隔离：存本机 localStorage，不入 system_settings、不串台）
-  let LC = { gridCols: 0, printerId: 0, uiMode: 'auto', dispSer: '', dispBaud: 9600, dispProf: 'esc', topbarMode: 'full', hotkeysOn: true, printOn: true };   // V4.27.9：hotkeysOn/printOn=F3/F7 开关改为本机记忆（后台值仅作新机初始默认）
+  let LC = { gridCols: 0, printerId: 0, uiMode: 'auto', dispSer: '', dispBaud: 9600, dispProf: 'esc', topbarMode: 'full', hotkeysOn: true, printOn: true,
+             hotkeyMap: null, hotkeyBase: '' };   // V5.0.18g：hotkeyMap=本机快捷键自定义（各收银机各存各的）；hotkeyBase=采用后台兜底值时的版本戳（后台重新保存即触发各机重置）
   const loadLC = () => { try { Object.assign(LC, JSON.parse(localStorage.getItem('pwa_cashier_local') || '{}') || {}); } catch { /* 损坏则用默认 */ } };
   const saveLC = () => { try { localStorage.setItem('pwa_cashier_local', JSON.stringify(LC)); } catch { /* 忽略 */ } };
   // V4.22.0 低分辨率紧凑模式：自动判定（小视口/系统缩放大）或本机设置强制
@@ -502,13 +503,36 @@ window.CashierShell = (function () {
       // V4.27.9：快捷键总开关改本机记忆（LC 优先），后台 pos.cashier.hotkeys 仅作新机初始默认
       hotkeysOn = LC.hotkeysOn !== undefined ? !!LC.hotkeysOn
         : (hk == null || hk === true || String(hk) === 'true' || String(hk) === '1');
-      // V4.21.0 P16 批2：快捷键映射 + 客显推送开关
+      // V5.0.18g 快捷键「本机优先 + 后台兜底 + 下发式重置」（用户拍板，连锁管理方式）：
+      //   本机自定义持久存 LC.hotkeyMap（每台收银机各存各的）；后台 pos.cashier.hotkey_map 仅作
+      //   新机初始/兜底值——后台修改键位值本身**不会**重置已自定义的收银机；重置走显式下发：
+      //   pos.cashier.hotkey_reset { seq 递增, devices 目标设备码（空=全部）} → 指向的收银机
+      //   轮询到指令后清空本机自定义、恢复后台兜底键位。
       try {
-        const hm = get('pos.cashier.hotkey_map');
+        // 下发重置检查（先于键位采用——重置清空本机自定义后自然落到后台兜底值）
+        const rsItem = (rows || []).find(x => x.setting_key === 'pos.cashier.hotkey_reset' || x.key === 'pos.cashier.hotkey_reset');
+        const rsRaw = rsItem ? rsItem.value : undefined;
+        const rs = typeof rsRaw === 'string' ? JSON.parse(rsRaw) : rsRaw;
+        const seq = Math.max(0, Number(rs?.seq) || 0);
+        if (seq > (Number(LC.hotkeyResetSeq) || 0)) {
+          const devs = String(rs?.devices || '').split(',').map(s => s.trim()).filter(Boolean);
+          let hitMe = devs.length === 0;   // 空 = 下发全部
+          if (!hitMe) {
+            try { const myCode = String(await deviceCode() || ''); hitMe = myCode !== '' && devs.includes(myCode); } catch { hitMe = false; }
+          }
+          LC.hotkeyResetSeq = seq;
+          if (hitMe) { delete LC.hotkeyMap; toast('⌨ 收到后台下发的快捷键重置：本机键位已恢复为后台兜底键位'); }
+          saveLC();
+        }
+        const hkItem = (rows || []).find(x => x.setting_key === 'pos.cashier.hotkey_map' || x.key === 'pos.cashier.hotkey_map');
+        const hm = hkItem ? hkItem.value : undefined;
         const obj = typeof hm === 'string' ? JSON.parse(hm) : hm;
-        if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-          for (const k of ['pay', 'hold', 'take', 'repeat', 'print', 'lock', 'stock', 'price', 'disc', 'self', 'ask', 'bell', 'neg', 'pend', 'refund', 'shift', 'reprint', 'collect']) {
-            const v = String(obj[k] || '').toUpperCase();
+        const HK_KEYS = ['pay', 'hold', 'take', 'repeat', 'print', 'lock', 'stock', 'price', 'disc', 'self', 'ask', 'bell', 'neg', 'pend', 'refund', 'shift', 'reprint', 'collect'];
+        const localUsable = !!(LC.hotkeyMap && typeof LC.hotkeyMap === 'object');
+        const src = localUsable ? LC.hotkeyMap : (obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : null);
+        if (src) {
+          for (const k of HK_KEYS) {
+            const v = String(src[k] || '').toUpperCase();
             if (/^(F([1-9]|1[0-2])|[A-Z])$/.test(v)) hkMap[k] = v;
           }
         }
@@ -652,7 +676,7 @@ window.CashierShell = (function () {
     const st = stockOf(p);
     return { inCart, short: st != null && qty > st - inCart };
   }
-  function tryAdd(p, qty, src, el) {
+  function tryAdd(p, qty, src, el, fromScaleCode) {
     const s = stockShort(p, qty);
     if (s.short && stockOnline) {
       if (stockHard) { toast(`库存硬拦已开启：${p.name} 账面仅剩 ${stockOf(p)}，不能超卖（收银设置可关）`); return; }
@@ -661,13 +685,13 @@ window.CashierShell = (function () {
         { okText: '按负库存继续卖（留痕）' }).then(ok => {
           if (!ok) return;
           negSales.unshift({ t: nowHM(), name: p.name, stock: stockOf(p), had: s.inCart, add: qty });
-          doAdd(p, qty, src, true, el);
+          doAdd(p, qty, src, true, el, fromScaleCode);
         });
       return;
     }
-    doAdd(p, qty, src, false, el);
+    doAdd(p, qty, src, false, el, fromScaleCode);
   }
-  function doAdd(p, qty, src, neg, el) {
+  function doAdd(p, qty, src, neg, el, fromScaleCode) {
     if (neg) toast('已按负库存售卖并留痕（账面 ' + stockOf(p) + '）');
     else {
       const st = stockOf(p);
@@ -678,13 +702,16 @@ window.CashierShell = (function () {
       showDebounceBar(p); flashAdded(p, 0, el); lastScan.id = Number(p.id); lastScan.t = now; return;
     }
     if (src === 'scan') { lastScan.id = Number(p.id); lastScan.t = now; }
+    // 称重商品（非秤码来源）：初始数量置 0，稍后由自动读秤填充
+    const weighted = isW(p) && !fromScaleCode;
+    const addQty = weighted ? 0 : qty;
     const hit = cart.find(l => l.p.id === Number(p.id) && !l.manualPrice);
-    if (hit) hit.qty = Math.round((hit.qty + qty) * 1000) / 1000;   // 价格快照：已加行不受后续调价影响
-    else cart.push({ p: { ...p, id: Number(p.id) }, qty, ...(neg ? { neg: true } : {}) });
-    flashAdded(p, qty, el);
+    if (hit) hit.qty = Math.round((hit.qty + addQty) * 1000) / 1000;   // 价格快照：已加行不受后续调价影响
+    else cart.push({ p: { ...p, id: Number(p.id) }, qty: addQty, ...(neg ? { neg: true } : {}) });
+    flashAdded(p, weighted ? 1 : addQty, el);
     renderCart();
     refreshStock();
-    if (!neg) toast(`已加车：${p.name}`);
+    if (!neg) toast(weighted ? `已加车（称重）：${p.name} · 自动读取秤重…` : `已加车：${p.name}`);
     // V4.18.5 加车即报价；V4.25.7：只播「名称+价格」——库存信息留给「问价」（老板反馈加车报库存太吵）
     try {
       if (ttsOn && productVoiceOn && window.PwaTTS && src !== 'combo') { // VQA-D3：voice.product.enabled 子开关
@@ -692,6 +719,62 @@ window.CashierShell = (function () {
         window.PwaTTS.say(`${p.name}，${price}元`, { rate: 1.08 });
       }
     } catch { }
+    if (weighted) {  // 方案 A：自动轮询串口秤重量填充数量
+      const idx = cart.findIndex(l => l.p.id === Number(p.id) && !l.manualPrice);
+      if (idx >= 0) startWeigh(idx);
+    }
+  }
+  // ── 称重商品自动读秤（方案 A：点选/扫 PLU 自动轮询串口秤重量填充数量，默认 kg，防抖）──
+  let weigh = null;            // {idx, lastKg, timer} 当前正在自动读秤的购物车行
+  let weighAutoTried = false;  // 本次会话是否已尝试过自动连接秤（避免每次点称重都弹串口选择器）
+  function stopWeigh() { if (weigh && weigh.timer) clearTimeout(weigh.timer); weigh = null; }
+  function manualTouch(i) { if (weigh && weigh.idx === i) stopWeigh(); }   // 手动改数量 → 取消该行自动读秤
+  function startWeigh(idx) {
+    if (typeof Scale === 'undefined') { toast('电子秤组件未加载，请手动输入重量'); return; }
+    const begin = () => { stopWeigh(); weigh = { idx, lastKg: null, timer: 0 }; pollWeigh(); };
+    if (Scale.connected && Scale.connected()) { begin(); return; }
+    if (weighAutoTried) { toast('电子秤未连接：点顶栏秤图标连接后即可自动称重，或手动输入重量（kg）'); return; }
+    if (Scale.supported && Scale.supported()) {
+      weighAutoTried = true;
+      Scale.connect().then(begin).catch(e => toast('未连接电子秤：点顶栏秤图标连接后可自动称重，或手动输入重量' + (/后台关闭/.test(e && e.message || '') ? '（后台已关闭自动读重）' : '')));
+    } else {
+      toast('当前环境不支持串口电子秤（需 Chrome/Edge + HTTPS），请手动输入重量（kg）');
+    }
+  }
+  function pollWeigh() {
+    if (!weigh) return;
+    const l = cart[weigh.idx];
+    if (!l || !isW(l.p)) { stopWeigh(); return; }
+    const cur = (Scale && Scale.last) ? Scale.last : null;
+    if (cur && cur.kg != null) {
+      const kg = Math.round(cur.kg * 1000) / 1000;
+      if (weigh.lastKg == null || Math.abs(kg - weigh.lastKg) >= 0.002) {   // 防抖：≥2g 变化才提交，避免抖动刷屏
+        weigh.lastKg = kg;
+        setLineQty(weigh.idx, kg);
+      }
+    }
+    weigh.timer = setTimeout(pollWeigh, 250);
+  }
+  function setLineQty(idx, kg) {
+    const l = cart[idx]; if (!l) return;
+    l.qty = kg;
+    const box = $('#csCart');
+    if (box) {
+      const row = box.querySelector('.cs-crow[data-row="' + idx + '"]');
+      if (row) {
+        const inp = row.querySelector('input[data-q="' + idx + '"]');
+        if (inp && document.activeElement !== inp) inp.value = kg.toFixed(3);
+        const amt = row.querySelector('.cs-amt');
+        if (amt) amt.textContent = '¥' + money(lineAmount(l));
+      }
+    }
+    renderSummary();   // 轻量：本地重算总额 + 客显去抖推送
+    const cntEl = $('#csCnt');
+    if (cntEl) {
+      const cnt = cart.reduce((s, x) => s + x.qty, 0);
+      const txt = cart.length + ' 行 · ' + (Number.isInteger(cnt) ? cnt : cnt.toFixed(3)) + ' 件';
+      if (cntEl.textContent !== txt) { cntEl.textContent = txt; cntEl.classList.remove('cs-bump'); void cntEl.offsetWidth; cntEl.classList.add('cs-bump'); setTimeout(() => cntEl.classList.remove('cs-bump'), 460); }
+    }
   }
   /* V4.26.3 ① 加车视觉反馈：卡片轻缩一下 + 盖一层「✓ 已加入」，0.6s 自动消失。
      触屏收银原来只有按下时的底色变化，松手就没了，店员不确定加没加、容易重复扫。
@@ -748,7 +831,7 @@ window.CashierShell = (function () {
               const p2 = { ...base, id: Number(base.id) };
               cart.push({ p: p2, qty: Number(kg.toFixed(3)), manualPrice: Number((sp.amount / kg).toFixed(3)) });
               renderCart(); refreshStock();
-            } else tryAdd(base, Number(kg.toFixed(3)), 'scan');
+            } else tryAdd(base, Number(kg.toFixed(3)), 'scan', null, true);
             toast(`⚖ 秤码识别${sp.offline ? '（离线）' : ''}：${sp.product.name} ${kg.toFixed(3)}kg`);
             return;
           }
@@ -901,6 +984,7 @@ window.CashierShell = (function () {
             <div id="csSug" style="display:none"></div>
             <div class="cs-search"><input id="csSearch" placeholder="扫码 / 商品名 / 拼音码（如 ysx）" autocomplete="off"></div>
             <button class="cs-scanbtn" id="csScanBtn">扫 码<small>扫码枪直接扫</small></button>
+            <button class="cs-sb-btn" id="csAi">🤖 AI智拍</button>
             <button class="cs-sb-btn" id="csPark">挂单</button>
             <button class="cs-sb-btn" id="csTake">取单<b class="cs-dot" id="csTakeDot" style="display:none"></b></button>
             <button class="cs-sb-btn" id="csSplit">分单</button>
@@ -1197,6 +1281,23 @@ window.CashierShell = (function () {
     $('#csPark').onclick = holdOrder;
     $('#csTake').onclick = takeOrder;
     $('#csSplit').onclick = openSplit;
+    // V5.0.18g：桌面收银台接入 AI 智拍（与手机收银 ckAi 同链路：识别确认 → 逐件加车，走 tryAdd 统一守卫）
+    $('#csAi').onclick = () => {
+      if (typeof AiScan === 'undefined' || !AiScan.open) { toast('AI 智拍组件未加载（刷新页面重试）'); return; }
+      AiScan.open({
+        scene: 'checkout',
+        title: 'AI 多商品识别收银',
+        onConfirm: chosen => {
+          let added = 0;
+          chosen.forEach(it => {
+            const p = Pricebook.items.find(x => Number(x.id) === Number(it.productId));
+            if (p) { tryAdd(p, Math.max(1, Number(it.count) || 1), 'ai'); added++; }
+            else toast(`未在价目表找到：${it.name}（请检查商品档案并同步价目表）`);
+          });
+          if (added) toast(`🤖 AI 智拍已加入 ${added} 种商品`);
+        },
+      });
+    };
     $('#csVoiceAsk').onclick = openVoiceAsk;
     $('#csStock').onclick = openStockQuery;   // V4.24.0 ④：库存查询弹窗（另有热键，默认 F10）
     $('#csBell').onclick = showBellMsgs;
@@ -1220,9 +1321,10 @@ window.CashierShell = (function () {
     $('#csScanBtn').onclick = () => { $('#csSearch').focus(); toast('扫码枪直接对准商品扫即可（全局收码）'); };
     $('#csClear').onclick = async () => {
       if (!cart.length) return;
-      if (await pwaConfirm('清空购物车', '确认清空当前购物车？（可先挂单暂存）')) { cart.length = 0; clearCoupons(); manualRound = 0; renderCart(); }
+      if (await pwaConfirm('清空购物车', '确认清空当前购物车？（可先挂单暂存）')) { stopWeigh(); cart.length = 0; clearCoupons(); manualRound = 0; renderCart(); }
     };
     $('#csUndo').onclick = () => {
+      stopWeigh();
       const l = cart[cart.length - 1];
       if (l) { l.qty = Math.round((l.qty - (isW(l.p) ? 0.05 : 1)) * 1000) / 1000; if (l.qty <= 0) cart.pop(); renderCart(); toast('已撤销 1 件'); }
       $('#csDebounce').style.display = 'none';
@@ -1631,12 +1733,14 @@ window.CashierShell = (function () {
         </div>`;
       }).join('');
       box.querySelectorAll('[data-m]').forEach(b => b.onclick = () => {
+        manualTouch(+b.dataset.m);
         const l = cart[+b.dataset.m];
         l.qty = Math.round((l.qty - Number(b.dataset.st)) * 1000) / 1000;
         if (l.qty <= 0) cart.splice(+b.dataset.m, 1);
         renderCart();
       });
       box.querySelectorAll('[data-p]').forEach(b => b.onclick = () => {
+        manualTouch(+b.dataset.p);
         const i = +b.dataset.p, l = cart[i];
         const nv = Math.round((l.qty + Number(b.dataset.st)) * 1000) / 1000;
         const st = stockOf(l.p);
@@ -1651,7 +1755,10 @@ window.CashierShell = (function () {
         }
         l.qty = nv; renderCart();
       });
-      box.querySelectorAll('[data-q]').forEach(inp => inp.onchange = () => {
+      box.querySelectorAll('[data-q]').forEach(inp => {
+        inp.onfocus = () => manualTouch(+inp.dataset.q);
+        inp.onchange = () => {
+        manualTouch(+inp.dataset.q);
         const l = cart[+inp.dataset.q];
         let v = Number(inp.value);
         if (!v || v <= 0) { renderCart(); return; }
@@ -1667,6 +1774,7 @@ window.CashierShell = (function () {
           return;
         }
         l.qty = v; renderCart();
+        }
       });
       box.querySelectorAll('[data-e]').forEach(s => s.onclick = () => { curIdx = +s.dataset.e; priceEdit(+s.dataset.e); });
       // V4.25.3：单品折扣按钮（快捷键 D 同效）
@@ -1680,7 +1788,7 @@ window.CashierShell = (function () {
       }));
       box.querySelectorAll('[data-g]').forEach(b => b.onclick = () => { curIdx = +b.dataset.g; giftEdit(+b.dataset.g); });
       box.querySelectorAll('[data-r]').forEach(b => b.onclick = () => remarkEdit(+b.dataset.r));
-      box.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { cart.splice(+b.dataset.d, 1); renderCart(); });
+      box.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { stopWeigh(); cart.splice(+b.dataset.d, 1); renderCart(); });
     }
     const cnt = cart.reduce((s, l) => s + l.qty, 0);
     // V4.26.3：件数有变化才跳动（避免每次重绘都闪）
@@ -2525,6 +2633,7 @@ window.CashierShell = (function () {
 
   async function openPay() {
     if (!cart.length) { toast('购物车为空'); return; }
+    stopWeigh();
     if (payInFlight) return;
     // V5.0.11g：结账前询问会员（选「有会员」会中止本次结账去挂会员）
     if (!(await askMemberAtCheckout())) return;
@@ -3936,7 +4045,7 @@ window.CashierShell = (function () {
       <div class="kv"><span class="k">客显推送（顾客副屏）</span><span class="v"><select id="csCfgDisp"><option value="1"${dispPush ? ' selected' : ''}>开</option><option value="0"${!dispPush ? ' selected' : ''}>关</option></select> <button class="mini-btn" id="csCfgDispOpen">🖥 打开副屏</button></span></div>
       <div class="kv"><span class="k">串口客显杆屏<b style="color:var(--pri)">（本机）</b></span><span class="v"><select id="csCfgSerProf">${[['esc', 'ESC/POS 双行'], ['cd522', 'VFD（CD5220）'], ['txt', '纯文本']].map(([v, t]) => `<option value="${v}"${LC.dispProf === v ? ' selected' : ''}>${t}</option>`).join('')}</select> <button class="mini-btn" id="csCfgSer">${window.CDisp && CDisp.connected() ? '断开' : '连接'}</button></span></div>
       <div class="kv"><span class="k">堂食台位管理</span><span class="v"><button class="mini-btn" id="csCfgTables">管理</button></span></div>
-      <div class="kv"><span class="k">快捷键自定义（点击改键）</span><span class="v" id="csHkEdit" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"></span></div>
+      <div class="kv"><span class="k">快捷键自定义<b style="color:var(--pri)">（本机）</b>· 点击改键，改完点「存本机」<br><span style="font-size:10.5px;color:var(--ink-3)">仅本收银机生效；后台「快捷键映射」是兜底值，只有后台显式「下发重置」才会覆盖本机</span></span><span class="v" id="csHkWrap"><span id="csHkEdit" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"></span><button class="mini-btn" id="csHkSave" style="margin-top:6px">💾 存本机</button><button class="mini-btn" id="csHkReset" style="margin-top:6px" title="放弃本机自定义，恢复为后台设置的兜底键位">↺ 用后台</button></span></div>
       ${hasPerm('pos.price.authorize') ? `<div class="kv"><span class="k">店长授权码（改价/打折现场授权）</span><span class="v"><span class="muted" style="font-size:12px">在后台「员工与角色 → 授权码」设置/修改/清除</span></span></div>` : ''}
       <div class="kv"><span class="k">设备异常记录（埋点）</span><span class="v"><button class="mini-btn" id="csCfgDev">查询</button></span></div>
       <div class="kv"><span class="k">播报音色（默认跟随老板端）</span><span class="v"><select id="csCfgVoice">${voiceOpts.join('')}</select></span></div>
@@ -3944,8 +4053,8 @@ window.CashierShell = (function () {
       <button class="mini-btn" id="csCfgTtsTry" style="margin-top:6px">🔊 试听当前音色</button>
       <div class="hint" id="csTtsInfo">音色诊断加载中…</div>
       <div class="hint">音色说明：能用哪些音色由「运行环境 + 系统语音包」决定——Edge 浏览器自带拟真晓晓（云端、需联网）；<b>收银端 EXE 与 Chrome 只能用本机已安装的系统音色</b>。电脑端要拟人音色，请在 Windows「设置 → 时间和语言 → 语言和区域 → 中文(简体) → 语言选项 → 语音」安装中文语音包，或在「设置 → 辅助功能 → 讲述人 → 添加自然语音」安装自然语音（离线可用），装完重启收银端即可在上方选中。试听不影响已保存设置。</div>
-      <div class="hint">快捷键：<b>F1</b>=键位说明（固定）· 其余键位在上方「快捷键自定义」点击修改，保存后立即生效；EXE 桌面端自动同步为全局键。结算弹窗回车=收款、空格=收款不打小票。<b>改价（默认 P）/ 单品折扣（默认 D）</b>作用于当前选中行（点购物车行选中）。F3/F5/F11/F12 为浏览器保留键不建议设。</div>
-      <div class="hint">标注<b>（本机）</b>的项（卡片数/显示模式/本机小票机）只存在本机、不传给其他收银台；其余存 system_settings（收银台组）全店共享，修改留痕。</div>
+      <div class="hint">快捷键：<b>F1</b>=键位说明（固定）· 其余键位在上方「快捷键自定义」点击修改后点<b>「💾 存本机」</b>——只存在本收银机，各机互不影响；「↺ 用后台」恢复为后台设置的兜底键位；后台「快捷键映射」重新保存会<b>重置全部收银机</b>。EXE 桌面端自动同步为全局键。结算弹窗回车=收款、空格=收款不打小票。<b>改价（默认 P）/ 单品折扣（默认 D）</b>作用于当前选中行（点购物车行选中）。F3/F5/F11/F12 为浏览器保留键不建议设。</div>
+      <div class="hint">标注<b>（本机）</b>的项（卡片数/显示模式/本机小票机/快捷键）只存在本机、不传给其他收银台；其余存 system_settings（收银台组）全店共享，修改留痕。</div>
       ${canWrite ? '<button class="btn ok" id="csCfgSave" style="width:100%;margin-top:10px;position:sticky;bottom:-18px;padding:12px 0;box-shadow:0 -6px 14px rgba(20,40,25,.18)">保存</button>'
         : '<div class="hint" style="color:var(--bad)">无 sys.settings 权限：仅可查看，请在后台设置页修改。</div>'}</div>`;
     document.body.appendChild(m);
@@ -4025,6 +4134,8 @@ window.CashierShell = (function () {
       } catch (e) { toast('串口客显连接失败：' + (e.message || e)); }
     });
     // 快捷键自定义编辑器（V4.21.0）：点击捕获按键；冲突自动互换；ESC 取消
+    // V5.0.18g 改为本机语义：编辑的是本机键位（LC.hotkeyMap），存本机不入库；后台 hotkey_map 仅兜底/重置用。
+    // 旧版写入 pos.cashier.hotkey_map（全店共享），存在「另一面板持旧草稿保存→覆盖他人设置」缺陷，已废。
     let hkDraft = { ...hkMap };
     const HK_CN = { pay: '结算', hold: '挂单', take: '取单', repeat: '重复上一单', print: '打印开关', lock: '锁屏', stock: '库存查询', price: '改价', disc: '单品折扣',
                     self: '一键自检', ask: '🎤 问价', bell: '消息', neg: '负库存', pend: '挂起单', refund: '退货', shift: '班次', reprint: '补打上一单', collect: '🎓 AI采集' };   // V4.27.3：collect=AI 采集/训练模式（默认未设键，点按捕获设置）
@@ -4032,7 +4143,7 @@ window.CashierShell = (function () {
     const renderHkEdit = () => {
       if (!hkSlot) return;
       hkSlot.innerHTML = Object.keys(HK_CN).map(k =>
-        `<button class="mini-btn" data-hk="${k}"${canWrite ? '' : ' disabled'}>${HK_CN[k]} <b>${esc(hkDraft[k])}</b></button>`).join('');
+        `<button class="mini-btn" data-hk="${k}">${HK_CN[k]} <b>${esc(hkDraft[k])}</b></button>`).join('');
       hkSlot.querySelectorAll('[data-hk]').forEach(b => b.onclick = () => captureHk(b));
     };
     const captureHk = btn => {
@@ -4054,6 +4165,21 @@ window.CashierShell = (function () {
       document.addEventListener('keydown', onKey, true);
     };
     renderHkEdit();
+    // V5.0.18g：本机键位保存/恢复（独立于主保存——不写 system_settings，各收银机各存各的）
+    const hkSave = m.querySelector('#csHkSave');
+    hkSave && (hkSave.onclick = () => {
+      LC.hotkeyMap = { ...hkDraft }; saveLC();
+      Object.assign(hkMap, hkDraft);           // 内存即时生效（含 EXE 全局键）
+      syncExeHotkeys();
+      toast('⌨ 本机快捷键已保存（仅本收银机生效）');
+    });
+    const hkReset = m.querySelector('#csHkReset');
+    hkReset && (hkReset.onclick = async () => {
+      delete LC.hotkeyMap; saveLC();                       // 放弃本机自定义 → loadSettings 落到后台兜底值
+      try { await loadSettings(); } catch { /* 拉取失败沿用当前 */ }
+      hkDraft = { ...hkMap }; renderHkEdit(); syncExeHotkeys();
+      toast('↺ 已恢复为后台设置的兜底键位');
+    });
     const save = m.querySelector('#csCfgSave');
     save && (save.onclick = async () => {
       try {
@@ -4066,7 +4192,6 @@ window.CashierShell = (function () {
           ['pos.print.browser_fallback', m.querySelector('#csCfgFb').value === '1'],
           ['pos.cashier.tts.voice', m.querySelector('#csCfgVoice').value],
           ['pos.cashier.tts.rate', m.querySelector('#csCfgRate').value],
-          ['pos.cashier.hotkey_map', hkDraft],
           ['pos.display.push', m.querySelector('#csCfgDisp').value === '1'],
         ];
         // V4.22.0：本机三项（卡片数/显示模式/本机小票机）只写本机 localStorage，不入库不串台
@@ -4338,6 +4463,7 @@ window.CashierShell = (function () {
     const doLogout = () => {
       // V4.25.8：退出前先清空副屏（避免下次登录显示上次购物车/会员缓存）
       try { pushDisplay({ status: 'idle', items: [], payable: 0, saved: 0, member: null, guide: '欢迎光临' }, true); } catch { }
+      stopWeigh();
       active = false;
       document.body.classList.remove('cashier-mode');
       clearInterval(window.__csClock);
@@ -4468,6 +4594,7 @@ window.CashierShell = (function () {
       await openExitWizard();
       return;
     }
+    stopWeigh();
     active = false;
     document.body.classList.remove('cashier-mode');
     clearInterval(window.__csClock);

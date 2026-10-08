@@ -1,4 +1,4 @@
-import { Module, Controller, Get, Post, Body, Param, Query, ParseIntPipe } from '@nestjs/common';
+import { Module, Controller, Get, Post, Body, Param, Query, ParseIntPipe, Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { q, q1, tx, cx, r2, audit } from '../common/db';
 import { curStore, curEmp } from '../common/context';
 import { BizException } from '../common/http';
@@ -6,79 +6,35 @@ import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { SettingsService } from './settings.module';
 import { isChainStoreNode, hqMemberPost } from './member-chain.module'; // V5.0.0 批次5：连锁建档卡号由总部生成
 import * as bcrypt from 'bcryptjs';
+import { memberGrowth } from './member-growth.service';   // V5.0.17：等级判定改成长值口径
+import { notifyStaff } from '../common/notices';   // V5.0.18：资产对账异常通知
 
 /**
- * 会员等级同步（方案 5.1.12，余额实时升降）：
- *   升级：余额 ≥ 档位门槛 → 立即生效（可跨级）
- *   降级：低于阈值先记 level_below_since，连续 grace_days 天仍低于才降（防等级反复跳动）
+ * 会员等级同步（V5.0.17 重设计：成长值口径）
+ *   成长值 = 累计实付充值本金×充值倍率 + 直接买单实付消费金额×消费倍率
+ *     （余额消费 / 券抵扣 / 赠送补贴 / 管理员排除商品不计，详见 member-growth.service.ts）
+ *   升级：累计成长值 ≥ 档位门槛 → 立即生效（可跨级）
+ *   保级：滚动考核周期（默认近 6 个月）成长值 ≥ 保级门槛（略低于升级门槛）
+ *   降级：不达保级线先进入保护缓冲期（默认 30 天，期间保留全部权益），
+ *        期内补足成长即退出缓冲；到期仍不达标才正式下调
  *   变更写 member_level_log 留痕，会员端可查历史
  */
 export async function syncMemberLevel(
   c: any, memberId: number,
   opts?: { graceDays?: number; operatorId?: number },
 ): Promise<{ changed: boolean; from?: string | null; to?: string; reason?: string; graceStarted?: boolean; graceDaysLeft?: number } | null> {
-  const grace = opts?.graceDays ?? await new SettingsService().getNum('member.level_grace_days', 7);
-  const rows = await cx(c,
-    `SELECT m.level_id, m.level_below_since, a.principal_balance
-       FROM members m JOIN member_accounts a ON a.member_id = m.id
-      WHERE m.id=$1 FOR UPDATE OF m`, [memberId]);
-  if (!rows.length) return null;
-  // 会员升级口径【老板 2026-09-18 最终拍板】：只按「本金余额」判级，赠送余额不参与
-  //   （防 gift 抬级套折扣/积分倍率）；批次5 上行的 total_consume（跨店累计消费）仅作报表，
-  //   不参与判级 —— R4「连锁累计消费升级」作废，以本条为准。
-  const balance = Number(rows[0].principal_balance);
-  const levels = await cx(c, `SELECT id, name, sort_no, upgrade_score FROM member_levels ORDER BY sort_no`);
-  if (!levels.length) return null;
-  // 目标档：本金余额能满足的最高档（upgrade_score = 储值本金余额门槛）
-  let target: any = null;
-  for (const l of levels) if (balance >= Number(l.upgrade_score)) target = l;
-  const cur: any = rows[0].level_id ? levels.find(l => l.id === rows[0].level_id) : null;
-
-  // ── 升级（或首次初始化）：立即生效 ──
-  if (!cur || (target && target.sort_no > cur.sort_no)) {
-    await cx(c,
-      `UPDATE members SET level_id=$2, level_below_since=NULL, level_synced_at=now(), updated_at=now() WHERE id=$1`,
-      [memberId, target.id]);
-    await cx(c,
-      `INSERT INTO member_level_log (member_id, from_level_id, to_level_id, reason, operator_id)
-       VALUES ($1,$2,$3,$4,$5)`,
-      [memberId, cur?.id ?? null, target.id, cur ? '升级' : '初始化', opts?.operatorId ?? null]);
-    return { changed: true, from: cur?.name ?? null, to: target.name, reason: cur ? '升级' : '初始化' };
-  }
-
-  // ── 降级：宽限期机制 ──
-  if (!target || target.sort_no < cur.sort_no) {
-    if (!rows[0].level_below_since) {
-      await cx(c,
-        `UPDATE members SET level_below_since=$2, level_synced_at=now(), updated_at=now() WHERE id=$1`,
-        [memberId, new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)]);
-      return { changed: false, graceStarted: true };
-    }
-    const bs: any = rows[0].level_below_since;
-    const bsStr = bs instanceof Date
-      ? `${bs.getFullYear()}-${String(bs.getMonth() + 1).padStart(2, '0')}-${String(bs.getDate()).padStart(2, '0')}`
-      : String(bs).slice(0, 10);
-    const sinceMs = new Date(bsStr + 'T00:00:00Z').getTime();
-    const days = Math.floor((Date.now() - sinceMs) / 86400000);
-    if (days >= grace) {
-      await cx(c,
-        `UPDATE members SET level_id=$2, level_below_since=NULL, level_synced_at=now(), updated_at=now() WHERE id=$1`,
-        [memberId, target.id]);
-      const reason = `降级(宽限${grace}天)`;
-      await cx(c,
-        `INSERT INTO member_level_log (member_id, from_level_id, to_level_id, reason, operator_id)
-         VALUES ($1,$2,$3,$4,$5)`,
-        [memberId, cur.id, target.id, reason, opts?.operatorId ?? null]);
-      return { changed: true, from: cur.name, to: target.name, reason };
-    }
-    return { changed: false, graceDaysLeft: grace - days };
-  }
-
-  // ── 等级不变：若此前挂了宽限标记（余额回升），清除 ──
-  if (rows[0].level_below_since) {
-    await cx(c, `UPDATE members SET level_below_since=NULL, level_synced_at=now(), updated_at=now() WHERE id=$1`, [memberId]);
-  }
-  return { changed: false };
+  // V5.0.17：判定口径已由「储值本金余额」改为「成长值」（累计充值+实付消费，余额/券/赠送/排除商品不计），
+  //   实现见 member-growth.service.ts；保留原签名以兼容既有调用点（结账 / 代收充值 / 会员储值）。
+  const r = await memberGrowth.syncLevel(c, memberId, opts?.operatorId ?? null);
+  if (!r) return null;
+  return {
+    changed: !!r.changed,
+    from: r.from ?? null,
+    to: r.to ?? r.levelName ?? null,
+    reason: r.reason,
+    graceStarted: r.graceStarted,
+    graceDaysLeft: r.graceDaysLeft,
+  };
 }
 
 // ─── Controller（会员中心：快速查询 / 建档 / 储值 / 解锁，方案 5.7 + V4.5.2 会员中心） ───
@@ -335,6 +291,8 @@ class MembersController {
                                     biz_type, balance_after, employee_id, remark)
          VALUES ($8,$1,'入',$2,$3,$4,'充值',$5,$6,$7) RETURNING id`,
         [id, r2(principal + gift), principal, gift, after, user.sub, b.remark ?? null, user.storeId || 1]);
+      await memberGrowth.earnRecharge(c, {   // V5.0.17：充值本金计成长值（赠送不计）
+        memberId: Number(id), principal, refType: 'recharge', refId: Number(id), remark: '会员储值充值' });
       const level = await syncMemberLevel(c, id, { operatorId: user.sub });
       await audit(user.storeId || 1, user.sub, '会员', 'member.recharge', 'member', id,
         { principal, gift, balanceAfter: after, level });
@@ -389,6 +347,17 @@ class MembersController {
                 FROM member_levels ORDER BY sort_no`);
   }
 
+  /** V5.0.18 会员资产对账：账户余额 vs 流水合计逐会员核对（储值/积分/分红三条线）。
+   *  此前三者之间既无数据库一致性约束、也无自动对账——余额被绕过流水篡改/漏记时无从发现。
+   *  口径：balance = Σ(入−出) balance_flows；points = Σ(加−减) points_flows；
+   *        dividend_balance = Σ dividend_records.amount（计提正/抵扣·冲减·失效回冲负，正负已带符号）。 */
+  @RequirePerms('member.balance.adjust')
+  // 路径用两段（recon/assets）：单段会被上方 @Get(':id') + ParseIntPipe 抢占而 400
+  @Get('recon/assets')
+  async assetRecon() {
+    return runAssetRecon();
+  }
+
   /** 全量等级同步（降级宽限到期后由夜间跑批/管理员手动触发） */
   @RequirePerms('sys.user.manage')
   @Post('levels/sync')
@@ -415,5 +384,76 @@ class MembersController {
   }
 }
 
-@Module({ controllers: [MembersController] })
+/** V5.0.18 会员资产对账核心：账户余额 vs 流水合计，返回不一致明细（截取前 50 条）。
+ *  供 GET /members/asset-recon（人工）与每日任务（自动，异常即通知）共用。 */
+export async function runAssetRecon(): Promise<{ checked: number; mismatchCount: number; mismatches: any[] }> {
+  const rows = await q(`
+    SELECT a.member_id, m.name AS member_name,
+           a.balance AS acct_balance, COALESCE(bf.s,0) AS flow_balance,
+           a.points AS acct_points, COALESCE(pf.s,0) AS flow_points,
+           a.dividend_balance AS acct_div, COALESCE(df.s,0) AS flow_div
+      FROM member_accounts a
+      JOIN members m ON m.id = a.member_id AND m.deleted_at IS NULL
+      LEFT JOIN (SELECT member_id, SUM(CASE WHEN direction='入' THEN amount ELSE -amount END) AS s
+                   FROM balance_flows GROUP BY member_id) bf ON bf.member_id = a.member_id
+      LEFT JOIN (SELECT member_id, SUM(CASE WHEN direction='加' THEN points ELSE -points END) AS s
+                   FROM points_flows GROUP BY member_id) pf ON pf.member_id = a.member_id
+      LEFT JOIN (SELECT member_id, SUM(amount) AS s
+                   FROM dividend_records GROUP BY member_id) df ON df.member_id = a.member_id`);
+  const cents = (x: any) => Math.round(Number(x || 0) * 100);
+  const mism = rows.filter((r: any) =>
+    cents(r.acct_balance) !== cents(r.flow_balance) ||
+    Number(r.acct_points || 0) !== Number(r.flow_points || 0) ||
+    cents(r.acct_div) !== cents(r.flow_div))
+    .map((r: any) => ({ memberId: Number(r.member_id), name: r.member_name,
+      balance: { acct: Number(r.acct_balance), flow: Number(r.flow_balance) },
+      points: { acct: Number(r.acct_points), flow: Number(r.flow_points) },
+      dividend: { acct: Number(r.acct_div), flow: Number(r.flow_div) } }));
+  return { checked: rows.length, mismatchCount: mism.length, mismatches: mism.slice(0, 50) };
+}
+
+/** V5.0.17 会员等级周期考核定时任务（每日 03:10）
+ *  必需：保级缓冲期到期后若会员仍未消费，必须有任务把等级降下来；
+ *  仅靠「结账/充值时顺带判定」无法覆盖「长期不消费」场景（越久越高级，会员等级永久化）。
+ *  逐会员独立事务，单个会员异常不影响整体。 */
+@Injectable()
+export class MemberLevelJob implements OnModuleInit, OnModuleDestroy {
+  private timer: any;
+  private lastDay = '';
+  onModuleInit() {
+    this.timer = setInterval(() => this.maybeRun().catch(() => { }), 60_000);
+  }
+  onModuleDestroy() { clearInterval(this.timer); }
+  private async maybeRun() {
+    const now = new Date();
+    const day = now.toISOString().slice(0, 10);
+    if (now.getHours() !== 3 || now.getMinutes() < 10 || this.lastDay === day) return;
+    this.lastDay = day;
+    try {
+      const ms = await q(`SELECT id FROM members WHERE deleted_at IS NULL`);
+      let changed = 0;
+      for (const m of ms) {
+        try {
+          const r = await tx((c: any) => memberGrowth.syncLevel(c, Number(m.id), null));
+          if (r?.changed) changed++;
+        } catch { /* 单会员失败跳过 */ }
+      }
+      console.log(`[会员等级job] 周期考核完成：检查 ${ms.length} 人，等级变更 ${changed} 人`);
+      // V5.0.18：会员资产对账（每日，考核之后）——账实不符即审计 + 通知管理员
+      try {
+        const rc = await runAssetRecon();
+        if (rc.mismatchCount > 0) {
+          console.error(`[会员等级job] ⚠ 资产对账：${rc.mismatchCount}/${rc.checked} 个会员账实不符`);
+          await audit(curStore(), 0, '会员', 'member.asset.recon', 'member', null,
+            { checked: rc.checked, mismatchCount: rc.mismatchCount, sample: rc.mismatches.slice(0, 10) }).catch(() => { });
+          try { notifyStaff(1, 'job_error', `会员资产对账异常：${rc.mismatchCount}/${rc.checked} 个会员账实不符，请到「会员管理 → 资产对账」核查`, {}, 'sys.settings', 'member:recon').catch(() => { }); } catch { }
+        }
+      } catch (e: any) { console.error('[会员等级job] 资产对账失败:', e?.message); }
+    } catch (e: any) {
+      console.error('[会员等级job] 执行失败:', e?.message);
+    }
+  }
+}
+
+@Module({ controllers: [MembersController], providers: [MemberLevelJob] })
 export class MembersModule {}

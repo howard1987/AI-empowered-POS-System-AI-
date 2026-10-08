@@ -366,7 +366,8 @@ window.CashierShell = (function () {
   let csTable = null;         // 当前挂的堂食台位 {id,name}（结算页选择，落单后复位）
   let memSearchResults = [];  // V4.25.8：会员搜索结果缓存（回车二次确认用）
   // V4.22.0 本机设置（按收银台隔离：存本机 localStorage，不入 system_settings、不串台）
-  let LC = { gridCols: 0, printerId: 0, uiMode: 'auto', dispSer: '', dispBaud: 9600, dispProf: 'esc', topbarMode: 'full', hotkeysOn: true, printOn: true };   // V4.27.9：hotkeysOn/printOn=F3/F7 开关改为本机记忆（后台值仅作新机初始默认）
+  let LC = { gridCols: 0, printerId: 0, uiMode: 'auto', dispSer: '', dispBaud: 9600, dispProf: 'esc', topbarMode: 'full', hotkeysOn: true, printOn: true,
+             hotkeyMap: null, hotkeyBase: '' };   // V5.0.18g：hotkeyMap=本机快捷键自定义（各收银机各存各的）；hotkeyBase=采用后台兜底值时的版本戳（后台重新保存即触发各机重置）
   const loadLC = () => { try { Object.assign(LC, JSON.parse(localStorage.getItem('pwa_cashier_local') || '{}') || {}); } catch { /* 损坏则用默认 */ } };
   const saveLC = () => { try { localStorage.setItem('pwa_cashier_local', JSON.stringify(LC)); } catch { /* 忽略 */ } };
   // V4.22.0 低分辨率紧凑模式：自动判定（小视口/系统缩放大）或本机设置强制
@@ -502,13 +503,36 @@ window.CashierShell = (function () {
       // V4.27.9：快捷键总开关改本机记忆（LC 优先），后台 pos.cashier.hotkeys 仅作新机初始默认
       hotkeysOn = LC.hotkeysOn !== undefined ? !!LC.hotkeysOn
         : (hk == null || hk === true || String(hk) === 'true' || String(hk) === '1');
-      // V4.21.0 P16 批2：快捷键映射 + 客显推送开关
+      // V5.0.18g 快捷键「本机优先 + 后台兜底 + 下发式重置」（用户拍板，连锁管理方式）：
+      //   本机自定义持久存 LC.hotkeyMap（每台收银机各存各的）；后台 pos.cashier.hotkey_map 仅作
+      //   新机初始/兜底值——后台修改键位值本身**不会**重置已自定义的收银机；重置走显式下发：
+      //   pos.cashier.hotkey_reset { seq 递增, devices 目标设备码（空=全部）} → 指向的收银机
+      //   轮询到指令后清空本机自定义、恢复后台兜底键位。
       try {
-        const hm = get('pos.cashier.hotkey_map');
+        // 下发重置检查（先于键位采用——重置清空本机自定义后自然落到后台兜底值）
+        const rsItem = (rows || []).find(x => x.setting_key === 'pos.cashier.hotkey_reset' || x.key === 'pos.cashier.hotkey_reset');
+        const rsRaw = rsItem ? rsItem.value : undefined;
+        const rs = typeof rsRaw === 'string' ? JSON.parse(rsRaw) : rsRaw;
+        const seq = Math.max(0, Number(rs?.seq) || 0);
+        if (seq > (Number(LC.hotkeyResetSeq) || 0)) {
+          const devs = String(rs?.devices || '').split(',').map(s => s.trim()).filter(Boolean);
+          let hitMe = devs.length === 0;   // 空 = 下发全部
+          if (!hitMe) {
+            try { const myCode = String(await deviceCode() || ''); hitMe = myCode !== '' && devs.includes(myCode); } catch { hitMe = false; }
+          }
+          LC.hotkeyResetSeq = seq;
+          if (hitMe) { delete LC.hotkeyMap; toast('⌨ 收到后台下发的快捷键重置：本机键位已恢复为后台兜底键位'); }
+          saveLC();
+        }
+        const hkItem = (rows || []).find(x => x.setting_key === 'pos.cashier.hotkey_map' || x.key === 'pos.cashier.hotkey_map');
+        const hm = hkItem ? hkItem.value : undefined;
         const obj = typeof hm === 'string' ? JSON.parse(hm) : hm;
-        if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-          for (const k of ['pay', 'hold', 'take', 'repeat', 'print', 'lock', 'stock', 'price', 'disc', 'self', 'ask', 'bell', 'neg', 'pend', 'refund', 'shift', 'reprint', 'collect']) {
-            const v = String(obj[k] || '').toUpperCase();
+        const HK_KEYS = ['pay', 'hold', 'take', 'repeat', 'print', 'lock', 'stock', 'price', 'disc', 'self', 'ask', 'bell', 'neg', 'pend', 'refund', 'shift', 'reprint', 'collect'];
+        const localUsable = !!(LC.hotkeyMap && typeof LC.hotkeyMap === 'object');
+        const src = localUsable ? LC.hotkeyMap : (obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : null);
+        if (src) {
+          for (const k of HK_KEYS) {
+            const v = String(src[k] || '').toUpperCase();
             if (/^(F([1-9]|1[0-2])|[A-Z])$/.test(v)) hkMap[k] = v;
           }
         }
@@ -960,6 +984,7 @@ window.CashierShell = (function () {
             <div id="csSug" style="display:none"></div>
             <div class="cs-search"><input id="csSearch" placeholder="扫码 / 商品名 / 拼音码（如 ysx）" autocomplete="off"></div>
             <button class="cs-scanbtn" id="csScanBtn">扫 码<small>扫码枪直接扫</small></button>
+            <button class="cs-sb-btn" id="csAi">🤖 AI智拍</button>
             <button class="cs-sb-btn" id="csPark">挂单</button>
             <button class="cs-sb-btn" id="csTake">取单<b class="cs-dot" id="csTakeDot" style="display:none"></b></button>
             <button class="cs-sb-btn" id="csSplit">分单</button>
@@ -1256,6 +1281,23 @@ window.CashierShell = (function () {
     $('#csPark').onclick = holdOrder;
     $('#csTake').onclick = takeOrder;
     $('#csSplit').onclick = openSplit;
+    // V5.0.18g：桌面收银台接入 AI 智拍（与手机收银 ckAi 同链路：识别确认 → 逐件加车，走 tryAdd 统一守卫）
+    $('#csAi').onclick = () => {
+      if (typeof AiScan === 'undefined' || !AiScan.open) { toast('AI 智拍组件未加载（刷新页面重试）'); return; }
+      AiScan.open({
+        scene: 'checkout',
+        title: 'AI 多商品识别收银',
+        onConfirm: chosen => {
+          let added = 0;
+          chosen.forEach(it => {
+            const p = Pricebook.items.find(x => Number(x.id) === Number(it.productId));
+            if (p) { tryAdd(p, Math.max(1, Number(it.count) || 1), 'ai'); added++; }
+            else toast(`未在价目表找到：${it.name}（请检查商品档案并同步价目表）`);
+          });
+          if (added) toast(`🤖 AI 智拍已加入 ${added} 种商品`);
+        },
+      });
+    };
     $('#csVoiceAsk').onclick = openVoiceAsk;
     $('#csStock').onclick = openStockQuery;   // V4.24.0 ④：库存查询弹窗（另有热键，默认 F10）
     $('#csBell').onclick = showBellMsgs;
@@ -4003,7 +4045,7 @@ window.CashierShell = (function () {
       <div class="kv"><span class="k">客显推送（顾客副屏）</span><span class="v"><select id="csCfgDisp"><option value="1"${dispPush ? ' selected' : ''}>开</option><option value="0"${!dispPush ? ' selected' : ''}>关</option></select> <button class="mini-btn" id="csCfgDispOpen">🖥 打开副屏</button></span></div>
       <div class="kv"><span class="k">串口客显杆屏<b style="color:var(--pri)">（本机）</b></span><span class="v"><select id="csCfgSerProf">${[['esc', 'ESC/POS 双行'], ['cd522', 'VFD（CD5220）'], ['txt', '纯文本']].map(([v, t]) => `<option value="${v}"${LC.dispProf === v ? ' selected' : ''}>${t}</option>`).join('')}</select> <button class="mini-btn" id="csCfgSer">${window.CDisp && CDisp.connected() ? '断开' : '连接'}</button></span></div>
       <div class="kv"><span class="k">堂食台位管理</span><span class="v"><button class="mini-btn" id="csCfgTables">管理</button></span></div>
-      <div class="kv"><span class="k">快捷键自定义（点击改键）</span><span class="v" id="csHkEdit" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"></span></div>
+      <div class="kv"><span class="k">快捷键自定义<b style="color:var(--pri)">（本机）</b>· 点击改键，改完点「存本机」<br><span style="font-size:10.5px;color:var(--ink-3)">仅本收银机生效；后台「快捷键映射」是兜底值，只有后台显式「下发重置」才会覆盖本机</span></span><span class="v" id="csHkWrap"><span id="csHkEdit" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"></span><button class="mini-btn" id="csHkSave" style="margin-top:6px">💾 存本机</button><button class="mini-btn" id="csHkReset" style="margin-top:6px" title="放弃本机自定义，恢复为后台设置的兜底键位">↺ 用后台</button></span></div>
       ${hasPerm('pos.price.authorize') ? `<div class="kv"><span class="k">店长授权码（改价/打折现场授权）</span><span class="v"><span class="muted" style="font-size:12px">在后台「员工与角色 → 授权码」设置/修改/清除</span></span></div>` : ''}
       <div class="kv"><span class="k">设备异常记录（埋点）</span><span class="v"><button class="mini-btn" id="csCfgDev">查询</button></span></div>
       <div class="kv"><span class="k">播报音色（默认跟随老板端）</span><span class="v"><select id="csCfgVoice">${voiceOpts.join('')}</select></span></div>
@@ -4011,8 +4053,8 @@ window.CashierShell = (function () {
       <button class="mini-btn" id="csCfgTtsTry" style="margin-top:6px">🔊 试听当前音色</button>
       <div class="hint" id="csTtsInfo">音色诊断加载中…</div>
       <div class="hint">音色说明：能用哪些音色由「运行环境 + 系统语音包」决定——Edge 浏览器自带拟真晓晓（云端、需联网）；<b>收银端 EXE 与 Chrome 只能用本机已安装的系统音色</b>。电脑端要拟人音色，请在 Windows「设置 → 时间和语言 → 语言和区域 → 中文(简体) → 语言选项 → 语音」安装中文语音包，或在「设置 → 辅助功能 → 讲述人 → 添加自然语音」安装自然语音（离线可用），装完重启收银端即可在上方选中。试听不影响已保存设置。</div>
-      <div class="hint">快捷键：<b>F1</b>=键位说明（固定）· 其余键位在上方「快捷键自定义」点击修改，保存后立即生效；EXE 桌面端自动同步为全局键。结算弹窗回车=收款、空格=收款不打小票。<b>改价（默认 P）/ 单品折扣（默认 D）</b>作用于当前选中行（点购物车行选中）。F3/F5/F11/F12 为浏览器保留键不建议设。</div>
-      <div class="hint">标注<b>（本机）</b>的项（卡片数/显示模式/本机小票机）只存在本机、不传给其他收银台；其余存 system_settings（收银台组）全店共享，修改留痕。</div>
+      <div class="hint">快捷键：<b>F1</b>=键位说明（固定）· 其余键位在上方「快捷键自定义」点击修改后点<b>「💾 存本机」</b>——只存在本收银机，各机互不影响；「↺ 用后台」恢复为后台设置的兜底键位；后台「快捷键映射」重新保存会<b>重置全部收银机</b>。EXE 桌面端自动同步为全局键。结算弹窗回车=收款、空格=收款不打小票。<b>改价（默认 P）/ 单品折扣（默认 D）</b>作用于当前选中行（点购物车行选中）。F3/F5/F11/F12 为浏览器保留键不建议设。</div>
+      <div class="hint">标注<b>（本机）</b>的项（卡片数/显示模式/本机小票机/快捷键）只存在本机、不传给其他收银台；其余存 system_settings（收银台组）全店共享，修改留痕。</div>
       ${canWrite ? '<button class="btn ok" id="csCfgSave" style="width:100%;margin-top:10px;position:sticky;bottom:-18px;padding:12px 0;box-shadow:0 -6px 14px rgba(20,40,25,.18)">保存</button>'
         : '<div class="hint" style="color:var(--bad)">无 sys.settings 权限：仅可查看，请在后台设置页修改。</div>'}</div>`;
     document.body.appendChild(m);
@@ -4092,6 +4134,8 @@ window.CashierShell = (function () {
       } catch (e) { toast('串口客显连接失败：' + (e.message || e)); }
     });
     // 快捷键自定义编辑器（V4.21.0）：点击捕获按键；冲突自动互换；ESC 取消
+    // V5.0.18g 改为本机语义：编辑的是本机键位（LC.hotkeyMap），存本机不入库；后台 hotkey_map 仅兜底/重置用。
+    // 旧版写入 pos.cashier.hotkey_map（全店共享），存在「另一面板持旧草稿保存→覆盖他人设置」缺陷，已废。
     let hkDraft = { ...hkMap };
     const HK_CN = { pay: '结算', hold: '挂单', take: '取单', repeat: '重复上一单', print: '打印开关', lock: '锁屏', stock: '库存查询', price: '改价', disc: '单品折扣',
                     self: '一键自检', ask: '🎤 问价', bell: '消息', neg: '负库存', pend: '挂起单', refund: '退货', shift: '班次', reprint: '补打上一单', collect: '🎓 AI采集' };   // V4.27.3：collect=AI 采集/训练模式（默认未设键，点按捕获设置）
@@ -4099,7 +4143,7 @@ window.CashierShell = (function () {
     const renderHkEdit = () => {
       if (!hkSlot) return;
       hkSlot.innerHTML = Object.keys(HK_CN).map(k =>
-        `<button class="mini-btn" data-hk="${k}"${canWrite ? '' : ' disabled'}>${HK_CN[k]} <b>${esc(hkDraft[k])}</b></button>`).join('');
+        `<button class="mini-btn" data-hk="${k}">${HK_CN[k]} <b>${esc(hkDraft[k])}</b></button>`).join('');
       hkSlot.querySelectorAll('[data-hk]').forEach(b => b.onclick = () => captureHk(b));
     };
     const captureHk = btn => {
@@ -4121,6 +4165,21 @@ window.CashierShell = (function () {
       document.addEventListener('keydown', onKey, true);
     };
     renderHkEdit();
+    // V5.0.18g：本机键位保存/恢复（独立于主保存——不写 system_settings，各收银机各存各的）
+    const hkSave = m.querySelector('#csHkSave');
+    hkSave && (hkSave.onclick = () => {
+      LC.hotkeyMap = { ...hkDraft }; saveLC();
+      Object.assign(hkMap, hkDraft);           // 内存即时生效（含 EXE 全局键）
+      syncExeHotkeys();
+      toast('⌨ 本机快捷键已保存（仅本收银机生效）');
+    });
+    const hkReset = m.querySelector('#csHkReset');
+    hkReset && (hkReset.onclick = async () => {
+      delete LC.hotkeyMap; saveLC();                       // 放弃本机自定义 → loadSettings 落到后台兜底值
+      try { await loadSettings(); } catch { /* 拉取失败沿用当前 */ }
+      hkDraft = { ...hkMap }; renderHkEdit(); syncExeHotkeys();
+      toast('↺ 已恢复为后台设置的兜底键位');
+    });
     const save = m.querySelector('#csCfgSave');
     save && (save.onclick = async () => {
       try {
@@ -4133,7 +4192,6 @@ window.CashierShell = (function () {
           ['pos.print.browser_fallback', m.querySelector('#csCfgFb').value === '1'],
           ['pos.cashier.tts.voice', m.querySelector('#csCfgVoice').value],
           ['pos.cashier.tts.rate', m.querySelector('#csCfgRate').value],
-          ['pos.cashier.hotkey_map', hkDraft],
           ['pos.display.push', m.querySelector('#csCfgDisp').value === '1'],
         ];
         // V4.22.0：本机三项（卡片数/显示模式/本机小票机）只写本机 localStorage，不入库不串台

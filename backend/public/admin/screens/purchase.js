@@ -209,19 +209,89 @@ export async function render(view) {
       onUnknown: onUnknownBarcode,
     });
   }
-  /* V4.9.5 条码未识别 → AI 建品分流 */
-  function onUnknownBarcode(val, rowIdx) {
+  /* V5.0.16 入库遇到新商品 → 弹「新增商品」建档（与移动收货策略一致：确认后商品入商品档案并加入本入库单，
+     字段与后台商品建档一致；不再走原先的 confirm+AI建品）。返回 Promise<商品|null>。 */
+  function openInboundNewProduct(barcode) {
+    return new Promise(res => {
+      const bc = String(barcode || '').trim();
+      const m = document.createElement('div');
+      m.className = 'modal-mask';
+      m.style.cssText = 'position:fixed;inset:0;background:rgba(15,25,18,.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+      m.innerHTML = `<div class="modal" style="width:min(540px,94vw);max-height:88dvh;overflow:auto">
+        <h3>➕ 新增商品（建档后加入本入库单）</h3>
+        <div class="doc-tip" style="padding:0 0 8px">条码 <b>${esc(bc)}</b> 未匹配到商品档案，请补全信息建档（带 <b style="color:var(--err)">*</b> 必填）</div>
+        <div class="doc-head" style="grid-template-columns:repeat(2,minmax(0,1fr));border:1px dashed var(--line);border-radius:10px;padding:12px 14px">
+          <div class="fld" style="grid-column:1/-1;min-width:0"><label class="req">商品名称</label><input id="npiName" placeholder="商品名称"></div>
+          <div class="fld" style="min-width:0"><label>条码</label><input id="npiBc" value="${esc(bc)}"></div>
+          <div class="fld" style="min-width:0"><label class="req">单位</label><input id="npiUnit" value="件"></div>
+          <div class="fld" style="min-width:0"><label>规格</label><input id="npiSpec"></div>
+          <div class="fld" style="min-width:0"><label class="req">售价</label><input id="npiPrice" type="number" step="0.01"></div>
+          <div class="fld" style="min-width:0"><label>保质期(天)</label><input id="npiKeep" type="number"></div>
+          <div class="fld" style="min-width:0"><label>分类</label><select id="npiCat"></select></div>
+          <div class="fld" style="min-width:0"><label class="req">属性</label>
+            <span class="seg" id="npiAttr"><button class="on" data-a="track">记库存</button><button data-a="weigh">称重</button></span></div>
+        </div>
+        <div class="doc-foot"><button class="btn" id="npiCancel">取消</button><span style="flex:1"></span>
+          <button class="btn pri" id="npiOk">确认建档并加入</button></div>
+      </div>`;
+      document.body.appendChild(m);
+      let attr = 'track';
+      const attrBox = m.querySelector('#npiAttr');
+      attrBox.querySelectorAll('[data-a]').forEach(b => b.onclick = () => {
+        attr = b.dataset.a;
+        attrBox.querySelectorAll('[data-a]').forEach(x => x.classList.toggle('on', x === b));
+      });
+      (async () => {
+        try {
+          const r = await get('/products/categories');
+          const cats = Array.isArray(r) ? r : (r?.items || r?.data || []);
+          const sel = m.querySelector('#npiCat');
+          sel.innerHTML = '<option value="">— 分类（可选）—</option>' +
+            cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+        } catch { /* 分类可选，拉取失败不阻断 */ }
+      })();
+      const done = (val) => { m.remove(); res(val); };
+      m.querySelector('#npiCancel').onclick = () => done(null);
+      m.onclick = e => { if (e.target === m) done(null); };
+      m.querySelector('#npiOk').onclick = async () => {
+        const name = (m.querySelector('#npiName').value || '').trim();
+        const unit = (m.querySelector('#npiUnit').value || '').trim();
+        const priceRaw = m.querySelector('#npiPrice').value;
+        if (!name) return toast('商品名称必填', false);
+        if (!unit) return toast('单位必填', false);
+        if (priceRaw === '' || Number(priceRaw) < 0) return toast('售价必填', false);
+        const payload = {
+          name, base_unit: unit, sell_price: Number(priceRaw),
+          barcode: (m.querySelector('#npiBc').value || '').trim() || undefined,
+          spec: (m.querySelector('#npiSpec').value || '').trim() || undefined,
+          keepDays: Number(m.querySelector('#npiKeep').value) || undefined,
+          trackInventory: attr === 'track', isWeighted: attr === 'weigh',
+        };
+        const cid = Number(m.querySelector('#npiCat').value) || 0;
+        if (cid) payload.categoryId = cid;
+        try {
+          const created = await must(post('/products', payload));
+          done(created);
+        } catch { /* must 已提示错误，保持弹窗 */ }
+      };
+    });
+  }
+
+  /* 条码未识别 → 弹「新增商品」建档（V5.0.16；替代 V4.9.5 的 confirm+AI建品） */
+  async function onUnknownBarcode(val, rowIdx) {
     const v = String(val || '').trim();
     if (!v) return toast('请先扫码或输入条码', false);
-    if (confirm(`未识别到商品：${v}\n\n「确定」= 提交时 AI 自动创建新商品并入库（名称待完善，事后在商品档案补全）\n「取消」= 暂不处理（可先到商品档案手动新建）`)) {
-      const l = lines[rowIdx];
-      l._aiCreate = true;
-      l._q = v;
-      toast(`已标记 AI 建品：${v}（提交入库单时自动创建商品档案）`);
-      drawLines();
-      const qty = view.querySelector(`input[data-f="qty"][data-i="${rowIdx}"]`);
-      qty && qty.focus();
-    }
+    const created = await openInboundNewProduct(v);
+    if (!created) return;
+    const l = lines[rowIdx];
+    l.productId = Number(created.id);
+    l._p = created;
+    l._aiCreate = false;
+    l._q = '';
+    drawLines();
+    toast(`已建档并加入本单：${created.name}`);
+    const qty = view.querySelector(`input[data-f="qty"][data-i="${rowIdx}"]`);
+    qty && qty.focus();
   }
   view.querySelector('#iReset').onclick = () => { draftCache = null; newDoc(); };
   async function submitInbound(andAudit) {
@@ -345,9 +415,15 @@ export async function render(view) {
     detailId = Number(id);
     view.querySelector('#inModalTitle').textContent = `入库单 ${o.inbound_no || ''}`;
     // V5.0.3：首行固定展示 供应商/状态/制单人/日期/大批次/关联采购订单/操作员签字（无数据显示「无」）
-    const signImgHtml = o.sign_image_path
-      ? `　操作员签字：<img src="${esc(imgUrl(o.sign_image_path))}" style="height:34px;vertical-align:middle;border:1px dashed var(--line);border-radius:6px;background:#fff">`
+    // V5.0.18g 修复主体关联：sign_image_path 是供应商业务员签名（autoAttach 按 supplierId 取），
+    // 操作员签字用 operator_sign_image_path（scene='操作员签名'，按登录人取本人模板），两者分开展示
+    const sigImg = (p, t) => `<img src="${esc(imgUrl(p))}" style="height:34px;vertical-align:middle;border:1px dashed var(--line);border-radius:6px;background:#fff" title="${t}">`;
+    const opSignHtml = o.operator_sign_image_path
+      ? `　操作员签字：${sigImg(o.operator_sign_image_path, `操作员${o.operator_sign_name ? '：' + o.operator_sign_name : ''}电子签字`)}` + (o.operator_sign_name ? `<span class="muted" style="font-size:11px">${esc(o.operator_sign_name)}</span>` : '')
       : '　操作员签字：无';
+    const bizSignHtml = o.sign_image_path
+      ? `　业务员签字：${sigImg(o.sign_image_path, '供应商业务员电子签字')}`
+      : '';
     view.querySelector('#inMeta').innerHTML = `
       供应商：<b>${esc(o.supplier_name || '无')}</b>　
       状态：<span class="tag ${o.status === '已审核' ? 'g' : o.status === '已作废' ? 'r' : 'y'}">${esc(o.status || '无')}</span>　
@@ -355,7 +431,7 @@ export async function render(view) {
       日期：${(o.created_at || '').slice(0, 10) || '无'}　
       大批次：<span class="mono">${esc(o.inbound_no || '无')}</span>　
       关联采购订单：${o.po_no ? `<span class="mono">${esc(o.po_no)}</span>` : '无'}
-      ${signImgHtml}`;
+      ${opSignHtml}${bizSignHtml}`;
     view.querySelector('#inItems').innerHTML = its.length ? `
       <table><thead><tr><th class="seq">序号</th><th>条码</th><th>商品</th><th>单位</th><th class="num">数量</th>
         <th class="num">进价</th><th class="num">售价</th><th>生产日期</th><th>批次</th><th class="num">进货金额</th></tr></thead>

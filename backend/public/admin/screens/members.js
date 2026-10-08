@@ -443,19 +443,18 @@ export async function render(view) {
 
   /* ── 会员等级价格说明（读当前设置，人话化） ── */
   async function drawLvMode() {
-    let mode = '商品档案会员价优先', lvOn = false;
-    try {
-      const a = unwrap(await get('/settings/key/member.level_price_mode'));
-      mode = typeof a.value === 'string' ? a.value.replace(/^"|"$/g, '') : String(a.value ?? mode);
-    } catch { /* 未配置用默认 */ }
+    // V5.0.17b：价格模式固定为「商品档案会员价优先」，不再读 member.level_price_mode（设置项已废弃删除）；
+    //   等级判定口径同步更新为成长值（V5.0.17 会员等级重设计），旧文案「等级由累计余额自动升降」作废。
+    const mode = '商品档案会员价优先';
+    let lvOn = false;
     try {
       const b = unwrap(await get('/settings/key/member.level_discount'));
       lvOn = Number(String(b.value).replace(/[^0-9.]/g, '')) === 1;
     } catch { /* ignore */ }
     view.querySelector('#lvMode').innerHTML = `💡 <b>会员等级价格怎么算？（当前模式：${esc(mode)}）</b><br>
       ① 商品档案里单独设了「会员价」的商品 → 按商品会员价（优先级最高，不受档位影响）；<br>
-      ② 未设会员价的商品 → ${lvOn ? '按会员等级折扣（银卡/金卡/钻石在「会员等级」中配置折扣率）' : '当前等级折扣开关为关，按零售价'}；<br>
-      ③ 充值档位只决定「充多少送多少」，不直接改变商品价格；等级由累计余额自动升降。如需改为「按充值档位定价格档」，需在系统设置调整模式并配套等级折扣方案。`;
+      ② 未设会员价的商品 → ${lvOn ? '按会员等级折扣（银卡/金卡在「会员管理 → 等级与成长值」中配置折扣率）' : '当前等级折扣开关为关，按零售价'}；<br>
+      ③ 充值档位只决定「充多少送多少」，不直接改变商品价格；等级由<b>成长值</b>自动升降（累计充值本金 ×1 + 实付消费 ×0.8，详见系统设置 → 会员管理）。`;
   }
 
   view.querySelector('#mGo').onclick = () => { page = 1; list(); };

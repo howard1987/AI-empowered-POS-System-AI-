@@ -7,6 +7,7 @@ import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { SettingsService } from './settings.module';
 import { SalesService } from './sales.module';
 import { syncMemberLevel } from './members.module';
+import { memberGrowth } from './member-growth.service';   // V5.0.17：充值成长值
 import { applyPromotions } from './promotions.module';
 import { storePrice } from './store-price.service';   // V4.26.5 门店覆盖价：价目表/查价按当前门店
 import { PRODUCT_VISIBLE, MIN_PRICE_EXPR, COST_REF } from '../common/sql';       // V5.0.0 商品可售可见性（总部下发 + 门店自建）+ 价格红线（L1 优先）
@@ -606,7 +607,16 @@ class PosController {
           `INSERT INTO credit_pays (store_id, credit_id, amount, channel, mode, emp_id, remark)
            VALUES ($1,$2,$3,$4,$5,$6,$7)`,
           [user.storeId, cid, v / 100, channel, full ? 'full' : 'partial', user.sub, body.remark ?? null]);
-        if (full) settled.push(cid);
+        if (full) {
+          settled.push(cid);
+          // V5.0.18 挂账单按实际回款日归属：欠款全额结清 → 回写订单 pay_paid_at=本次回款时刻，
+          //   日结/分红/报表/AI 等按 COALESCE(pay_paid_at, created_at) 口径自动归属到回款日。
+          //   部分结清不回写（钱未收齐，归属暂挂创建日）；赊账大客户应收（channel 通道）不在此口径。
+          await cx(c,
+            `UPDATE sales_orders SET pay_paid_at=now()
+              WHERE id = (SELECT order_id FROM member_credits WHERE id=$1 AND order_id IS NOT NULL)`,
+            [cid]);
+        }
       }
       await audit(user.storeId, user.sub, '收银', '挂账销账', 'member', mid,
         { amount: amtC / 100, channel, allocations: [...allocs.entries()].map(([k, v]) => ({ creditId: k, amount: v / 100 })), remark: body.remark ?? null });
@@ -674,7 +684,7 @@ class PosController {
     const refunds = await q1<any>(
       `SELECT COUNT(*)::int AS cnt, COALESCE(SUM(r.amount),0)::float8 AS amount
          FROM sale_refunds r JOIN sales_orders o ON o.id = r.order_id
-        WHERE o.store_id=$1 AND r.status='已退款' AND r.created_at::date=$2::date`,
+        WHERE o.store_id=$1 AND r.status='已退款' AND COALESCE(r.pay_paid_at, r.created_at)::date=$2::date`,
       [user.storeId, d]);
     const neg = await q1<any>(
       `SELECT COUNT(*)::int AS cnt FROM audit_logs
@@ -721,7 +731,7 @@ class PosController {
         : new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
       const list = await q<any>(
         `SELECT id, order_no, payable_amount, created_at FROM sales_orders
-          WHERE store_id=$1 AND status='已完成' AND created_at::date = $2::date
+          WHERE store_id=$1 AND status='已完成' AND COALESCE(pay_paid_at, created_at)::date = $2::date
           ORDER BY id DESC LIMIT 200`, [user.storeId, d]);
       return { by: 'by_date', date: d, orders: list.map((o: any) => ({ id: Number(o.id), orderNo: o.order_no, amount: Number(o.payable_amount), createdAt: o.created_at })) };
     }
@@ -837,6 +847,8 @@ class PosController {
                 collected_by=$4, collected_at=now(), shift_id=$5,
                 remark=COALESCE(NULLIF($6,''), remark), updated_at=now()
           WHERE id=$1 AND status='待支付'`, [id, body.payChannel, flow[0].id, user.sub, body.shiftId ?? null, body.remark ?? '']);
+      const growth = await memberGrowth.earnRecharge(c, {   // V5.0.17：充值本金计成长值（赠送不计）
+        memberId, principal, refType: 'recharge_order', refId: id, remark: `充值单 ${ro.order_no}` });
       const level = await syncMemberLevel(c, memberId, { operatorId: user.sub });
       await audit(curStore(), user.sub, '会员', 'member.recharge.collect', 'recharge_order', id,
         { orderNo: ro.order_no, principal, gift, channel: body.payChannel, balanceAfter: after, level });

@@ -10,6 +10,42 @@ import { storePrice } from './store-price.service';   // V4.26.5 门店覆盖价
 import { chainEnabled, hqStoreId } from '../common/scope';  // V5.0.0 批次4B：对账计价引擎只在连锁模式触发
 import { COST_REF } from '../common/sql';                   // V5.0.0 批次4B：结算价 = L1（R17）
 
+// ─── V5.0.16 采购单智能匹配（移动收货：按收货商品相似度推荐关联近似采购单）──
+// 归一化：全角→半角、转小写、去空白与常见标点/括号，便于「宜简 饮用-纯净水(500ml)」与「宜简饮用纯净水500ml」对齐
+function normMatchName(s: any): string {
+  return String(s ?? '')
+    .replace(/[\uff01-\uff5e]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    .toLowerCase()
+    .replace(/[\s·・.,，、_\-—/\\()（）【】\[\]]/g, '');
+}
+// 条码归一化：全角→半角、去空白/前缀；条码是商品唯一标识，匹配时以此为最准确依据
+function normBc(s: any): string {
+  return String(s ?? '')
+    .replace(/[\uff01-\uff5e]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    .replace(/\s+/g, '');
+}
+// Dice 系数（字符 bigram 多重集相似度），0~1；完全相同=1
+function nameDiceSim(a: string, b: string): number {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  // 包含关系（较短一方是较长一方的子串，且较短≥2字）→ 视为高度相似：
+  //   解决 Dice 对「简称/短名 vs 全名」惩罚过大的问题（如「可乐」vs「可口可乐」、「金龙鱼」vs「金龙鱼调和油」）。
+  //   较短一方需≥2字，避免「水」这类单字被「矿泉水」包含而误判为同一商品。
+  if (Math.min(a.length, b.length) >= 2 && (a.includes(b) || b.includes(a))) return 0.9;
+  if (a.length < 2 || b.length < 2) return 0;
+  const grams = (s: string) => {
+    const m = new Map<string, number>();
+    for (let i = 0; i < s.length - 1; i++) { const g = s.slice(i, i + 2); m.set(g, (m.get(g) || 0) + 1); }
+    return m;
+  };
+  const ga = grams(a), gb = grams(b);
+  let inter = 0;
+  for (const [g, c] of ga) inter += Math.min(c, gb.get(g) || 0);
+  return (2 * inter) / ((a.length - 1) + (b.length - 1));
+}
+const PO_MATCH_COVER = 0.7;    // 覆盖率阈值：已录入商品被采购单覆盖比例 ≥70% → 判定为「近似采购单」
+const PO_MATCH_ITEM_SIM = 0.6; // 单商品识别为「已录入」的名称相似度下限
+
 // ─── Controller（采购与供应商：供应商 / 入库审核→批次 / 退货自动归属 T7 / 对账结算 T8，方案 5.2 / 5.5 / 5.6） ───
 @Controller('purchase')
 class PurchaseController {
@@ -683,6 +719,71 @@ class PurchaseController {
     );
   }
 
+  /**
+   * V5.0.16 移动收货智能推荐采购单：按已录入收货商品与该供应商未完成采购单的相似度，
+   * 返回最佳匹配（覆盖率≥70% 视为「近似采购单」）。前端据此提示用户是否关联。
+   * 覆盖判定：已录入商品按 productId 精确命中，或名称 Dice 相似度≥0.6 命中采购单中任一商品。
+   * 返回明细的 covered 标记：该采购单商品是否已被用户录入（false = 关联时需补录并标红）。
+   */
+  @Post('inbounds/po-suggest')
+  async suggestPo(@Body() b: { supplierId?: number; items?: { productId?: number; barcode?: string; name?: string }[] }) {
+    const inputs = (Array.isArray(b.items) ? b.items : [])
+      .map((x: any) => ({ pid: Number(x?.productId) || 0, bc: normBc(x?.barcode), name: normMatchName(x?.name) }))
+      .filter((x: any) => x.bc || x.pid > 0 || x.name);
+    if (!inputs.length) return { matched: false, score: 0, threshold: PO_MATCH_COVER, po: null, items: [] };
+    const sid = Number(b.supplierId) || 0;
+    // 候选采购单：该供应商（或全部）未收完的 已下单/到货中
+    const pos = await q(
+      `SELECT o.id, o.po_no, o.supplier_id, s.name AS supplier_name
+         FROM purchase_orders o JOIN suppliers s ON s.id = o.supplier_id
+        WHERE o.status IN ('已下单','到货中')
+          AND ($1::bigint IS NULL OR o.supplier_id = $1::bigint)
+        ORDER BY o.id DESC LIMIT 30`, [sid || null]);
+    if (!pos.length) return { matched: false, score: 0, threshold: PO_MATCH_COVER, po: null, items: [] };
+    // 一次取回所有候选明细（含条码），按 po_id 分组
+    const allItems = await q(
+      `SELECT i.po_id, i.product_id, i.order_qty, i.arrived_qty, i.price,
+              p.name AS product_name, p.base_unit, p.barcode
+         FROM purchase_order_items i JOIN products p ON p.id = i.product_id
+        WHERE i.po_id = ANY($1::bigint[]) AND i.arrived_qty < i.order_qty
+        ORDER BY i.id`, [pos.map((o: any) => o.id)]);
+    const byPo = new Map<number, any[]>();
+    for (const it of allItems) {
+      const arr = byPo.get(Number(it.po_id)) || [];
+      arr.push({ productId: Number(it.product_id), barcode: normBc(it.barcode), name: it.product_name,
+                 baseUnit: it.base_unit, orderQty: Number(it.order_qty), arrivedQty: Number(it.arrived_qty || 0),
+                 price: Number(it.price || 0), _n: normMatchName(it.product_name) });
+      byPo.set(Number(it.po_id), arr);
+    }
+    // 统一判定（唯一口径）：条码 → 档案ID → 名称相似度。条码一码一品最准确，名称仅兜底
+    const hit = (inp: any, items: any[]) => items.some((x: any) =>
+      (inp.bc && x.barcode && x.barcode === inp.bc)
+      || (inp.pid > 0 && x.productId === inp.pid)
+      || (inp.name && x._n && nameDiceSim(x._n, inp.name) >= PO_MATCH_ITEM_SIM));
+    // 逐候选算覆盖率，取最佳
+    let best: any = null;
+    for (const o of pos) {
+      const items = byPo.get(Number(o.id)) || [];
+      if (!items.length) continue;
+      const covered = inputs.filter((inp: any) => hit(inp, items)).length;
+      const score = covered / inputs.length;
+      if (!best || score > best.score) best = { o, items, score, covered };
+    }
+    if (!best || best.score < PO_MATCH_COVER) {
+      return { matched: false, score: best ? Math.round(best.score * 100) : 0,
+               threshold: PO_MATCH_COVER, po: null, items: [] };
+    }
+    // 标记每个采购单商品是否已被用户录入（covered=false → 关联时补录并标红）
+    const marked = best.items.map((x: any) => ({
+      productId: x.productId, barcode: x.barcode, name: x.name, baseUnit: x.baseUnit,
+      orderQty: x.orderQty, arrivedQty: x.arrivedQty, price: x.price,
+      covered: inputs.some((inp: any) => hit(inp, [x])),
+    }));
+    return { matched: true, score: Math.round(best.score * 100), threshold: PO_MATCH_COVER,
+             po: { id: Number(best.o.id), poNo: best.o.po_no, supplierId: Number(best.o.supplier_id),
+                   supplierName: best.o.supplier_name }, items: marked };
+  }
+
   /** 创建入库单（录入即生效、审核后置 V4.3.5；生产日期必填 V4.3.6；poId 关联采购订单并回写到货量） */
   @RequirePerms('stock.inbound.audit')
   @Post('inbounds')
@@ -920,17 +1021,28 @@ class PurchaseController {
     });
   }
 
-  /** 入库单详情（打印 A5 用：单头 + 明细含商品名/单位/批次） */
+  /** 入库单详情（打印 A5 用：单头 + 明细含商品名/单位/批次）
+   *  V5.0.18g 修复主体关联：sign_record_id 存的是供应商业务员预采签名（M3b autoAttach），
+   *  此前详情把它当「操作员签字」返回 → 屏幕上供应商人员的签名冒充操作员。
+   *  现另取 scene='操作员签名' 的记录（attachOperatorSignature，按登录人 ref_employee_id 取模板）：
+   *  operator_sign_image_path/operator_sign_name 才是操作员本人签字。 */
   @Get('inbounds/:id')
   async inboundDetail(@Param('id', ParseIntPipe) id: number) {
     const ord = await q1(`SELECT io.*, s.name AS supplier_name, e.name AS maker_name,
-                                 st.image_path AS sign_image_path, po.po_no
+                                 st.image_path AS sign_image_path, po.po_no,
+                                 ops.image_path AS operator_sign_image_path, ops.person_name AS operator_sign_name
                             FROM inbound_orders io
                             JOIN suppliers s ON s.id = io.supplier_id
                             LEFT JOIN employees e ON e.id = io.employee_id
                             LEFT JOIN signature_records sr ON sr.id = io.sign_record_id
                             LEFT JOIN signature_templates st ON st.id = sr.template_id
                             LEFT JOIN purchase_orders po ON po.id = io.po_id
+                            LEFT JOIN LATERAL (
+                              SELECT sr2.image_path, sr2.person_name
+                                FROM signature_records sr2
+                               WHERE sr2.biz_type='inbound' AND sr2.biz_id=io.id
+                                 AND sr2.scene='操作员签名' AND sr2.image_path IS NOT NULL
+                               ORDER BY sr2.id DESC LIMIT 1) ops ON true
                            WHERE io.id=$1`, [id]);
     if (!ord) throw new BizException(40404, '入库单不存在', 404);
     const items = await q(
@@ -1140,13 +1252,20 @@ class PurchaseController {
   async returnDetail(@Param('id', ParseIntPipe) id: number) {
     const ord = await q1(
       `SELECT r.*, s.name AS supplier_name, e.name AS maker_name, st.image_path AS sign_image_path,
-              au.name AS auditor_name, to_char(r.audited_at, 'YYYY-MM-DD HH24:MI') AS audited_at_txt
+              au.name AS auditor_name, to_char(r.audited_at, 'YYYY-MM-DD HH24:MI') AS audited_at_txt,
+              ops.image_path AS operator_sign_image_path, ops.person_name AS operator_sign_name
          FROM purchase_returns r
          LEFT JOIN suppliers s ON s.id = r.supplier_id
          LEFT JOIN employees e ON e.id = r.employee_id
          LEFT JOIN employees au ON au.id = r.audited_by
          LEFT JOIN signature_records sr ON sr.id = r.sign_record_id
          LEFT JOIN signature_templates st ON st.id = sr.template_id
+         LEFT JOIN LATERAL (
+           SELECT sr2.image_path, sr2.person_name
+             FROM signature_records sr2
+            WHERE sr2.biz_type='return' AND sr2.biz_id=r.id
+              AND sr2.scene='操作员签名' AND sr2.image_path IS NOT NULL
+            ORDER BY sr2.id DESC LIMIT 1) ops ON true
         WHERE r.id=$1`, [id]);
     if (!ord) throw new BizException(40404, '退货单不存在', 404);
     const items = await q(
@@ -2462,12 +2581,18 @@ class PurchaseController {
     if (needReason && !reason) throw new BizException(40003, `${b.action === 'delete' ? '删除' : '停用'}签字样本须说明原因（如：离职、调岗）`);
     if (needReason && reason.length > 64) throw new BizException(40003, '原因不超过 64 字');
     if (b.action === 'delete') {
-      const old = await q(`SELECT id, person_name FROM signature_templates WHERE id = ANY($1::bigint[])`, [ids]);
-      const r = await q(`DELETE FROM signature_templates WHERE id = ANY($1::bigint[]) RETURNING id`, [ids]);
-      for (const t of old.filter(x => r.some(y => Number(y.id) === Number(x.id)))) {
-        await this.logSampleOp(user, t, '编辑·删除', reason || '批量删除');
-      }
-      return { ok: true, affected: r.length };
+      // V5.0.18g 修复：模板被调用记录（signature_records.template_id FK）引用时直接删除会外键违规
+      //（40010「关联数据不存在或已被删除」）。调用记录是历史证据链（自带签名图/人名，不依赖模板），
+      // 删除模板前把引用置空即可安全删除。
+      return tx(async c => {
+        const old = await cx(c, `SELECT id, person_name FROM signature_templates WHERE id = ANY($1::bigint[])`, [ids]);
+        const cleared = await cx(c, `UPDATE signature_records SET template_id=NULL WHERE template_id = ANY($1::bigint[]) RETURNING id`, [ids]);
+        const r = await cx(c, `DELETE FROM signature_templates WHERE id = ANY($1::bigint[]) RETURNING id`, [ids]);
+        for (const t of old.filter(x => r.some(y => Number(y.id) === Number(x.id)))) {
+          await this.logSampleOp(user, t, '编辑·删除', reason || '批量删除');
+        }
+        return { ok: true, affected: r.length, recordsCleared: cleared.length };
+      });
     }
     if (b.action === 'disable' || b.action === 'enable') {
       const st = b.action === 'enable' ? 1 : 0;

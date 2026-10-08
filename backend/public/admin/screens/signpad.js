@@ -100,7 +100,7 @@ export function openCollectPad(view, o) {
   const box = ensureModal(view);
   box.querySelector('.sp-title').textContent = o.title || '✍️ 预采集签字（业务员）';
   box.querySelector('#spName').value = o.personName || '';
-  box.querySelector('#spRole').value = o.roleTitle || '业务员';
+  box.querySelector('#spRole').value = o.roleTitle || '';   // V5.0.18g：调用方传入则预填（员工采集传员工角色）；供应商场景保存时兜底「业务员」
   clearPad(box.querySelector('#spPad'));
   box.querySelector('#spTip').textContent =
     o.tip || '下方签字板签名后点「确认签字」；采集即授权用于该供应商日后业务单据（入库/退货自动提取）';
@@ -149,7 +149,8 @@ function ensureModal(view) {
       <h3 class="sp-title">电子签字</h3>
       <div class="doc-head" style="grid-template-columns:1fr 1fr;border:1px dashed var(--line);border-radius:10px;padding:14px 16px">
         <div class="fld"><label class="req">签字人姓名</label><input id="spName" placeholder="如：王业务"></div>
-        <div class="fld"><label>身份备注</label><input id="spRole" placeholder="业务员/供应商代表（选填）"></div>
+        <div class="fld"><label>角色备注</label><input id="spRole" list="spRoleList" placeholder="业务员/供应商代表（选填）">
+          <datalist id="spRoleList"><option value="店长"></option><option value="收银员"></option><option value="仓管"></option><option value="理货员"></option><option value="收货员"></option><option value="业务员"></option><option value="供应商代表"></option></datalist></div>
       </div>
       <div class="doc-tip sp-tip" id="spTip">下方签字板手写签名后点「确认签字」</div>
       <canvas id="spPad" width="560" height="170" style="border:1px dashed var(--line);border-radius:8px;touch-action:none;cursor:crosshair"></canvas>

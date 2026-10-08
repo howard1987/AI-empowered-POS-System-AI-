@@ -1,5 +1,5 @@
 // V5.0.11c 起不再 import del：设备删除已迁到「授权管理 → 授权设备」，本页无删除操作
-import { get, post, put, must, esc, dt, toast, API } from '../api.js';
+import { get, post, put, must, esc, dt, toast, API, unwrapList } from '../api.js';
 import { confirmBox } from '../ui.js';
 import { openDetailModal } from '../common-ui.js';
 import { anchorNav, applyGlass } from '../ui-polish.js';   // V4.26.3 长页面锚点导航 / 液态玻璃开关
@@ -10,6 +10,15 @@ export async function render(view) {
   let isHq = false;
   try { isHq = !!((await must(get('/auth/me')))?.hq); } catch { /* 保持 false */ }
   let groups = [];
+  // V5.0.17b 分类缓存：「退货时限（按分类）」的下拉选项来自商品档案分类（/products/categories）。
+  //   加载完成后重渲染一次，把未就绪时的文本占位换成真实下拉。拉取失败则回退文本输入（不阻断设置页）。
+  let __catCache = null;
+  (async () => {
+    try {
+      __catCache = unwrapList(await get('/products/categories'));
+      loadGroups();
+    } catch { /* 回退文本输入 */ }
+  })();
   let chgPage = 1, chgPages = 1, chgTotal = 0;
   view.innerHTML = `
     <style>
@@ -90,9 +99,9 @@ export async function render(view) {
     const all = await must(get('/settings'));
     allRowsCache = all;
     groups = [...new Set(all.map(s => s.group_name))];
-    // V4.25.7：页签顺序微调——「系统初始化」固定排到最后（低频、危险操作，避免误点）
-    if (groups.includes('系统初始化')) {
-      groups = groups.filter(g => g !== '系统初始化').concat(['系统初始化']);
+    // V4.25.7/V5.0.18e：页签顺序微调——「数据管理」（含开业初始化）固定排到最后（低频、危险操作，避免误点）
+    if (groups.includes('数据管理')) {
+      groups = groups.filter(g => g !== '数据管理').concat(['数据管理']);
     }
     view.querySelector('#gTabs').innerHTML =
       `<button class="btn pri" data-g="">全部</button>` +
@@ -101,8 +110,8 @@ export async function render(view) {
       curGroup = b.dataset.g;
       view.querySelectorAll('#gTabs .btn').forEach(x => x.classList.toggle('pri', x === b));
       applyFilters();
-      syncInitCard();   // V4.14.8：开业初始化仅在「系统初始化」页签显示
-      syncBackupCard(); // V5.0.15：数据备份卡仅在「通用设置」页签显示
+      syncInitCard();   // V4.14.8/V5.0.18e：开业初始化一键执行卡仅在「数据管理」页签显示（原「系统初始化」页签已并入）
+      syncBackupCard(); // V5.0.15/V5.0.18f：数据备份卡仅在「数据管理」页签显示
       renderDevCard();  // V4.21.2：收银机授权列表仅在「设备管理」页签显示
     });
     // 恢复当前分组高亮（保存后重进不再落回「全部」）
@@ -365,8 +374,9 @@ export async function render(view) {
           `<label style="font-size:12px;display:flex;gap:4px;align-items:center">${esc(r.label)}
             <select class="set-mini hk" data-k="${esc(r.k)}" style="width:74px">${opts(r.key)}</select></label>`).join('')}
           </div>
-          <div class="muted" style="font-size:11.5px;margin-top:4px">F1（键位说明）与 F3（快捷键总开关）为固定键，不可分配；「未设」= 该动作不用键盘触发。保存后<b>收银台刷新页面</b>生效（运行中的收银台在下次进入时自动加载）。</div>
-          <button class="btn pri set-btn" data-jsonsave="${key}">保存</button>`;
+          <div class="muted" style="font-size:11.5px;margin-top:4px">F1（键位说明）与 F3（快捷键总开关）为固定键，不可分配；「未设」= 该动作不用键盘触发。<b>本表是兜底键位</b>：仅作为新收银机的初始键位——各收银机在收银台「设置 → 快捷键自定义（本机）」的修改不受此处影响；需把某些/全部收银机重置为本表键位时，用下方「下发重置到收银机」。</div>
+          <button class="btn pri set-btn" data-jsonsave="${key}">保存兜底键位</button>
+          <button class="btn set-btn" data-hkreset="${key}">📣 下发重置到收银机…</button>`;
       },
       collect: box => {
         const o = {};
@@ -436,6 +446,42 @@ export async function render(view) {
         `<label style="font-size:12px;display:flex;align-items:center;gap:4px">${label}
           <input class="set-val" type="number" step="1" data-mt="${k}" value="${Number(cur[k] ?? 0)}" style="width:64px;text-align:center">${unit}</label>`).join('') +
         `<span class="muted" style="font-size:11px">三项同时满足后自动解锁「全自动」</span></div>`;
+    }
+    // V5.0.16 按分类退货时限：分类行编辑器（替代 JSON 文本框，让管理员直接按分类填天数）
+    if (s.setting_key === 'sales.refund.window_by_category') {
+      const cur = (s.value && typeof s.value === 'object') ? s.value : {};
+      const rows = Object.entries(cur);
+      // V5.0.17b：分类改为从商品档案下拉选择（不再手填）—— 手填易写错分类名，规则永不命中还难排查
+      const cats = Array.isArray(__catCache) ? __catCache : null;
+      const catCtl = (name) => {
+        if (!cats) return `<input data-rwc-k value="${esc(name || '')}" placeholder="分类加载中…" style="width:150px">`;
+        const opts = cats.map(c => `<option value="${esc(c.name)}" ${c.name === name ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+        // 历史手填的、不在分类表里的键：保留并标注，提示删除（否则该规则永远不生效）
+        const extra = (name && !cats.some(c => c.name === name))
+          ? `<option value="${esc(name)}" selected>${esc(name)}（无效·请删除）</option>` : '';
+        return `<select data-rwc-k style="width:160px">${extra}${opts}</select>`;
+      };
+      return `<div data-rwc style="display:flex;flex-direction:column;gap:6px;min-width:320px">
+        ${rows.length ? rows.map(([k, v]) => `<div data-rwc-row style="display:flex;gap:6px;align-items:center">
+          ${catCtl(k)}
+          <input data-rwc-v type="number" min="0" step="1" value="${Number(v) || 0}" style="width:66px;text-align:center">
+          <span class="muted" style="font-size:11px">天</span>
+          <button class="btn sm" data-rwc-del type="button" title="删除该分类">✕</button>
+        </div>`).join('') : '<span class="muted" style="font-size:12px">未设置（所有分类按上方「退货时限（天）」执行）</span>'}
+        <div><button class="btn sm" data-rwc-add type="button">+ 添加分类</button>
+          <span class="muted" style="font-size:11px;margin-left:8px">分类来自商品档案；1=仅限当天，0=不限；未列出的分类按上方默认时限</span></div>
+      </div>`;
+    }
+    // V5.0.17b：成长值排除商品/分类 → 点击弹窗勾选（替代手填 JSON ID 数组）
+    if (s.setting_key === 'member.growth.exclude_products' || s.setting_key === 'member.growth.exclude_categories') {
+      const isProd = s.setting_key.endsWith('_products');
+      const ids = Array.isArray(s.value) ? s.value.map(Number).filter(n => n > 0) : [];
+      const label = isProd ? '商品' : '分类';
+      return `<div data-exc data-exc-kind="${isProd ? 'p' : 'c'}" data-exc-key="${esc(s.setting_key)}" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <b data-exc-n style="min-width:86px">${ids.length ? `已选 ${ids.length} 个${label}` : '未选择'}</b>
+        <button class="btn sm pri" data-exc-pick type="button">🗂 选择${label}</button>
+        ${ids.length ? '<button class="btn sm" data-exc-clear type="button">清空</button>' : ''}
+      </div>`;
     }
     if (s.value_type === 'json' || (s.value !== null && typeof s.value === 'object')) return jsonControl(s);
     // V4.13.8 播报音色：动态枚举本机 speechSynthesis 中文音色（⭐=拟真人声）+ 试听按钮
@@ -514,77 +560,78 @@ export async function render(view) {
 
   // ── V4.13.5 分组内小节聚类：同渠道/同主题的设置聚合展示（微信归微信、支付宝归支付宝），
   //    未命中的归「其他」；prefixes 按键前缀匹配，order 指定小节内展示顺序 ──
+    // V5.0.18d 按用户归类表重排：9 大一级菜单 × 63 二级卡片；prefixes=完整设置键（精确匹配），
+  // 顺序 = 归类表序号。二级卡片归属仅由本表驱动（库内不存二级），后续调整改这里即可。
   const SECTIONS = {
-    '支付': [
-      { title: '通道模式与支付确认', prefixes: ['pay.gateway.'] },
-      { title: '微信支付（V3 付款码支付）', prefixes: ['pay.wechat.'],
-        order: ['pay.wechat.enabled', 'pay.wechat.mchid', 'pay.wechat.appid', 'pay.wechat.cert_serial',
-                'pay.wechat.apiv3_key', 'pay.wechat.private_key', 'pay.wechat.gateway'] },
-      { title: '支付宝（当面付）', prefixes: ['pay.alipay.'],
-        order: ['pay.alipay.enabled', 'pay.alipay.app_id', 'pay.alipay.private_key',
-                'pay.alipay.public_key', 'pay.alipay.gateway'] },
+    "通用设置": [
+      { title: "支付通道", prefixes: ["pay.gateway.allow_mock","pay.gateway.mode","pay.gateway.userpaying_interval_sec","pay.gateway.userpaying_polls","finance.billrecon.enabled","finance.billrecon.window_seconds"] },
+      { title: "微信支付", prefixes: ["pay.wechat.apiv3_key","pay.wechat.appid","pay.wechat.cert_serial","pay.wechat.enabled","pay.wechat.gateway","pay.wechat.mchid","pay.wechat.private_key"] },
+      { title: "支付宝", prefixes: ["pay.alipay.app_id","pay.alipay.enabled","pay.alipay.gateway","pay.alipay.private_key","pay.alipay.public_key"] },
+      { title: "收银台行为", prefixes: ["pos.discount.presets","pos.held.default_scope","pos.price.auth_reuse","pos.price.auth_self","sales.floor_guard_rate","pos.cashier.debounce","pos.cashier.grid_cols","pos.cashier.hotkey_map","pos.cashier.hotkeys","pos.cashier.lock_timeout","pos.cashier.new_ui","pos.cashier.quick_count","pos.cashier.stock_hard","pos.cashier.tts","pos.cashier.tts.rate","pos.cashier.tts.voice"] },
+      { title: "收银资金与应收", prefixes: ["pos.cashbox.float_default","pos.credit.due_days","pos.shift.diff_tolerance"] },
+      { title: "门店基础信息", prefixes: ["store.info.name","ui.glass.enabled","mobile.hand"] },
+      { title: "安全与审批", prefixes: ["auth.password_policy","auth.sign_large_mode","auth.sign_required_scenes","auth.sign_threshold"] },
+      { title: "收银与钱箱", prefixes: ["pos.drawer.enabled","pos.heartbeat_timeout","pos.pricebook_fresh_hours","pos.round_rule"] },
+      { title: "退款与退货", prefixes: ["sales.refund.limit","sales.refund.window_by_category","sales.refund.window_days"] },
+      { title: "销售与扫码购", prefixes: ["sales.close_order_minutes","sales.floor_guard_expiry_exempt","sales.price_floor_guard","sales.scanpay_enabled"] },
+      { title: "应急收银", prefixes: ["ops.emergency_amount_cap","ops.emergency_pay"] },
+      { title: "经营目标", prefixes: ["report.daily_target"] }
     ],
-    'AI识别': [
-      { title: '识别引擎与置信度', prefixes: ['ai.engine', 'ai.recog.', 'ai.vlm_fallback', 'ai.fallback_conf'] },
-      { title: '多件定位与跟踪', prefixes: ['ai.seg.', 'ai.track.', 'ai.multi.'] },
-      { title: '样本与向量检索', prefixes: ['ai.emb.', 'ai.sample', 'ai.rerank'] },
-      { title: '自动训练', prefixes: ['ai.autotrain.'] },
-      { title: '识别帧与票据 OCR', prefixes: ['ai.frames', 'ai.ocr.'] },
+    "AI管理": [
+      { title: "多件识别与跟踪", prefixes: ["ai.multi.enabled","ai.multi.min_conf","ai.seg.model_id","ai.seg.yolo_min_conf","ai.track.enabled","ai.track.stable_frames"] },
+      { title: "识别引擎与置信度", prefixes: ["ai.feature.engine","ai.engine","ai.fallback_conf"] },
+      { title: "OCR与票据识别", prefixes: ["ai.ocr.engine_url","ai.ocr.vl_model"] },
+      { title: "向量检索与候选", prefixes: ["ai.emb.enabled","ai.emb.margin","ai.emb.min_conf","ai.emb.strict_conf","ai.emb.pp.margin","ai.emb.pp.min_conf","ai.emb.pp.strict_conf","ai.emb.topk","ai.rerank.freq_weight","ai.rerank.text_weight"] },
+      { title: "自动训练", prefixes: ["ai.autotrain.auto_activate","ai.autotrain.day_of_week","ai.autotrain.device","ai.autotrain.enabled","ai.autotrain.epochs","ai.autotrain.hour","ai.autotrain.last_run","ai.autotrain.min_samples","ai.autotrain.model","ai.autotrain.python"] },
+      { title: "本地大模型", prefixes: ["ai.llm.base","ai.llm.enabled","ai.llm.mode","ai.llm.model","ai.llm.path"] },
+      { title: "销量预测与补货", prefixes: ["ai.forecast.engine","ai.forecast.history_days","ai.forecast.lgbm.min_days","ai.forecast.lgbm.url","ai.forecast.location_factor","ai.forecast.weather_weight","ai.holiday.custom","ai.holiday.lead_days","ai.restock.coverage_days","ai.restock.safety_days","ai.restock.time","ai.weather.auto_factor","ai.weather.city","ai.weather.enabled","ai.weather.qweather_host","ai.weather.qweather_key"] },
+      { title: "防损与对账", prefixes: ["ai.assoc_rules","ai.assoc.min_conf","ai.fraud_baseline","ai.fraud.cash_gap","ai.fraud.discount_floor","ai.fraud.discount_n","ai.fraud.return_floor","ai.fraud.window_days","antileak.count.strict","antileak.selfcheckout.enabled","antileak.weight.tolerance"] },
+      { title: "经营建议与决策自动化", prefixes: ["ai.suggest.auto","ai.decision.enabled","ai.decision.maturity","ai.decision.modes","ai.last_refresh","ai.daily_report.time"] },
+      { title: "选品与定价建议", prefixes: ["ai.assortment.enabled","ai.assortment.max_turnover_days","ai.assortment.window_days","ai.pricing.expiry_below_cost","ai.pricing.expiry_days","ai.pricing.min_margin","ai.pricing.stale_days","ai.pricing.stale_qty"] }
     ],
-    'AI经营': [
-      { title: '补货与销量预测', prefixes: ['ai.restock.', 'ai.forecast.', 'ai.weather.', 'ai.scale.', 'ai.holiday.'] },
-      { title: '选品与定价建议', prefixes: ['ai.assortment.', 'ai.pricing.'] },
-      { title: '防损对账与经营安全', prefixes: ['ai.fraud', 'ai.assoc', 'antileak.', 'ai.suggest.auto', 'finance.billrecon'] },
-      { title: '决策自动化', prefixes: ['ai.decision.'] },
-      { title: '本地大模型（Ollama）', prefixes: ['ai.llm.'] },
-      { title: '日常运营', prefixes: ['ai.daily_report.'] },
-      { title: '会员AI画像', prefixes: ['ai.member.'] },
-      { title: '知识库', prefixes: ['ai.kb.'] },
+    "数据管理": [
+      { title: "数据归档与保留", prefixes: ["ai.frames.retention_days","auth.audit_retention","ops.archive.flow_months","ops.archive.recog_months"] },
+      { title: "数据备份", prefixes: ["ops.backup_hour","ops.backup.keep_count","ops.backup.max_total_gb"] },
+      { title: "开业初始化", prefixes: ["init.opening_date","init.opening_note"] }
     ],
-    '商品管理': [
-      { title: '商品与保质期', prefixes: ['product.', 'stock.expiry'] },
-      { title: '库存与退货', prefixes: ['stock.return', 'stock.transfer', 'stock.negative', 'stock.inbound'] },
-      { title: '库存与报损', prefixes: ['stock.loss.'] },
-      { title: '采购与结算', prefixes: ['po.', 'recon.'] },
-      { title: '条码大数据', prefixes: ['barcode.'] },
+    "会员管理": [
+      { title: "会员画像与唤醒", prefixes: ["ai.member.portrait.enabled","ai.member.portrait.top","ai.touch.limit","ai.touch.silent_days"] },
+      { title: "会员H5门户", prefixes: ["member.h5.allow_register","member.h5.enabled","member.h5.entry_url","member.login.password_h5","member.privacy_text"] },
+      { title: "等级与成长值", prefixes: ["member.growth.enabled","member.growth.exclude_categories","member.growth.exclude_products","member.growth.exclude_promo","member.growth.recharge_rate","member.growth.consume_rate","member.growth.period_months","member.level_grace_days"] },
+      { title: "积分规则", prefixes: ["pos.points.max_pct","pos.points.rate"] }
     ],
-    '营销与线上': [
-      { title: '促销与优惠叠加', prefixes: ['promo.', 'coupon.'] },
-      { title: '会员 H5 门户', prefixes: ['member.h5.'] },
-      { title: '会员设置', prefixes: ['member.', 'points.'] },
-      { title: 'H5 线上商城', prefixes: ['h5.'] },
-      { title: '在线配送与门店位置', prefixes: ['delivery.', 'store.'] },
-      { title: '营销引擎', prefixes: ['marketing.'] },
+    "商品管理": [
+      { title: "采购与结算", prefixes: ["po.suggest_budget","recon.fee_to_dividend","recon.settle_pay_flow"] },
+      { title: "库存与退货", prefixes: ["stock.negative_return","stock.negative_sales","stock.loss_allow_zero"] },
+      { title: "低价保护", prefixes: ["ai.ocr.low_price","ai.ocr.low_price_mode"] },
+      { title: "商品与保质期", prefixes: ["product.keep_days_required","stock.expiry_disposal_hours","stock.expiry_warn_days"] },
+      { title: "条码大数据", prefixes: ["barcode.crawler.daily_limit","barcode.crawler.enable","barcode.lookup.enable","barcode.lookup.mxnzp.app_id","barcode.lookup.mxnzp.app_secret"] }
     ],
-    '财务管理': [
-      { title: '会员分红机制', prefixes: ['dividend.'] },
+    "营销管理": [
+      { title: "促销与优惠叠加", prefixes: ["coupon.mode","coupon.stack_with_promo","promo.expiry_auto_discount","promo.expiry_auto.enabled","promo.stack_layers","promo.take_best"] },
+      { title: "会员营销触达", prefixes: ["marketing.run_time"] },
+      { title: "在线配送", prefixes: ["delivery.fee","delivery.free_above","delivery.radius_km","delivery.serving"] },
+      { title: "门店位置", prefixes: ["store.lat","store.lng"] },
+      { title: "H5线上商城", prefixes: ["h5.direct_pay","h5.enabled","h5.scan_go_limit"] }
     ],
-    '收银台': [
-      { title: '收银行为', prefixes: ['pos.cashier.'] },
-      { title: '积分与抵现', prefixes: ['pos.points.'] },
-      { title: '挂账与备用金', prefixes: ['pos.credit.', 'pos.cashbox.', 'pos.shift.'] },
-      { title: '改价与折扣', prefixes: ['pos.discount.', 'pos.price.', 'pos.held.'] },
+    "财务管理": [
+      { title: "会员分红机制", prefixes: ["dividend.auto.enabled","dividend.auto.time","dividend.cap_rate","dividend.expire_days","dividend.min_single","dividend.min_window","dividend.orange_alert","dividend.ratio","dividend.red_alert","dividend.window_days"] },
+      { title: "会员资金与充值", prefixes: ["member.level_discount","member.offline.enabled","member.offline.max_daily","member.offline.max_single","member.recharge.max_single","member.recharge.orders_expire_hours"] },
+      { title: "固定成本与摊销", prefixes: ["store.cost.rent","store.cost.utility","store.cost.depreciation","store.cost.other"] }
     ],
-    '通用设置': [
-      { title: '收银与小票钱箱', prefixes: ['pos.', 'sales.refund'] },
-      { title: '销售与扫码购', prefixes: ['sales.'] },
-      { title: '移动端', prefixes: ['mobile.'] },
-      { title: '语音播报（拟人音色）', prefixes: ['voice.tts.', 'voice.assistant.', 'voice.product.', 'pos.voice_broadcast'] },
-      { title: '签字审批与安全', prefixes: ['auth.'] },
-      { title: '应急与运维', prefixes: ['ops.', 'report.', 'ops.backup_hour'] },
-      { title: '硬件外设', prefixes: ['scale.'] },
+    "连锁管理": [
+      { title: "跨店业务", prefixes: ["member.hq_store_id","chain.return.cross_cash","hq.member.cross_daily_limit"] },
+      { title: "连锁进价管控", prefixes: ["chain.cost.adjust_window_h","chain.cost.auto_adopt_new","chain.cost.merge_days","chain.variance.pickup_raise_l1"] },
+      { title: "门店商品管理", prefixes: ["chain.product.self_apply"] }
     ],
-    '设备管理': [
-      { title: '收银机授权（设备白名单）', prefixes: ['pos.device.'] },
-      { title: '收银台与客显', prefixes: ['pos.', 'display.'] },
+    "设备管理": [
+      { title: "电子秤与条码秤", prefixes: ["ai.scale.barcode_format","ai.scale.check_verify","ai.scale.custom_format","ai.scale.label_valid_days","scale.baud","scale.enabled","scale.tx.barcode_prefix","scale.tx.baud","scale.tx.charset","scale.tx.department","scale.tx.port","scale.tx.port_type","scale.tx.protocol","scale.tx.tcp_host","scale.tx.tcp_port","scale.tx.use_member_price"] },
+      { title: "语音播报", prefixes: ["ai.voice.alerts","voice.assistant.enabled","voice.price.enabled","voice.product.enabled","voice.tts.rate","voice.tts.voice","pos.voice_broadcast"] },
+      { title: "小票与单据打印", prefixes: ["doc.print.auto_a5","ops.printer_reconnect","pos.print.auto","pos.print.browser_fallback","pos.print.copies","pos.receipt.auto_print","pos.receipt.width"] },
+      { title: "设备授权", prefixes: ["pos.device.auth","pos.device.auth.loopback.bypass","pos.device.bind.employee","pos.device.limit.cashier","pos.device.limit.manager","pos.device.pair.max.uses","pos.device.pair.ttl.hours","pos.device.recovery.hint","pos.device.require.signature","pos.device.single.session","pos.device.store.cap"] },
+      { title: "收银台与客显", prefixes: ["display.ads","display.welcome","pos.desktop.kiosk_topmost","pos.display.push"] }
     ],
-    '系统初始化': [
-      { title: '开业初始', prefixes: ['init.'] },
-    ],
-    '门店与运维': [
-      { title: '商店信息（门头/小票抬头/商城 V4.16.5）', prefixes: ['store.info.'] },
-    ],
-  };
+  };;
   const ordIdx = (arr, k) => { const i = arr.indexOf(k); return i === -1 ? 999 : i; };
 
   /** 把行聚成 [{group,title,items}]：组内按 SECTIONS 小节聚类，未命中进「其他」 */
@@ -718,6 +765,68 @@ export async function render(view) {
         await loadGroups();
       });
     });
+    // V5.0.16 按分类退货时限：行编辑（改名/改天数/增删行）→ 整体组装为对象保存
+    const rwc = view.querySelector('[data-rwc]');
+    if (rwc) {
+      const collect = () => {
+        const o = {};
+        rwc.querySelectorAll('[data-rwc-row]').forEach(row => {
+          const k = (row.querySelector('[data-rwc-k]').value || '').trim();
+          const v = Number(row.querySelector('[data-rwc-v]').value) || 0;
+          if (k) o[k] = v;
+        });
+        return o;
+      };
+      const commit = async () => { await save('sales.refund.window_by_category', collect(), rwc); };
+      rwc.querySelectorAll('input').forEach(inp => inp.addEventListener('change', commit));
+      rwc.querySelectorAll('[data-rwc-del]').forEach(b => b.onclick = async () => { b.closest('[data-rwc-row]').remove(); await commit(); });
+      const add = rwc.querySelector('[data-rwc-add]');
+      if (add) add.onclick = () => {
+        const row = document.createElement('div');
+        row.setAttribute('data-rwc-row', '');
+        row.style.cssText = 'display:flex;gap:6px;align-items:center';
+        const cats = Array.isArray(__catCache) ? __catCache : null;
+        const kCtl = cats
+          ? `<select data-rwc-k style="width:160px">${cats.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('')}</select>`
+          : '<input data-rwc-k placeholder="分类名" style="width:160px">';
+        row.innerHTML = `${kCtl}
+          <input data-rwc-v type="number" min="0" step="1" value="1" style="width:66px;text-align:center">
+          <span class="muted" style="font-size:11px">天</span>
+          <button class="btn sm" data-rwc-del type="button">✕</button>`;
+        row.querySelector('[data-rwc-del]').onclick = async () => { row.remove(); await commit(); };
+        row.querySelectorAll('input,select').forEach(i => i.addEventListener('change', commit));
+        rwc.insertBefore(row, add.parentElement);
+      };
+    }
+    // V5.0.17b：成长值排除商品/分类 —— 点击弹窗勾选保存
+    view.querySelectorAll('[data-exc]').forEach(box => {
+      const kind = box.dataset.excKind;                 // 'p' 商品 / 'c' 分类
+      const key = box.dataset.excKey;
+      const label = kind === 'p' ? '商品' : '分类';
+      const refresh = (n, hasClear) => {
+        const el = box.querySelector('[data-exc-n]');
+        if (el) el.textContent = n ? `已选 ${n} 个${label}` : '未选择';
+        let cb = box.querySelector('[data-exc-clear]');
+        if (n && !cb) {
+          cb = document.createElement('button');
+          cb.className = 'btn sm'; cb.type = 'button'; cb.textContent = '清空';
+          cb.setAttribute('data-exc-clear', '');
+          cb.onclick = async () => { await save(key, [], box); refresh(0, false); };
+          box.appendChild(cb);
+        } else if (!n && cb) cb.remove();
+      };
+      const clearBtn = box.querySelector('[data-exc-clear]');
+      if (clearBtn) clearBtn.onclick = async () => { await save(key, [], box); refresh(0); };
+      box.querySelector('[data-exc-pick]').onclick = async () => {
+        const row = (allRowsCache || []).find(x => x.setting_key === key);
+        const ids = Array.isArray(row?.value) ? row.value.map(Number).filter(n => n > 0) : [];
+        await openPickManyModal({
+          title: kind === 'p' ? '选择不计成长值的商品' : '选择不计成长值的商品分类',
+          kind, selected: ids,
+          onSave: async (arr) => { await save(key, arr, box); refresh(arr.length); },
+        });
+      };
+    });
     // 输入框：回车或失焦保存（值变化才提交）
     view.querySelectorAll('input.set-val[data-key]').forEach(inp => {
       const orig = inp.value;
@@ -754,6 +863,49 @@ export async function render(view) {
         if (!ed) return;
         await save(key, ed.collect(box), box);
         await loadGroups(); // 重绘回读值
+      };
+    });
+    // V5.0.18g 快捷键重置下发（连锁下发方式）：选目标收银机（全部/指定）→ 写 pos.cashier.hotkey_reset
+    // {seq+1, devices}——收银机轮询设置时收到指向自己的更大 seq 即清本机自定义、恢复兜底键位。
+    view.querySelectorAll('[data-hkreset]').forEach(btn => {
+      btn.onclick = async () => {
+        try {
+          btn.disabled = true;
+          const devs = unwrapList(await get('/pos-devices')).filter(d => d.status !== '已停用');
+          const cur = (await get('/settings/key/pos.cashier.hotkey_reset'))?.value || {};
+          const curSeq = Math.max(0, Number(cur.seq) || 0);
+          const rowsHtml = devs.length
+            ? devs.map(d => `<label style="display:flex;gap:6px;align-items:center;padding:3px 0">
+                <input type="checkbox" data-dev="${esc(d.deviceCode)}">
+                <span style="font-size:12px">${esc(d.deviceName || '（未命名）')} <span class="muted" style="font-size:11px">${esc(d.deviceCode)} · ${esc(d.deviceType || '')}${d.employeeName ? ' · 最近使用 ' + esc(d.employeeName) : ''}${d.lastSeenAt ? ' · 活跃 ' + esc(dt(d.lastSeenAt)) : ''}</span></span></label>`).join('')
+            : '<div class="muted" style="font-size:12px">暂无登记收银机</div>';
+          const modal = openDetailModal('📣 下发快捷键重置到收银机', `
+            <div class="muted" style="font-size:12px;margin-bottom:8px">收到指令的收银机将<b>放弃本机自定义键位</b>，恢复为上方「快捷键映射」的兜底键位（收银台在下次加载设置时生效，通常数秒内）。</div>
+            <label style="display:flex;gap:6px;align-items:center;padding:3px 0;font-weight:700">
+              <input type="checkbox" data-dev="__all__"> 全部收银机</label>
+            ${rowsHtml}
+            <div style="margin-top:10px"><button class="btn pri" id="hkresetGo">确认下发（当前序号 ${curSeq} → ${curSeq + 1}）</button>
+            <span class="muted" style="font-size:11.5px;margin-left:8px">当前已处理序号：${curSeq}</span></div>`);
+          const mm = modal.mask;
+          const all = mm.querySelector('[data-dev="__all__"]');
+          all && (all.onchange = () => {
+            mm.querySelectorAll('input[data-dev]:not([data-dev="__all__"])').forEach(cb => {
+              cb.checked = all.checked; cb.disabled = all.checked;
+            });
+          });
+          mm.querySelector('#hkresetGo').onclick = async () => {
+            const picked = [...mm.querySelectorAll('input[data-dev]:not([data-dev="__all__"])')].filter(c => c.checked).map(c => c.dataset.dev);
+            const isAll = all && all.checked;
+            if (!isAll && !picked.length) { toast('请勾选要重置的收银机，或勾选「全部收银机」'); return; }
+            try {
+              await must(put('/settings/' + encodeURIComponent('pos.cashier.hotkey_reset'),
+                { value: { seq: curSeq + 1, devices: isAll ? '' : picked.join(',') }, reason: '快捷键重置下发' }));
+              toast(`✅ 重置指令已下发（${isAll ? '全部收银机' : picked.length + ' 台'}），收银机将在下次加载设置时生效`);
+              modal.close();
+            } catch (e) { toast('下发失败：' + String(e.message || e).slice(0, 60)); }
+          };
+        } catch (e) { toast('拉取收银机列表失败：' + String(e.message || e).slice(0, 60)); }
+        finally { btn.disabled = false; }
       };
     });
     // V4.16.5 ② / V4.27.9 节日表一键联网更新：按钮已随结构化编辑器渲染（data-hsync），此处仅接线
@@ -1112,11 +1264,11 @@ export async function render(view) {
   }
 
   /* ── V4.14.5 开业初始化一键执行
-     V4.14.8：仅「系统初始化」页签显示，排在「设置项」下
+     V5.0.18e：仅「数据管理」页签显示（原「系统初始化」页签随归类重排并入数据管理）
      V4.16.4：状态变量上移到 render 顶部声明区（原在此处声明，79/530 行先于声明调用触发 TDZ 报错） ── */
   function syncInitCard() {
-    view.querySelector('#initCard').style.display = (initPermOk && curGroup === '系统初始化') ? '' : 'none';
-    if (initPermOk && curGroup === '系统初始化' && !initLoaded) { initLoaded = true; loadInitPreview(); }
+    view.querySelector('#initCard').style.display = (initPermOk && curGroup === '数据管理') ? '' : 'none';
+    if (initPermOk && curGroup === '数据管理' && !initLoaded) { initLoaded = true; loadInitPreview(); }
   }
   function renderInitCard() {
     const perms = API.user?.perms || [];
@@ -1127,7 +1279,7 @@ export async function render(view) {
 
   /* ── V5.0.15 数据备份卡：手动「立即备份」+ 最近备份列表/下载（受 sys.data.backup 权限）── */
   function syncBackupCard() {
-    const shown = backupPermOk && curGroup === '通用设置';
+    const shown = backupPermOk && curGroup === '数据管理';   // V5.0.18f：数据备份卡随归类重排迁到「数据管理」页签
     view.querySelector('#backupCard').style.display = shown ? '' : 'none';
     if (shown && !backupLoaded) { backupLoaded = true; renderBackupBody(); }
   }
@@ -1352,4 +1504,63 @@ export async function render(view) {
       body.innerHTML = `<div class="muted" style="padding:6px 0">预览加载失败：${esc(e.msg || e.message || '')}</div>`;
     }
   }
+}
+
+/* ═══ V5.0.17b 通用多选弹窗：商品（可搜索）/ 分类（一次性列表） ═══
+ *  供「成长值排除商品/分类」等设置使用：弹窗勾选 → 确定后回调保存，替代手填 JSON ID。 */
+function openPickManyModal({ title, kind, selected, onSave }) {
+  const sel = new Set((selected || []).map(Number));
+  const m = document.createElement('div');
+  m.className = 'modal-mask';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(15,25,18,.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+  m.innerHTML = `<div class="modal" style="width:min(560px,94vw);max-height:82dvh;display:flex;flex-direction:column">
+    <h3>${esc(title)}</h3>
+    ${kind === 'p' ? '<div class="fld" style="margin:0 0 8px"><input id="pmKw" placeholder="搜索商品名称 / 条码 / 拼音码"></div>' : ''}
+    <div id="pmList" style="flex:1;overflow:auto;border:1px dashed var(--line);border-radius:8px;padding:6px;min-height:220px;max-height:46vh"></div>
+    <div class="doc-foot"><b id="pmCnt"></b><span style="flex:1"></span>
+      <button class="btn" id="pmCancel" type="button">取消</button>
+      <button class="btn pri" id="pmOk" type="button">确定</button></div>
+  </div>`;
+  document.body.appendChild(m);
+  const list = m.querySelector('#pmList'), cnt = m.querySelector('#pmCnt');
+  const syncCnt = () => { cnt.textContent = `已勾选 ${sel.size} 项`; };
+  const rowHtml = (id, name, sub) => `<label style="display:flex;gap:8px;align-items:center;padding:5px 6px;border-radius:6px;cursor:pointer">
+    <input type="checkbox" data-id="${Number(id)}" ${sel.has(Number(id)) ? 'checked' : ''}>
+    <span style="flex:1;min-width:0">${esc(name)}${sub ? ` <span class="muted" style="font-size:11px">${esc(sub)}</span>` : ''}</span></label>`;
+  list.addEventListener('change', e => {
+    const cb = e.target.closest('input[type=checkbox][data-id]');
+    if (!cb) return;
+    const id = Number(cb.dataset.id);
+    if (cb.checked) sel.add(id); else sel.delete(id);
+    syncCnt();
+  });
+  const fail = e => { list.innerHTML = `<div class="empty">加载失败：${esc(e?.msg || e?.message || '')}</div>`; };
+  if (kind === 'p') {
+    let kwTimer = null, lastKw = null;
+    const load = async (kw) => {
+      try {
+        const arr = unwrapList(await get('/products?size=50' + (kw ? '&keyword=' + encodeURIComponent(kw) : '')));
+        list.innerHTML = arr.length
+          ? arr.map(p => rowHtml(p.id, p.name, [p.barcode, p.spec].filter(Boolean).join(' · '))).join('')
+          : '<div class="empty">没有匹配的商品</div>';
+      } catch (e) { fail(e); }
+    };
+    const kwInp = m.querySelector('#pmKw');
+    kwInp.addEventListener('input', () => {
+      clearTimeout(kwTimer);
+      kwTimer = setTimeout(() => { const kw = kwInp.value.trim(); if (kw !== lastKw) { lastKw = kw; load(kw); } }, 300);
+    });
+    load('');
+  } else {
+    (async () => {
+      try {
+        const arr = unwrapList(await get('/products/categories'));
+        list.innerHTML = arr.length ? arr.map(c => rowHtml(c.id, c.name, '')).join('') : '<div class="empty">暂无分类</div>';
+      } catch (e) { fail(e); }
+    })();
+  }
+  syncCnt();
+  m.querySelector('#pmCancel').onclick = () => m.remove();
+  m.onclick = e => { if (e.target === m) m.remove(); };
+  m.querySelector('#pmOk').onclick = async () => { const arr = [...sel]; m.remove(); await onSave(arr); };
 }

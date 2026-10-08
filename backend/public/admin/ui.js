@@ -124,7 +124,7 @@ export function promptBox({ title = '请输入', html = '', placeholder = '', va
 export function zoomImg(url) {
   const lb = document.createElement('div');
   lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:9999;display:grid;place-items:center;cursor:zoom-out;padding:24px';
-  lb.innerHTML = `<img src="${esc(url)}" style="max-width:92vw;max-height:92vh;border-radius:12px;box-shadow:0 12px 48px rgba(0,0,0,.5)">`;
+  lb.innerHTML = `<img src="${esc(url)}" style="max-width:92vw;max-height:92vh;background:#fff;padding:10px;border-radius:12px;box-shadow:0 12px 48px rgba(0,0,0,.5)">`;
   lb.onclick = () => lb.remove();
   document.body.appendChild(lb);
 }

@@ -21,51 +21,30 @@ echo   PWA Cashier   https://localhost:3443/pwa/
 echo ============================================
 echo.
 
-REM V4.26.2: PostgreSQL refuses to start with Administrator privileges.
-REM But first: if PG is already up, or the Windows service exists (watchdog
-REM starts it with LocalService, which bypasses the admin-token restriction),
-REM there is nothing to warn about - just carry on.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Test-NetConnection -ComputerName 127.0.0.1 -Port 54329 -InformationLevel Quiet -WarningAction SilentlyContinue" 2>nul | findstr /i "True" >nul
-if not errorlevel 1 goto NO_ADMIN
+REM ----------------------------------------------------------------------
+REM PostgreSQL: 只由稳定的 Windows 服务 pos-cashier-pg 提供
+REM   服务以 LocalService 运行，不受本机 UAC/管理员令牌影响，且不会弹出
+REM   控制台窗口 —— 彻底规避旧 watchdog 误判 PG 已死、每分钟重启 postgres
+REM   导致的「闪 cmd 弹窗」风暴。
+REM ----------------------------------------------------------------------
 powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Get-Service -Name 'pos-cashier-pg' -ErrorAction SilentlyContinue) { 'YES' }" 2>nul | findstr /i "YES" >nul
-if not errorlevel 1 (
-  echo   PostgreSQL will be started via Windows service "pos-cashier-pg".
-  goto NO_ADMIN
+if errorlevel 1 (
+  echo   [ERROR] Windows service "pos-cashier-pg" not found.
+  echo   Please register the PostgreSQL service first - see docs / support.
+  pause
+  exit /b 1
 )
-REM net session succeeds only with an admin token. UAC may also be disabled
-REM (EnableLUA=0), which forces EVERY process on this PC to run elevated.
-net session >nul 2>&1
-if errorlevel 1 goto NO_ADMIN
-reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA 2>nul | findstr /i "0x0" >nul
-if not errorlevel 1 goto UAC_OFF
-echo.
-echo   [WARN] Administrator privileges detected.
-echo   PostgreSQL REFUSES to start as Administrator, so DB will never
-echo   become ready and this script would hang at [2/3].
-echo.
-echo   FIX: close this window, then double-click start-dev.bat
-echo        normally in Explorer. Do NOT use "Run as administrator".
-echo.
-pause
-goto NO_ADMIN
-:UAC_OFF
-echo.
-echo   [WARN] UAC is DISABLED on this PC (EnableLUA=0), so EVERY program
-echo   runs with full Administrator rights - double-clicking does not help.
-echo   PostgreSQL REFUSES to start as Administrator, so DB will never
-echo   become ready and this script would hang at [2/3].
-echo.
-echo   FIX A (recommended): re-enable UAC in an ADMIN PowerShell, then REBOOT:
-echo     reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 1 /f
-echo.
-echo   FIX B: register PostgreSQL as a Windows service under a non-admin
-echo   account (no reboot, no UAC change) - ask support for the setup script.
-echo.
-pause
-:NO_ADMIN
+net start pos-cashier-pg >nul 2>&1
+if errorlevel 1 (
+  echo   [note] net start returned %errorlevel% - service may already be running.
+)
 
-REM The watchdog keeps PG/backend/web/h5 alive. Only its minimized window remains.
-start "cashier-watchdog" /min cmd /k "cd /d %ROOT% && %NODE% runtime-watchdog.mjs"
+REM ----------------------------------------------------------------------
+REM 后端/Web/H5 由轻量隐藏启动器 dev-launch.mjs 接管
+REM   detached + windowsHide → 无可见窗口、不管理 PG、不会触发重启风暴。
+REM   dev-launch 自身按端口探活，重复运行也不会重复拉起子服务。
+REM ----------------------------------------------------------------------
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%launch-dev.ps1"
 
 echo [1/3] Waiting for PostgreSQL :54329 ...
 set /a TRIES=0
@@ -88,8 +67,6 @@ set /a TRIES=0
 timeout /t 1 /nobreak >nul
 set /a TRIES+=1
 set DBOK=
-REM V4.26.2: health returns {code,msg,data:{db:'ok'}} - must read $h.data.db,
-REM NOT $h.db (always empty) which made [2/3] wait forever even with a healthy backend.
 for /f "delims=" %%i in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$h=try{Invoke-RestMethod http://localhost:3100/health -TimeoutSec 2}catch{$null}; if($h.data.db -eq 'ok' -or $h.db -eq 'ok'){'OK'}" 2^>nul') do set DBOK=%%i
 if "%DBOK%"=="OK" goto API_OK
 if %TRIES% geq 90 goto API_FAIL
@@ -99,14 +76,10 @@ goto WAIT_API
 :API_FAIL
 echo.
 echo   [ERROR] Backend DB not ready after 90s.
-echo   Most likely cause: PostgreSQL refuses to run with Administrator
-echo   privileges. Other causes: PG crash-recovery still running, or the
-echo   backend failed to start.
-echo.
-echo   FIX: close this window and double-click start-dev.bat normally
-echo        (do NOT "Run as administrator").
-echo   LOGS: runtime-watchdog.log
-echo         %%TEMP%%\pg-cashier-dev.log
+echo   Most likely cause: PostgreSQL service not running, or the backend failed
+echo   to start. Check logs:
+echo     backend\logs\dev-launch.err.log
+echo     backend\logs\error.log
 echo.
 pause
 exit /b 1
@@ -135,8 +108,8 @@ echo All ready. Opening browser ...
 start "" http://localhost:8088/
 echo.
 echo To stop: run stop-dev.bat
-echo (the watchdog keeps running in the minimized "cashier-watchdog" window;
-echo  close that window, then run stop-dev.bat to stop all services incl. PG)
+echo   (dev-launch.mjs keeps backend/web/h5 alive in the background;
+echo    stop-dev.bat stops them AND the pos-cashier-pg service)
 echo.
 echo This window will close in 5 seconds ...
 timeout /t 5 /nobreak >nul
