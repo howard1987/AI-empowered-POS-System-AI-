@@ -73,22 +73,38 @@ export async function tx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
 }
 
 /**
- * P-01：原子发号——用 doc_seq 计数器替代「全局事务级 advisory 锁 + 每笔 LIKE count(*)+1」。
- * 语义与原实现完全一致（返回同前缀下「当前行数 + 1」），但：
- *   - 首次见到某 (table,col,pattern) 时按表内匹配行数初始化计数器，之后纯 O(1) 自增；
- *   - INSERT … ON CONFLICT DO UPDATE 保证并发安全，无需 advisory lock（消除高并发取号串行化与慢前缀扫描）。
+ * P-01（2026-10-10 验收终修）：原子发号——doc_seq 计数器 + 取号即放。
+ *   - 热路径 = 独立小事务内单行 UPSERT（O(1)，行锁随小事务立即提交释放），不再与业务事务同生共死，
+ *     彻底消除「发号锁持有到 COMMIT」造成的跨收银台串行化；慢 LIKE 前缀扫描只在计数器首用时执行一次；
+ *   - 业务回滚会「烧号」（出现号段空洞）：单号只要求唯一不要求连续，V-50d 哨兵已覆盖「计数器 vs max(序号)」漂移监控；
+ *   - doc_seq 键为全局前缀（不含门店）：与 order_no 等单号的全局 UNIQUE 约束对齐，天然防跨店撞号；
+ *   - 并发首用安全：基线 INSERT … SELECT … WHERE NOT EXISTS ON CONFLICT DO NOTHING，竞争方自动跳过。
  * 返回 [{n}] 形状以兼容既有 seq[0].n 用法；table/col 仅允许内部字面量（防注入）。
+ * 参数 c（业务事务连接）保留仅为兼容 33 处既有调用点——取号刻意不在该事务内执行。
  */
 export async function seqLock(c: PoolClient, table: string, col: string, pattern: string): Promise<{ n: number }[]> {
+  void c;
   if (!/^[a-z_]+$/.test(table) || !/^[a-z_]+$/.test(col)) throw new Error('seqLock 仅允许内部表/列名');
   const key = `seq:${table}:${col}:${pattern}`;
-  const r = await c.query(
-    `INSERT INTO doc_seq (k, n)
-       VALUES ($1, (SELECT COALESCE(count(*),0)::int FROM ${table} WHERE ${col} LIKE $2) + 1)
-     ON CONFLICT (k) DO UPDATE SET n = doc_seq.n + 1
-     RETURNING n`,
-    [key, pattern]);
-  return r.rows as { n: number }[];
+  const pc = await pool.connect();
+  try {
+    // 首用基线（罕见路径）：key 不存在时按表内匹配行数初始化，之后不再触碰
+    await pc.query(
+      `INSERT INTO doc_seq (k, n)
+       SELECT $1, (SELECT COALESCE(count(*),0)::int FROM ${table} WHERE ${col} LIKE $2)
+        WHERE NOT EXISTS (SELECT 1 FROM doc_seq WHERE k = $1)
+        ON CONFLICT (k) DO NOTHING`,
+      [key, pattern]);
+    // 热路径（每单一次）：单行 UPSERT 自增，即取即放
+    const r = await pc.query(
+      `INSERT INTO doc_seq (k, n) VALUES ($1, 1)
+        ON CONFLICT (k) DO UPDATE SET n = doc_seq.n + 1
+       RETURNING n`,
+      [key]);
+    return r.rows as { n: number }[];
+  } finally {
+    pc.release();
+  }
 }
 
 /** 事务内查询快捷函数 */

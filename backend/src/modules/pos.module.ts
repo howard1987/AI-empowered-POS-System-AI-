@@ -441,7 +441,8 @@ class PosController {
   @Post('held/:id/checkout')
   async checkoutHeld(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { payments: { channel: string; amount: number; externalNo?: string }[]; couponId?: number; shiftId?: number; guestPhone?: string; clientRef?: string },
+    // R-NEW-3（2026-10-10 验收修复）：挂单快照含改价行时需携带店长授权票据，否则 sales.checkout 一律 50035
+    @Body() body: { payments: { channel: string; amount: number; externalNo?: string }[]; couponId?: number; shiftId?: number; guestPhone?: string; clientRef?: string; priceAuthTicket?: string },
     @CurrentUser() user: AuthUser,
   ) {
     // P2-M4：先 CAS 认领（挂单中→结账中），并发双击/双端取单时后到者立即失败，结账异常则回置
@@ -467,6 +468,7 @@ class PosController {
       payments: body.payments,
       couponId: body.couponId,
       shiftId: body.shiftId,
+      priceAuthTicket: body.priceAuthTicket,
       remark: `挂单#${id}取单结账`,
       guestPhone: body.guestPhone,
       clientRef: body.clientRef,   // F-04：透传幂等单号（sales.checkout 已按 clientRef 去重，防取单双击/丢响应重复落单）

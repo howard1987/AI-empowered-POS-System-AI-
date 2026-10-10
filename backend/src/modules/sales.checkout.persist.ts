@@ -177,15 +177,30 @@ export async function persistCheckoutOrder(ctx: PersistCtx): Promise<PersistResu
   const batchInv = trackLines.filter((ln: any) => !dupIds.has(Number(ln.p.id)));
   const seqInv = trackLines.filter((ln: any) => dupIds.has(Number(ln.p.id)));
   if (batchInv.length) {
-    const upd = await c.query(
-      `UPDATE inventory_current ic SET qty_total = ic.qty_total - v.qty, updated_at=now()
-         FROM unnest($2::bigint[], $3::numeric[], $4::boolean[]) AS v(pid, qty, soft)
-        WHERE ic.store_id = $1 AND ic.product_id = v.pid AND (v.soft OR ic.qty_total >= v.qty)
-       RETURNING ic.product_id`, [user.storeId,
-      batchInv.map((ln: any) => ln.p.id), batchInv.map((ln: any) => ln.baseQty), batchInv.map((ln: any) => !!ln.allowNeg)]);
-    const done = new Set(upd.rows.map((r: any) => Number(r.product_id)));
-    for (const ln of batchInv) {
-      if (!done.has(Number(ln.p.id))) throw new BizException(50001, `${ln.p.name} 库存不足，无法完成销售`);
+    // R-NEW-6（2026-10-10 验收修复）：软模式「库存行不存在（从未入库）」时 UPDATE 命中 0 行，
+    //   批量化改造误加的 done 硬检把它当失败 → 软模式（stock.negative_sales=开）被整体硬拒 50001。
+    //   拆分：软模式行走 UPSERT（无行插负余行，与 L-18 盘盈 upsert 对称）；硬模式行保留原子校验 + done 硬检。
+    const softInv = batchInv.filter((ln: any) => !!ln.allowNeg);
+    const hardInv = batchInv.filter((ln: any) => !ln.allowNeg);
+    if (softInv.length) {
+      await c.query(
+        `INSERT INTO inventory_current (store_id, product_id, qty_total, updated_at)
+         SELECT $1, pid, -qty, now() FROM unnest($2::bigint[], $3::numeric[]) AS t(pid, qty)
+         ON CONFLICT (store_id, product_id)
+         DO UPDATE SET qty_total = inventory_current.qty_total - EXCLUDED.qty_total, updated_at=now()`,
+        [user.storeId, softInv.map((ln: any) => ln.p.id), softInv.map((ln: any) => ln.baseQty)]);
+    }
+    if (hardInv.length) {
+      const upd = await c.query(
+        `UPDATE inventory_current ic SET qty_total = ic.qty_total - v.qty, updated_at=now()
+           FROM unnest($2::bigint[], $3::numeric[]) AS v(pid, qty)
+          WHERE ic.store_id = $1 AND ic.product_id = v.pid AND ic.qty_total >= v.qty
+         RETURNING ic.product_id`, [user.storeId,
+        hardInv.map((ln: any) => ln.p.id), hardInv.map((ln: any) => ln.baseQty)]);
+      const done = new Set(upd.rows.map((r: any) => Number(r.product_id)));
+      for (const ln of hardInv) {
+        if (!done.has(Number(ln.p.id))) throw new BizException(50001, `${ln.p.name} 库存不足，无法完成销售`);
+      }
     }
   }
   for (const ln of seqInv) {

@@ -41,7 +41,9 @@ export async function calcRefundRows(c: any, settings: SettingsService, order: a
     // 本单之前已退金额（用于计算「退前剩余实付」）
     const prevAmt = await cx(c,
       `SELECT COALESCE(SUM(amount),0) AS n FROM sale_refunds
-        WHERE order_id=$1 AND status IN ('已退款','待审核','创建中')`, [order.id]);
+        WHERE order_id=$1 AND status IN ('待审核','创建中')`, [order.id]);
+    // R-NEW-2（2026-10-10 验收修复）：L-09 回冲后 payable_amount 是净额，「已退款」已从中扣除；
+    // 基数只扣未回冲（待审核/创建中），否则二次退款被双重扣减恒算 0 → 40003 拒退。
     const prevRefundCents = toCents(Number(prevAmt[0]?.n || 0));
 
     const thisBack = new Map<number, number>();
@@ -159,8 +161,11 @@ export class RefundService {
     if (!rf) throw new BizException(50070, '退款单不存在', 404);
     if (rf.status !== '待审核' && rf.status !== '创建中') throw new BizException(50071, `退款单状态(${rf.status})不允许执行`);
     const order = (await cx(c, `SELECT * FROM sales_orders WHERE id=$1 FOR UPDATE`, [rf.order_id]))[0];
-    const refundRatio = Number(order.payable_amount) > 0
-      ? Math.min(Number(rf.amount) / Number(order.payable_amount), 1) : 0;
+    const _origPaidAgg = await cx(c,
+      `SELECT COALESCE(SUM(amount),0) AS n FROM sale_refunds WHERE order_id=$1 AND status='已退款' AND id<>$2`, [rf.order_id, refundId]);
+    // R-NEW-2：比例分母用原始成交额（净应付 + 已回冲累计），避免分母缩小导致积分/分红多扣
+    const origPayable = Number(order.payable_amount) + Number(_origPaidAgg[0]?.n || 0);
+    const refundRatio = origPayable > 0 ? Math.min(Number(rf.amount) / origPayable, 1) : 0;
 
     // P0-F4 执行前重校验：其它退款单（含待审核/创建中）与本单叠加后，行数量与单金额均不得超原单
     const rowsNow = await cx(c,
@@ -177,9 +182,10 @@ export class RefundService {
           `明细行#${it.sale_item_id}叠加其它在途/已退款单后超出原行数量（行${it.line_qty}，他单已占${it.other_qty}，本单${it.qty}），本单不可执行`);
       }
     }
+    // R-NEW-2：净额口径下「已退款」已回冲，在途累计只含待审核/创建中
     const otherAmt = (await cx(c,
       `SELECT COALESCE(SUM(amount),0) AS n FROM sale_refunds
-        WHERE order_id=$1 AND id<>$2 AND status IN ('已退款','待审核','创建中')`,
+        WHERE order_id=$1 AND id<>$2 AND status IN ('待审核','创建中')`,
       [rf.order_id, refundId]))[0];
     if (Number(otherAmt.n) + Number(rf.amount) > Number(order.payable_amount) + 0.005) {
       throw new BizException(50075,
@@ -277,9 +283,15 @@ export class RefundService {
       if (pay.channel === '余额') {
         if (!memberId) continue;
         if (chainNode && chainCardNo) {
-          // ── 批次5：余额权威账本在总部，回补在线执行（总部按原「连锁消费」流水拆回本金/赠送）
-          await hqMemberPost('credit', { cardNo: chainCardNo, orderNo: order.order_no,
-            refundNo: rf.refund_no, asset: 'balance', amount: back });
+          // ── L-04（2026-10-10 验收修复）：余额回补原为无补偿裸调用 —— 通道成功后本地回滚即资损。
+          //    与积分侧同款降级：失败不阻断退货，但必须 WARN 可追溯（V-50b 总部余额快照对账兜底）。
+          try {
+            await hqMemberPost('credit', { cardNo: chainCardNo, orderNo: order.order_no,
+              refundNo: rf.refund_no, asset: 'balance', amount: back });
+          } catch (e) {
+            degrade('总部余额回补失败（不阻断退货，余额可能少回补）',
+              { orderNo: order.order_no, refundNo: rf.refund_no, amount: back }, e);
+          }
           continue;
         }
         // 按原流水本金/赠送比例回加（口径B 拆分一致性，按分）
@@ -337,6 +349,8 @@ export class RefundService {
         // V4.13.2 通道原路退：支付流水号能匹配网关 SUCCESS 单 → 调适配器原路退并回写
         // （微信返微信/支付宝返支付宝）；匹配不到（记账式手记流水）→ 仍走留痕
         const cents = (y: any) => Math.round(Number(y) * 100);
+        // L-04 残余风险（2026-10-10 文档化）：通道退款发生在事务内 —— 本地回滚时通道已退而本地无记录，
+        //        差异由 V-50b 对账兜底；两阶段化（通道退款事务外 + 回写 CAS）见验收报告 L-04 专项。
         await this.paygw.refundInTx(c, { channel: pay.channel, externalNo: pay.external_no ?? null,
           refundCents: cents(back), refundNo: rf.refund_no });
       }
@@ -479,8 +493,9 @@ export class RefundService {
       `SELECT COALESCE(SUM(amount),0) AS t FROM sale_refunds WHERE order_id=$1 AND status='已退款'`, [rf.order_id]);
     const refundedSum = Math.round(Number(refundedAgg[0]?.t ?? 0) * 100);
     const payableCents = Math.round(Number(order.payable_amount) * 100);
-    const newOrderStatus = refundedSum >= payableCents ? '已退款' : '部分退款';
-    if (refundedSum >= payableCents)
+    // R-NEW-2：净额口径满额 ⇔ 剩余净应付归零（原判定部分回冲后恒真，首笔部分退款即被误置「已退款」）
+    const newOrderStatus = payableCents <= 0 ? '已退款' : '部分退款';
+    if (payableCents <= 0) // R-NEW-2：满额 ⇔ 净应付归零（原 refundedSum>=净应付 在部分回冲后恒真）
       await cx(c, `UPDATE sales_orders SET pay_status='refunded', status='已退款' WHERE id=$1 AND pay_status IN ('paid','part_refunded')`, [rf.order_id]);
     else
       await cx(c, `UPDATE sales_orders SET pay_status='part_refunded', status='部分退款' WHERE id=$1 AND pay_status='paid'`, [rf.order_id]);

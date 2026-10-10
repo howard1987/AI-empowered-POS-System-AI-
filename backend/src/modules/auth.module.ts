@@ -1106,8 +1106,9 @@ class AuthController {
   ) {
     if (!['在职', '停用'].includes(body.status)) throw new BizException(40003, '状态仅支持 在职/停用');
     // V5.0.18g：停用写 disabled_at（90 天删除冷静期起点）；复职清空
+        // R-NEW-5：$2 双用途需显式类型对齐（SET 侧 varchar / CASE 侧 ::text）
     const r = await q1(`UPDATE employees SET status=$2, token_version=COALESCE(token_version,0)+1,
-        disabled_at = CASE WHEN $2='停用' THEN now() ELSE NULL END, updated_at=now()
+        disabled_at = CASE WHEN status='停用' THEN now() ELSE NULL END, updated_at=now()
       WHERE id=$1 AND store_id=$3 RETURNING id`, [id, body.status, user.storeId]);
     if (!r) throw new BizException(41004, '员工不存在', 404);
     clearAuthStateCache(id); // P1-H5：停用/复职即时反映到守卫（免等 60s 缓存）

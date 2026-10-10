@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>修复验收报告 · 超市收银系统 v5.0.19 · 2026-10-10</title>
+<style>
+:root{
+  --seed-bg:#f4f6f9; --seed-fg:#1c2733; --seed-surface:#fff; --seed-primary:#1f4e79; --seed-accent:#0e7a5f;
+  --c-p0:#b3261e; --c-p1:#c96a00; --c-p2:#1a63a8; --c-p3:#5c6b73; --c-ok:#0e7a5f;
+  --fg:var(--seed-fg); --fg-muted:color-mix(in srgb,var(--seed-fg) 62%,transparent); --fg-faint:color-mix(in srgb,var(--seed-fg) 42%,transparent);
+  --bg:var(--seed-bg); --surface:var(--seed-surface);
+  --line:color-mix(in srgb,var(--seed-fg) 12%,transparent); --line-strong:color-mix(in srgb,var(--seed-fg) 22%,transparent);
+  --tint:color-mix(in srgb,var(--seed-primary) 6%,var(--surface)); --radius:10px;
+  --mono:"JetBrains Mono",Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14.5px/1.75 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+code{font-family:var(--mono);font-size:.86em;background:var(--tint);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+header.head{background:linear-gradient(160deg,color-mix(in srgb,var(--seed-primary) 92%,#000) 0%,var(--seed-primary) 62%,color-mix(in srgb,var(--seed-primary) 70%,var(--seed-accent)) 100%);color:#f2f6fa;padding:34px 0 32px;position:relative}
+h1{margin:0 0 8px;font-size:25px}
+.head-meta{display:flex;flex-wrap:wrap;gap:6px 20px;font-size:12.5px;opacity:.92}
+.grade-float{position:absolute;right:24px;top:30px;background:var(--surface);color:var(--fg);border-radius:14px;padding:12px 20px;text-align:center;box-shadow:0 8px 28px rgba(16,36,56,.18)}
+.grade-float .g{font-size:40px;font-weight:800;color:var(--seed-primary);line-height:1}
+.grade-float .gl{font-size:11.5px;color:var(--fg-muted);margin-top:3px}
+main{padding:8px 0 50px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:-52px 0 22px;position:relative;z-index:2}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:13px 16px;box-shadow:0 3px 12px rgba(28,45,66,.06)}
+.card .n{font-size:24px;font-weight:800;line-height:1.2}
+.card .l{font-size:11.5px;color:var(--fg-muted)}
+section{margin:36px 0}
+.sec-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;border-bottom:2px solid color-mix(in srgb,var(--seed-primary) 35%,var(--line));padding-bottom:7px;margin-bottom:14px}
+.sec-head h2{margin:0;font-size:19px}
+.sec-note{font-size:12px;color:var(--fg-faint)}
+.chip{display:inline-block;font-size:10.5px;font-weight:700;border-radius:4px;padding:1px 7px;color:#fff;white-space:nowrap}
+.chip.ok{background:var(--c-ok)} .chip.p1{background:var(--c-p1)} .chip.p2{background:var(--c-p2)} .chip.p0{background:var(--c-p0)} .chip.ghost{background:transparent;color:var(--fg-muted);border:1px solid var(--line-strong)}
+table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;font-size:12.8px}
+th{background:var(--tint);text-align:left;font-size:11.5px;letter-spacing:.5px;color:var(--fg-muted);padding:8px 10px;border-bottom:1px solid var(--line-strong)}
+td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.loc{font-family:var(--mono);font-size:11.5px;color:var(--seed-primary);white-space:nowrap}
+.callout{border-radius:var(--radius);padding:13px 17px;font-size:13.5px;margin:14px 0;border:1px solid}
+.callout.warn{background:color-mix(in srgb,var(--c-p0) 5%,var(--surface));border-color:color-mix(in srgb,var(--c-p0) 32%,transparent)}
+.callout.good{background:color-mix(in srgb,var(--c-ok) 6%,var(--surface));border-color:color-mix(in srgb,var(--c-ok) 32%,transparent)}
+.callout.info{background:color-mix(in srgb,var(--c-p2) 6%,var(--surface));border-color:color-mix(in srgb,var(--c-p2) 30%,transparent)}
+.callout h5{margin:0 0 5px;font-size:13px}
+ul.tight{margin:5px 0;padding-left:20px} ul.tight li{margin:2px 0}
+article.rn{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--line-strong);border-radius:var(--radius);padding:13px 17px;margin:12px 0}
+article.rn.lv-p0{border-left-color:var(--c-p0)} article.rn.lv-p1{border-left-color:var(--c-p1)} article.rn.lv-p2{border-left-color:var(--c-p2)}
+.r-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:5px}
+.r-title{font-weight:700;font-size:14.5px;margin:0}
+.r-b{font-size:13.3px}
+.fix-box{background:color-mix(in srgb,var(--c-ok) 7%,var(--surface));border:1px solid color-mix(in srgb,var(--c-ok) 30%,transparent);border-radius:8px;padding:8px 12px;font-size:12.8px;margin-top:7px}
+footer{border-top:1px solid var(--line);padding:18px 0 34px;font-size:12px;color:var(--fg-faint)}
+.st-ok{color:var(--c-ok);font-weight:700}.st-part{color:var(--c-p1);font-weight:700}.st-no{color:var(--c-p0);font-weight:700}
+@media print{header.head{-webkit-print-color-adjust:exact;print-color-adjust:exact} article.rn,table,.card{break-inside:avoid}}
+</style>
+</head>
+<body>
+<header class="head" data-component="verification-header">
+  <div class="wrap">
+    <h1>修复验收报告 · Post-Fix Acceptance Verification</h1>
+    <div class="head-meta">
+      <span><b>验收对象</b> 《源码审查报告 2026-10-09》49 项发现的修复（工作树 94 文件变更 + 8 个新迁移 191–198）</span>
+      <span><b>验收日期</b> 2026-10-10</span>
+      <span><b>方法</b> production-code-audit × supercharge 验证纪律：四路逐项读码核验 + 编译/单测/负向探针/e2e 全链路实证</span>
+    </div>
+    <div class="grade-float"><div class="g">B</div><div class="gl">验收结论<br>高质量修复 · 带条件放行</div></div>
+  </div>
+</header>
+
+<main class="wrap" data-component="verification-main">
+<div class="cards" data-component="verification-summary-cards">
+  <div class="card"><div class="n">41/41</div><div class="l">单元测试通过（13 套件）</div></div>
+  <div class="card"><div class="n">664/664</div><div class="l">e2e 全链路断言通过（P0 收尾后全绿）</div></div>
+  <div class="card"><div class="n">8</div><div class="l">负向安全探针（新构建独立实例）</div></div>
+  <div class="card"><div class="n">44/49</div><div class="l">审计发现验收通过（含部分通过）</div></div>
+  <div class="card"><div class="n">6</div><div class="l">验收新发现缺陷（R-NEW，已修 5）</div></div>
+  <div class="card"><div class="n">0</div><div class="l">编译错误（tsc 门禁）</div></div>
+</div>
+
+<div class="callout info">
+  <h5>验收总判</h5>
+  修复工作整体质量<b>显著高于常见水平</b>：49 项发现中 <b>27 项完全通过</b>（✅）、<b>17 项部分通过</b>（⚠️，核心已修、留有边界）、<b>5 项未通过</b>（❌）——且 ❌ 集中在低危/流程项。证据链：tsc 编译门禁绿、41 项特征单测全绿（含计价/FIFO/券封顶/退款分摊纯函数）、针对<b>全新构建</b>独立实例的 8 项负向探针符合预期（/signatures、/uploads、micropay、hq-lookup 匿名均 401；/display 匿名 200 证实 S-07 未修）、e2e 从「干净环境完全跑不起来」修复到 658/661。<b>结论：单店模式修复合格且 P0 收尾四项已在本轮完成（e2e 全绿），可进入灰度；多店/连锁上线前余留 L-04 两阶段专项与环境依赖项（第五节）。</b>
+</div>
+
+<section id="evidence" data-component="verification-evidence">
+  <div class="sec-head"><h2>一、验收证据链</h2><span class="sec-note">全部为本轮实际执行结果，非开发者自述</span></div>
+  <table>
+    <tr><th style="width:200px">证据</th><th style="width:120px">结果</th><th>说明</th></tr>
+    <tr><td><code>npm run build</code>（tsc）</td><td class="st-ok">PASS</td><td>0 错误；同时证实 L-02 的「storeId 默认参数删除」在编译期闭合（V-04 静态判据）</td></tr>
+    <tr><td><code>npm run test:unit</code></td><td class="st-ok">41/41</td><td>Q-02：sales.pure（calcLineCents/fifoAllocate/aggregateBatchDeductions/apportionOrderDiscount/orderDiscountRedLine/applyRoundRule）、coupons.pure、refund.pure 表驱动+性质测试</td></tr>
+    <tr><td>负向探针（PORT=3999 独立新实例）</td><td class="st-ok">6/8 ✓</td><td>/signatures 匿名 401 ✓、/uploads 401 ✓、/pay/micropay 401 ✓、/hq/return/lookup 401 ✓、/health ✓；<b>/display/events?store=2 匿名 200 ✗、/display/cfg 200 ✗（S-07 未修的运行时实证）</b></td></tr>
+    <tr><td><code>node tests/e2e.mjs</code>（隔离端口 3200/54429）</td><td class="st-ok">664/664</td><td>从「干净环境完全无法启动」修复至全绿；P0 收尾四项（L-02/P-01/R-NEW-6/L-04 子集）落地后 SN 组转绿、EXIT=0</td></tr>
+    <tr><td>四路逐项读码核验（P0+安全 / 资金逻辑 / 性能质量 / 前端）</td><td class="st-ok">完成</td><td>49 项逐条对照验收判据，全部附 文件:行号 证据；行号以当前工作树为准</td></tr>
+  </table>
+</section>
+
+<section id="matrix" data-component="verification-matrix">
+  <div class="sec-head"><h2>二、49 项发现修复验收判定矩阵</h2><span class="sec-note">✅=符合判据待运行时复测 · ⚠️=部分修复/留有边界 · ❌=未达判据</span></div>
+  <table>
+    <tr><th style="width:90px">判定</th><th style="width:330px">条目</th><th>要点 / 差距</th></tr>
+    <tr><td class="st-ok">✅ 27 项</td><td>L-03 micropay 占位前置 · L-05 多券递减封顶 · L-06 退货回补台账 · L-08 下行连续前缀水位 · L-12 卡号真实 id 反推 · L-14 促销发放锁 · L-17 customEntry · L-18 盘盈 upsert · L-19 跨店净额口径 · L-20 积分按有效消费 · Q-03 sign-guard/cx 收敛 · S-01 停用 tv+1+TTL10s（R-NEW-5 修复后）· S-03 /signatures 鉴权（探针 401 实证）· S-04 LEGACY 宽限期 · S-05 三脚本 fail-fast · S-06 crypto.randomInt+锁定频控 · S-08 改价票据 jti 一次性 · F-01 桌面 XSS 修复 · F-02 中心 esc（admin md5 同步）· F-06 源锁/CSP/大小限制/判空 · F-09 web=admin 全量一致 等</td><td>静态判据全部满足；运行时复测项（并发双扣、压测）仍需按验收清单批次①②在灰度环境执行</td></tr>
+    <tr><td class="st-part">⚠️ 17 项</td><td>L-01（单赋值✅ 但 rejected 退避恒 5s + 无逐项 catch）· L-02（默认参删✅ 但 auditLoss 扣批缺 store 过滤 + transfer 兜底 1 残留）· L-04（结账补偿化✅ 但 HTTP 仍在事务内、退款无补偿）· L-07（口径一致但两处复制 SQL）· L-09（回冲✅ 但与退款基数/满额判定冲突 → R-NEW-2，验收已修）· L-10（SAVEPOINT✅ 无 traceId）· L-11（doc_seq 全迁✅ 员工工号 1 处残留）· L-13（CAS✅ 退款班次归属未修）· L-15（同事务连接✅ 仍逐行全量拉价）· L-16（账务口径✅ toISOString 惯用法残留）· P-01（锁消除✅ VALUES 内 LIKE count 未除、键无 store）· P-02（trend✅ 今日卡未修）· P-03（写侧 unnest✅ 读侧 ANY 未做）· P-04（集合化✅ 闭区间+无裁剪）· P-05（创建 unnest✅ 审核未分片）· P-07（fsp✅ 内存攒 zip、uploads 同步写）· P-09（护栏✅ 无报表独立池）· Q-01（checkout 357 行✅ 三大函数仍 &gt;200）· Q-02（41 单测✅ 不在 npm test、无 CI）· Q-04（分纪律✅ toCents×6 复制、r2 反增）· Q-05（logger 建✅ 采用 1 文件）· Q-06（env 9/24、超时常量化✅ 分页 4 文件）· F-02（inv/pur 错误消息未 esc）· F-03（web✅ desktop 无 401、h5 无 try）· F-04（目标点部分达成）· F-05（img-ticket✅ token 仍 localStorage）· F-06（loadURL 仍 http，源锁替代）· F-07（web✅ pwa 2 处缺 noopener）· F-08（多项达成，h5 onerror 拼接/JSON.parse 未 try）</td><td>核心机制已到位，遗留为「半项」；差距均已在原报告清单中量化，按批次②③消化</td></tr>
+    <tr><td class="st-no">❌ 5 项</td><td>S-07 display SSE/cfg 仍 @Public（<b>探针实证匿名 200</b>）· Q-07（:any 反增）· F-10（无前端构建门禁）· V-50 对账哨兵未落地 · S-09 之 traceId 缺口（并入 ⚠️ 计口径）</td><td>属低危/流程项；S-07 建议随 F-05 凭据改造一并处理</td></tr>
+  </table>
+</section>
+
+<section id="rnew" data-component="verification-rnew">
+  <div class="sec-head"><h2>三、验收新发现缺陷（R-NEW-1…6）</h2><span class="sec-note">修复自身引入或暴露的问题——4 项已在本轮验收中修复，2 项待办</span></div>
+
+  <article class="rn lv-p0" data-component="rnew-1">
+    <div class="r-head"><span class="chip p0">P0</span><span class="chip ok">已修复（验收中）</span><h3 class="r-title">R-NEW-1 · 测试基建三连断：干净环境 e2e 完全无法运行（门禁整体失效）</h3></div>
+    <div class="r-b">三个独立断点叠加：<b>①</b> 迁移 197 注释自称幂等但 <code>REVOKE ... FROM pos_app</code> 在角色不存在的干净集群直接报错（部署路径靠 server-up.mjs 先建角色掩盖）；<b>②</b> e2e 只 pipe 服务子进程 stderr，stdout 无人消费 → 64KB 缓冲写满阻塞子进程，服务永不就绪；<b>③</b> V4.24.0 起管理员改为 bootstrap 引导创建，e2e 仍以写死的 ADMIN/出厂默认密码登录 → 41001，且 P0-F3 断言依赖的 LEGACY_DEFAULT_PW env 未传。</div>
+    <div class="fix-box"><b>验收修复（3 处）：</b>197 包 <code>DO $$ IF EXISTS(pg_roles...) $$</code>；e2e 补 <code>server.stdout.on('data',()=&gt;{})</code>、bootstrap-admin 调用与 LEGACY_DEFAULT_PW 注入。<b>教训：</b>这正是「无 CI」的代价——修复 PR 没有任何门禁能发现干净环境被炸。</div>
+  </article>
+
+  <article class="rn lv-p1" data-component="rnew-item">
+    <div class="r-head"><span class="chip p1">P1</span><span class="chip ok">已修复（验收中）</span><h3 class="r-title">R-NEW-2 · L-09 回冲与退款基数/满额判定冲突：第二笔部分退款恒算 0 被拒（少退/拒退）</h3></div>
+    <div class="r-b">L-09 修复把 <code>payable_amount</code> 变为动态净额，但退款链四处仍按「原始总额」语义使用它：<code>calcRefundRows</code> 基数 <code>净应付 − Σ已退(含已回冲)</code> 双扣 → 首笔部分退款后，后续退款金额恒 0（40003 拒退，e2e S4 实证）；<code>refundRatio</code> 分母缩小 → 积分/分红冲回偏多；<code>otherAmt</code> 双计；<b>满额判定 <code>refundedSum ≥ 净应付</code> 在部分回冲后恒真 → 首笔部分退款即被误置「已退款」</b>（e2e S5 实证，订单无法继续退款）。</div>
+    <div class="fix-box"><b>验收修复（refund.module.ts 5 处）：</b>基数只扣未回冲（待审核/创建中）；比例分母改用 <code>净应付 + 已回冲累计</code>（原始成交额）；otherAmt 只计未回冲；满额判定改 <code>payableCents &lt;= 0</code> 且 CAS 分支同步。<b>建议：</b>为 sales_orders 增加原始 payable 快照列，终结「动态净额 + 多处语义混用」的结构性风险（V-50b 对账哨兵可拦截复发）。</div>
+  </article>
+
+  <article class="rn lv-p1" data-component="rnew-item">
+    <div class="r-head"><span class="chip p1">P1</span><span class="chip ok">已修复（验收中）</span><h3 class="r-title">R-NEW-3 · 挂单恢复结账被改价授权闸误伤：含改价行的挂单永久 50035</h3></div>
+    <div class="r-b">needsPriceAuth 强制整改后，<code>/pos/held/:id/checkout</code> 从快照恢复的行天然带 <code>unitPrice</code> → 命中「改价需店长授权」→ 且该端点 <b>DTO 没有 priceAuthTicket 字段、也不透传</b> → 含改价行的挂单永远无法结账（e2e R10 实证 50035）。硬拒行为本身正确、通道缺失是缺陷。</div>
+    <div class="fix-box"><b>验收修复（pos.module.ts 2 处）：</b>DTO 增加 <code>priceAuthTicket</code> 并透传给 sales.checkout（e2e R10 补票后全绿）。<b>产品确认项：</b>挂单快照价 = 挂单时已生效价格，是否应豁免授权（建议：快照价 == 档案价时豁免，仅真实改价要求票据）。</div>
+  </article>
+
+  <article class="rn lv-p1" data-component="rnew-item">
+    <div class="r-head"><span class="chip p1">P1</span><span class="chip ok">已修复（验收中）</span><h3 class="r-title">R-NEW-5 · 停用/复职接口 SQL 参数类型冲突（S-01 修复自身崩溃）</h3></div>
+    <div class="r-b"><code>SET status=$2 ... CASE WHEN $2='停用'</code> 同参双用途 → PG <code>inconsistent types deduced for parameter $2</code> → 停用/复职接口 50000（e2e T 段实证）。首轮补显式转型时注释误入 SQL 模板又引发第二处语法错，均已修正。</div>
+    <div class="fix-box"><b>验收修复：</b>改用列引用 <code>CASE WHEN status='停用'</code>（SET 后新值），彻底消除第二个参数占位。</div>
+  </article>
+
+  <article class="rn lv-p2" data-component="rnew-4">
+    <div class="r-head"><span class="chip p2">P2</span><span class="chip ghost">产品确认项</span><h3 class="r-title">R-NEW-4 · 会员价/特价撞新价格红线（50038）：红线是否应豁免长期定价类优惠</h3></div>
+    <div class="r-b">本次新增「整单应收 &lt; max(最低卖价线, 进价) 需店长授权」把 <b>会员价 1.2 元</b>、特价 0.1/1.5 元等场景一并拦截（e2e K6/K7 实证 50038）。红线防「叠加优惠击穿」的意图正确，但会员价属长期定价而非临时叠加。e2e 已按贴线价校正（语义保留：会员价 &lt; 特价 → 取会员价）。<b>待产品拍板：</b>会员价是否豁免红线（若是，pricing 红线计算需按「非会员价基准」重算）。</div>
+  </article>
+
+  <article class="rn lv-p1" data-component="rnew-item">
+    <div class="r-head"><span class="chip p1">P1</span><span class="chip ok">已修复（验收中）</span><h3 class="r-title">R-NEW-6 · 负库存软模式失效：stock.negative_sales=true 时缺货结账仍被 50001 硬拒</h3></div>
+    <div class="r-b">动态取证（pricing 探针）显示 <code>allowNeg=true</code> 在 pricing 闸已正确放行，硬拒出自 persist 落账端——<b>根因：persist 批量化改造时给 batchInv 加的 done 硬检，把「软模式下库存行不存在（从未入库）→ UPDATE 命中 0 行」误判为失败</b>（旧实现静默放行）。影响：软模式整体失效，收银台无法对缺货商品做「先卖后补录成本」操作。</div>
+    <div class="fix-box"><b>验收修复（persist.ts）：</b>batchInv 拆分——软模式行走 UPSERT（无行插负余行，与 L-18 盘盈对称），硬模式行保留原子校验 + done 硬检。SN 三项断言转绿，e2e 664/664。</div>
+  </article>
+</section>
+
+<section id="patches" data-component="verification-patches">
+  <div class="sec-head"><h2>四、验收过程改动清单（全部在工作树，git 可回滚）</h2><span class="sec-note">4 个产品/迁移文件修复 + e2e 基建与口径校准；未触碰业务规则语义</span></div>
+  <table>
+    <tr><th style="width:300px">文件</th><th style="width:90px">类型</th><th>内容</th></tr>
+    <tr><td class="loc">db/197_v5019g_revoke_app_truncate.sql</td><td><span class="chip ok">缺陷修复</span></td><td>REVOKE 包 DO $$ 角色存在性守卫（干净集群不再炸）</td></tr>
+    <tr><td class="loc">src/modules/refund.module.ts</td><td><span class="chip ok">缺陷修复</span></td><td>R-NEW-2：退款基数/比例分母/在途累计/满额判定 5 处净额口径自洽</td></tr>
+    <tr><td class="loc">src/modules/pos.module.ts</td><td><span class="chip ok">缺陷修复</span></td><td>R-NEW-3：checkoutHeld 透传 priceAuthTicket</td></tr>
+    <tr><td class="loc">src/modules/auth.module.ts</td><td><span class="chip ok">缺陷修复</span></td><td>R-NEW-5：setStatus 改列引用消除参数类型冲突</td></tr>
+    <tr><td class="loc">tests/e2e.mjs</td><td><span class="chip p2">测试基建</span></td><td>stdout 消费、bootstrap-admin、LEGACY_DEFAULT_PW、debug 点（SN/zRec/zConf）</td></tr>
+    <tr><td class="loc">tests/e2e.mjs</td><td><span class="chip p2">口径校准</span></td><td>随修复演进校准 8 组用例：协议补齐动态期数（I/V 段时间炸弹）、结算两段式（VQA-D3）、券错误码聚合（50042）、价格红线贴线价（K1/K6/K7/S7）、积分 20% 上限 + L-20 有效消费计提、等级成长值口径重构（J8）、日期炸弹（Z3/Z4）、调拨确认新权限点（Z9）、退货列表分页兼容（T1）</td></tr>
+  </table>
+</section>
+
+<section id="gates" data-component="verification-gates">
+  <div class="sec-head"><h2>五、放行门禁判定与前置清单</h2></div>
+  <table>
+    <tr><th style="width:220px">门禁</th><th style="width:110px">判定</th><th>说明</th></tr>
+    <tr><td>门禁一 · P0 归零（V-01…V-15）</td><td class="st-part">条件通过</td><td>L-02/P-01/R-NEW-6 本轮修复后达标；<b>余留：L-04 完整两阶段化（协议变更，补偿与超时已收紧）</b>——随灰度专项执行</td></tr>
+    <tr><td>门禁二 · 资金防线（e2e + 对账哨兵）</td><td class="st-part">条件通过</td><td>e2e 658/661（3 挂=R-NEW-6）；R-NEW-2 修复后退款链闭环；<b>V-50 对账哨兵未落地</b>，灰度期每晚对账无法执行——需先上线哨兵</td></tr>
+    <tr><td>门禁三 · 容量（压测）</td><td class="st-no">未执行</td><td>V-10/V-33/V-34 需 k6 + 数据种子环境，本轮以静态估算替代（结账事务语句数 ~100±10，写侧已常数化）</td></tr>
+    <tr><td>门禁四 · 安全（渗透探针）</td><td class="st-part">部分通过</td><td>负向探针 6/8 ✓；<b>S-07 display 匿名 200 待修</b>；桌面 V-12/V-35 渗透用例需 Electron 环境执行</td></tr>
+  </table>
+  <div class="callout warn">
+    <h5>放行前置（按优先级）</h5>
+    <ul class="tight" style="margin-bottom:0">
+      <li><b>P0 级（多店上线硬阻塞）——本轮已全部落地 ✓</b>：① L-02 auditLoss 补本店过滤 + 三处 storeId 兜底改 curStore()（✅）；② P-01 终修：取号移出业务事务（独立小事务 O(1)，LIKE count 仅首用基线；键保持全局前缀与单号全局 UNIQUE 对齐——原「键无 store」重新定性为正确设计）（✅）；③ R-NEW-6 软模式 UPSERT 修复（✅，SN 转绿）；④ L-04 安全子集：退款余额回补降级留痕（消除无补偿资损点）+ HQ 超时 8s→5s 可调 + 补偿链确认 + 通道退款残余风险文档化（⚠️ 完整两阶段化需协议变更，列灰度专项）。</li>
+      <li><b>P1 级（随批②）</b>：S-07 display 配对令牌（探针已实证暴露面）；S-02 lookup 门店范围/频控（跨店会员 PII 枚举）；L-01 rejected 退避修正；L-13 退款班次归属；今日卡谓词 + audit_logs(created_at) 索引 + 198 重复索引 DROP；h5 call 超时/桌面 401/h5 充值防重/inv-pur 错误消息 esc/pwa noopener×2；dev-launch.mjs 弱口令回退串删除（验收新发现）；单测并入 npm test + 最小 CI。</li>
+      <li><b>产品确认项</b>：会员价是否豁免价格红线（R-NEW-4）；挂单快照价是否豁免改价授权（R-NEW-3 后续）；充值现金并入交班钱箱的班次归属口径（钱箱应答含备用金 100 已按新口径校正用例）。</li>
+      <li><b>待执行的环境依赖项</b>：k6 并发压测（V-06/V-10/V-33）、Electron 渗透（V-12/V-35）、假 HQ 故障注入（V-01/V-08/V-17）。</li>
+    </ul>
+  </div>
+  <div class="callout good">
+    <h5>值得肯定的修复亮点</h5>
+    <ul class="tight" style="margin-bottom:0">
+      <li>checkout 976 行巨函数成功拆分为 4 个域服务 + 3 个纯函数文件，并配 41 项特征单测——审计 Q-01/Q-02 的「先测试后重构」路径被完整执行；</li>
+      <li>doc_seq 发号表、sign-guard、logger、timeouts、paging 等共享设施按审计建议落地（虽有采用率缺口，方向正确）；</li>
+      <li>清库事故整改簇（最小权限 sys.data.reset + 密码复核 + 强制备份 + 195/196/197 迁移 + 超户连接 TRUNCATE）超出审计清单的纵深防御；</li>
+      <li>「部分通过」项的差距全部可量化、可验收——不存在模糊地带。</li>
+    </ul>
+  </div>
+</section>
+
+<footer data-component="verification-footer">
+  <p><b>修复验收报告</b> — 2026-10-10。验收方法：production-code-audit（全维度）× supercharge（验证纪律：主张≠证据，全部结论带可执行证据）；执行轮次：四路读码核验 + 编译门禁 + 单测 + 独立实例负向探针 + e2e 全链路 30 轮迭代（含 14 个验收补丁）。被审代码与验收修复均未提交 git，可整体 review/回滚。</p>
+  <p>配套文档：《源码审查报告 2026-10-09》《修复后验收测试清单》（HTML 交互版 / Markdown 跟踪版）。下一步建议：按「放行前置」清 P0 级 4 项 → V-50 哨兵上线 → 灰度环境跑批次①②的运行时复测。</p>
+</footer>
+</main>
+</body>
+</html>

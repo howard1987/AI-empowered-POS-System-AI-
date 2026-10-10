@@ -801,7 +801,7 @@ class InventoryController {
       await audit(curStore(), user.sub, '进销存', 'loss.create', 'loss_record', id, { no, reason, total: r2(total) });
       // M3b：操作员自动关联（employee_id 已写）；报损无供应商业务员 → 前端手机屏幕现场签名（loss_records.sign_record_id 027）
       const sign = await autoAttachSignature(c, {
-        storeId: 1, bizType: 'loss', bizId: id,
+        storeId: curStore(), bizType: 'loss', bizId: id,
         summary: `${no}|${reason}|${b.items.length}项`, usedBy: user.sub, amount: r2(total),
       });
       if (sign && 'recordId' in sign) await cx(c, `UPDATE loss_records SET sign_record_id=$2 WHERE id=$1`, [id, sign.recordId]);
@@ -845,8 +845,9 @@ class InventoryController {
       const byProduct = new Map<number, number>();
       for (const it of items) {
         if (it.batch_id != null) {
-          const bt = await cx(c,
-            `SELECT id, remain_qty FROM batches WHERE id=$1 AND status='在库' FOR UPDATE`, [it.batch_id]);
+          // L-02（2026-10-10 验收修复）：批次定位必须限定本店，防跨店批次串扣
+            const bt = await cx(c,
+            `SELECT id, remain_qty FROM batches WHERE id=$1 AND store_id=${curStore()} AND status='在库' FOR UPDATE`, [it.batch_id]);
           if (!bt.length) throw new BizException(50016, `批次#${it.batch_id} 已不在库，无法报损`);
           if (Number(bt[0].remain_qty) < Number(it.qty)) {
             throw new BizException(50014, `批次剩余 ${bt[0].remain_qty}，不足报损 ${it.qty}`);
@@ -1038,7 +1039,7 @@ class InventoryController {
     @CurrentUser() user: AuthUser,
   ) {
     // 调出/调入门店均可下拉选择：单店部署默认本店↔本店（店内库位调拨，零回归）
-    const fromStore = Number(b.fromStoreId || 0) || 1;
+    const fromStore = Number(b.fromStoreId || 0) || curStore(); // L-02：兜底本店（原硬编码 1 在分支店会错挂总部）
     const toStore = Number(b.toStoreId || 0) || fromStore;
     if (fromStore !== toStore) {
       const n = await q1(`SELECT count(*)::int AS n FROM stores WHERE id IN ($1,$2)`, [fromStore, toStore]);
@@ -1096,7 +1097,7 @@ class InventoryController {
       // 电子签字：仅同店即时调拨沿用（跨店走发货/收货双签留痕，P2 接入）
       if (!crossStoreMove) {
         const sign = await autoAttachSignature(c, {
-          storeId: 1, bizType: 'transfer', bizId: id,
+          storeId: curStore(), bizType: 'transfer', bizId: id,
           summary: `${no}|${b.items.length}项`, usedBy: user.sub, amount: r2(total),
         });
         if (sign && 'recordId' in sign) await cx(c, `UPDATE stock_transfers SET sign_record_id=$2 WHERE id=$1`, [id, sign.recordId]);
@@ -1138,7 +1139,7 @@ class InventoryController {
 
       const items = await cx(c, `SELECT * FROM stock_transfer_items WHERE transfer_id=$1 ORDER BY id`, [id]);
       if (!items.length) throw new BizException(50016, '调拨单无明细，不能确认');
-      const fromStore = Number(tr.from_store_id || 1);
+      const fromStore = Number(tr.from_store_id || curStore()); // L-02：兜底本店
       const toStore = Number(tr.to_store_id || fromStore);
       for (const it of items) {
         const src = await cx(c,
