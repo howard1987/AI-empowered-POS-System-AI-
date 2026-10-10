@@ -2,6 +2,9 @@
 <html lang="zh-CN" data-page-node-id="ELVdNZ9Q3COpzd3mLFtPUp">
 <head data-page-node-id="Dt7Ghtc7LMWmhz0MUH296Y">
 <meta charset="UTF-8" data-page-node-id="RDja3vDAVbDpEzeUqHnRjo">
+<!-- V5.0.19i（F-08）：CSP —— script-src 'self' 阻断外联脚本注入（inline onclick 处理器为既有惯例故保留 unsafe-inline）；
+     不设 default-src：API.base 可配跨源（8088 dev ↔ 3100），connect/img 不受限；vendor/hiprint 本地脚本不受影响 -->
+<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self' data:; media-src 'self' blob:; object-src 'none'; base-uri 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="xWYXQOpc48zj30xtkFQ569">
 <title>社区超市收银系统 · Web 管理后台</title>
 <link rel="stylesheet" href="styles.css?v=20261004b" data-page-node-id="yC6vObFHYQv7UFP6VJXnEf">

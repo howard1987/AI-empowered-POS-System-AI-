@@ -108,8 +108,13 @@ async function main() {
     name: nameIdx >= 0 ? args[nameIdx + 1] : undefined,
     dryRun: args.includes('--dry-run'),
   };
+  const DATABASE_URL = process.env.DATABASE_URL;
+  if (!DATABASE_URL) {
+    console.error('[chain-init] 致命：缺少 DATABASE_URL 环境变量，拒绝以弱口令默认值连接。请在 .env 配置 DATABASE_URL');
+    process.exit(1);
+  }
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL || 'postgres://cashier:cashier123@localhost:5432/cashier',
+    connectionString: DATABASE_URL,
     options: '-c TimeZone=Asia/Shanghai',
   });
   try {

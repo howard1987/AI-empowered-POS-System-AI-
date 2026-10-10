@@ -8,6 +8,7 @@ import { SettingsService } from './settings.module';
 import { autoAttachSignature, attachSignature, attachOperatorSignature, confirmSignature, saveBase64Image, nameMatches, normalizeName, collectIntoTemplates, personCatOf, mergeSamples, PERSON_CATS } from './sign';
 import { storePrice } from './store-price.service';   // V4.26.5 门店覆盖价
 import { chainEnabled, hqStoreId } from '../common/scope';  // V5.0.0 批次4B：对账计价引擎只在连锁模式触发
+import { assertSigned as assertSignedGuard } from '../common/sign-guard';   // V5.0.19i（Q-03）
 import { COST_REF } from '../common/sql';                   // V5.0.0 批次4B：结算价 = L1（R17）
 
 // ─── V5.0.16 采购单智能匹配（移动收货：按收货商品相似度推荐关联近似采购单）──
@@ -51,14 +52,10 @@ const PO_MATCH_ITEM_SIM = 0.6; // 单商品识别为「已录入」的名称相�
 class PurchaseController {
   private settings = new SettingsService();
 
-  /** 必签校验（5.6.8⑤ 触发场景矩阵可配 auth.sign_required_scenes）：配置含该场景且单据未签字 → 拒绝过审 */
+  /** 必签校验（5.6.8⑤ 触发场景矩阵可配 auth.sign_required_scenes）：配置含该场景且单据未签字 → 拒绝过审
+   *  V5.0.19i（Q-03）：统一实现抽到 common/sign-guard.ts（与 inventory.module 共用，本处薄委托） */
   private async assertSigned(c: any, scene: string, table: string, bizId: number, docNo: string) {
-    const scenes = await this.settings.getJson('auth.sign_required_scenes', []);
-    if (!Array.isArray(scenes) || !scenes.includes(scene)) return;
-    const rows = await cx(c, `SELECT sign_record_id FROM ${table} WHERE id=$1`, [bizId]);
-    if (rows.length && !rows[0].sign_record_id) {
-      throw new BizException(50018, `${docNo} 尚未电子签字，按"必签才能过审"配置请先在单据列表补签后再审核`);
-    }
+    return assertSignedGuard(this.settings, c, scene, table, bizId, docNo);
   }
 
   /** 供应商列表（拼音码检索） */
@@ -185,7 +182,7 @@ class PurchaseController {
     if (!items.length) throw new BizException(40003, '变更明细为空');
     if (items.length > 200) throw new BizException(40003, '变更明细过多（上限 200 行）');
     return tx(async c => {
-      const cxq = (sql: string, p: any[] = []) => c.query(sql, p).then((x: any) => x.rows);
+      const cxq = (sql: string, p: any[] = []) => cx(c, sql, p);   // V5.0.19i（Q-03）：委托 common/db 规范实现
       const seq = await seqLock(c, 'supplier_changes', 'change_no', `GYSBG-${new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '')}-%`);
       const changeNo = `GYSBG-${new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '')}-${String(seq[0].n).padStart(3, '0')}`;
       const enriched: any[] = [];
@@ -693,7 +690,10 @@ class PurchaseController {
     });
   }
 
-  /** 入库单列表（筛选三件套 V4.6.1：日期区间 / 供应商 / 关键字） */
+  /** 入库单列表（筛选三件套 V4.6.1：日期区间 / 供应商 / 关键字）
+   *  V5.0.18g：服务端分页（page/size + total + 筛选合计）——筛选条件下推 SQL，
+   *  任意历史单据均可按条件翻页查询，不再有「最近 100 张」窗口限制；
+   *  每页条数上限 200（防误传超大 size），配合 status+created_at 索引查询代价恒定。 */
   @Get('inbounds')
   async inbounds(
     @Query('supplierId') supplierId?: string,
@@ -701,22 +701,32 @@ class PurchaseController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('keyword') keyword?: string,
+    @Query('page') page?: string,
+    @Query('size') size?: string,
   ) {
     const kw = (keyword || '').trim();
-    return q(
+    const pageSize = Math.min(Math.max(Number(size) || 15, 1), 200);
+    const pg = Math.max(Number(page) || 1, 1);
+    const where = `WHERE ($1::bigint IS NULL OR io.supplier_id = $1::bigint)
+          AND ($2::text IS NULL OR io.status::text = $2)
+          AND ($3::date IS NULL OR io.created_at::date >= $3::date)
+          AND ($4::date IS NULL OR io.created_at::date <= $4::date)
+          AND ($5 = '' OR io.inbound_no ILIKE '%'||$5||'%' OR s.name ILIKE '%'||$5||'%')`;
+    const params: any[] = [supplierId ? Number(supplierId) : null, status || null, from || null, to || null, kw];
+    const tot = await q1(
+      `SELECT count(*)::int AS n, COALESCE(SUM(io.total_amount),0) AS s
+         FROM inbound_orders io JOIN suppliers s ON s.id = io.supplier_id ${where}`, params);
+    const rows = await q(
       `SELECT io.*, s.name AS supplier_name, em.name AS maker_name,
               (SELECT count(*) FROM inbound_order_items i WHERE i.inbound_id = io.id) AS item_count,
               (SELECT COALESCE(SUM(i.qty), 0) FROM inbound_order_items i WHERE i.inbound_id = io.id) AS total_qty
          FROM inbound_orders io JOIN suppliers s ON s.id = io.supplier_id
          LEFT JOIN employees em ON em.id = io.employee_id
-        WHERE ($1::bigint IS NULL OR io.supplier_id = $1::bigint)
-          AND ($2::text IS NULL OR io.status::text = $2)
-          AND ($3::date IS NULL OR io.created_at::date >= $3::date)
-          AND ($4::date IS NULL OR io.created_at::date <= $4::date)
-          AND ($5 = '' OR io.inbound_no ILIKE '%'||$5||'%' OR s.name ILIKE '%'||$5||'%')
-        ORDER BY io.id DESC LIMIT 100`,
-      [supplierId ? Number(supplierId) : null, status || null, from || null, to || null, kw],
+        ${where}
+        ORDER BY io.id DESC LIMIT $6 OFFSET $7`,
+      [...params, pageSize, (pg - 1) * pageSize],
     );
+    return { items: rows, total: Number(tot?.n || 0), sumAmount: r2(Number(tot?.s || 0)), page: pg, size: pageSize };
   }
 
   /**
@@ -887,7 +897,10 @@ class PurchaseController {
       const ord = ords[0];
       if (!ord) throw new BizException(40404, '入库单不存在', 404);
       if (ord.status !== '未审核' && ord.status !== '草稿') throw new BizException(50010, `单据状态(${ord.status})不允许审核`);
-      await this.assertSigned(c, 'inbound', 'inbound_orders', id, String(ord.inbound_no));
+      // V5.0.18g：总部远程审批（hq.purchase.central）豁免「必签」——远程无法现场补签，
+      // 审批通过即最高授权；豁免行为写入审计（signWaived），门店端审核仍强制必签。
+      const signWaived = (user.perms || []).includes('hq.purchase.central');
+      if (!signWaived) await this.assertSigned(c, 'inbound', 'inbound_orders', id, String(ord.inbound_no));
 
       const items = await cx(c,
         `SELECT i.*, p.name AS product_name, p.keep_days, p.sell_price AS product_sell_price
@@ -986,7 +999,7 @@ class PurchaseController {
         await cx(c, `UPDATE purchase_orders SET status=$2, updated_at=now() WHERE id=$1`,
           [(ord as any).po_id, remain[0].n > 0 ? '到货中' : '已完成']);
       }
-      await audit(curStore(), user.sub, '进销存', 'inbound.audit', 'inbound', id, { no: ord.inbound_no, total });
+      await audit(curStore(), user.sub, '进销存', 'inbound.audit', 'inbound', id, { no: ord.inbound_no, total, signWaived });
 
       // ── V5.0.0 批次6（M6-6 / R14）：供应商直送门店 = 两步记账、一步物流 ──
       // 货：供应商 → 门店仓（上面已生成门店批次）；账：总部采购应付记总部 →
@@ -994,8 +1007,7 @@ class PurchaseController {
       // 保证总部汇总库存看得见货的去向（不凭空消失），不动任何库存数字。
       if (String((ord as any).source_type ?? 'self') === 'direct') {
         const hqId = await hqStoreId();
-        await seqLock(c, 'stock_transfers', 'transfer_no', `ZS-${today()}-%`);
-        const zseq = await cx(c, `SELECT count(*)+1 AS n FROM stock_transfers WHERE transfer_no LIKE $1`, [`ZS-${today()}-%`]);
+        const zseq = await seqLock(c, 'stock_transfers', 'transfer_no', `ZS-${today()}-%`);
         const zno = `ZS-${today()}-${String(zseq[0].n).padStart(3, '0')}`;
         const trRows = await cx(c,
           `INSERT INTO stock_transfers (transfer_no, from_store_id, to_store_id, status, reason, employee_id, audited_by,
@@ -1078,6 +1090,25 @@ class PurchaseController {
         [id, reason, user.sub]);
       await audit(curStore(), user.sub, '进销存', 'inbound.reject', 'inbound_order', id, { no: ord.inbound_no, reason });
       return { id, status: '已驳回', rejectReason: reason };
+    });
+  }
+
+  /**
+   * V5.0.18g 已驳回入库单重开：已驳回 → 未审核（门店修改明细后重新提审）。
+   * 清除驳回留痕字段（驳回历史在审计日志中永久保留）；重开不涉库存（未审核单无批次）。
+   */
+  @RequirePerms('stock.inbound.create')
+  @Post('inbounds/:id/reopen')
+  async reopenInbound(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
+    return tx(async c => {
+      const ords = await cx(c, `SELECT id, store_id, inbound_no, status FROM inbound_orders WHERE id=$1 FOR UPDATE`, [id]);
+      const ord = ords[0];
+      if (!ord) throw new BizException(40404, '入库单不存在', 404);
+      if (Number(ord.store_id) !== Number(user.storeId)) throw new BizException(40300, '仅单据所属门店可重开', 403);
+      if (ord.status !== '已驳回') throw new BizException(50010, `仅「已驳回」单据可重开（当前：${ord.status}）`);
+      await cx(c, `UPDATE inbound_orders SET status='未审核', reject_reason=NULL, updated_at=now() WHERE id=$1`, [id]);
+      await audit(curStore(), user.sub, '进销存', 'inbound.reopen', 'inbound_order', id, { no: ord.inbound_no });
+      return { id, status: '未审核', note: '单据已重开为「未审核」，可重新提交审批（如需改明细请作废后重开新单）' };
     });
   }
 
@@ -1208,17 +1239,31 @@ class PurchaseController {
    * 采购退货创建（T7 完整版）：凭证强制上传 + 数量校验 + 批次自动归属落 return_batch_allocs；
    * 录入即生效、审核后置（V4.3.5）——库存扣减在审核时发生
    */
-  /** 退货单列表（含明细行数与凭证） */
+  /** 退货单列表（含明细行数与凭证；V5.0.18g：筛选下推 + 服务端分页 page/size + total） */
   @Get('returns')
-  listReturns(@CurrentUser() user: AuthUser) {
-    return q(
+  async listReturns(@CurrentUser() user: AuthUser,
+                    @Query('status') status?: string, @Query('supplierId') supplierId?: string,
+                    @Query('from') from?: string, @Query('to') to?: string,
+                    @Query('page') page?: string, @Query('size') size?: string) {
+    const pageSize = Math.min(Math.max(Number(size) || 10, 1), 200);
+    const pg = Math.max(Number(page) || 1, 1);
+    const where = `WHERE r.store_id=$1
+          AND ($2::text IS NULL OR r.status::text = $2)
+          AND ($3::bigint IS NULL OR r.supplier_id = $3::bigint)
+          AND ($4::date IS NULL OR r.created_at::date >= $4::date)
+          AND ($5::date IS NULL OR r.created_at::date <= $5::date)`;
+    const params: any[] = [user.storeId, status || null, supplierId ? Number(supplierId) : null, from || null, to || null];
+    const tot = await q1(`SELECT count(*)::int AS n, COALESCE(SUM(r.total_amount),0) AS s FROM purchase_returns r ${where}`, params);
+    const rows = await q(
       `SELECT r.*, s.name AS supplier_name, em.name AS maker_name,
               (SELECT count(*) FROM purchase_return_items i WHERE i.return_id = r.id)::int AS item_count,
               (SELECT COALESCE(SUM(i.qty), 0) FROM purchase_return_items i WHERE i.return_id = r.id) AS total_qty
          FROM purchase_returns r
          LEFT JOIN suppliers s ON s.id = r.supplier_id
          LEFT JOIN employees em ON em.id = r.employee_id
-        WHERE r.store_id=$1 ORDER BY r.id DESC LIMIT 100`, [user.storeId]);
+        ${where} ORDER BY r.id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, pageSize, (pg - 1) * pageSize]);
+    return { items: rows, total: Number(tot?.n || 0), sumAmount: r2(Number(tot?.s || 0)), page: pg, size: pageSize };
   }
 
   /** V4.9.5 待补凭证退货单（移动端「消息」页轮询，同账号店员调摄像头拍摄回传） */

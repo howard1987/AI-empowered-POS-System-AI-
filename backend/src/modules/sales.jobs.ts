@@ -76,7 +76,8 @@ export class SalesJobsService implements OnModuleInit, OnModuleDestroy {
   private async maybeDailySettle(force = false) {
     const now = new Date();
     if (!force && (now.getHours() !== 0 || now.getMinutes() < 5)) return;   // 每日 00:05 后首个 tick
-    const dayKey = now.toISOString().slice(0, 10);
+    // L-16：幂等 key 与触发条件（本地 getHours）同口径取本地日——原 UTC key 每日不同但语义错位
+    const dayKey = new Date(Date.now() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     if (this.lastSettleRun === dayKey) return;
     this.lastSettleRun = dayKey;
 
@@ -116,9 +117,12 @@ export class SalesJobsService implements OnModuleInit, OnModuleDestroy {
     const drift = await q(
       `UPDATE inventory_current c SET qty_total = b.total, updated_at = now()
          FROM (SELECT store_id, product_id, SUM(remain_qty)::numeric AS total
-                 FROM batches GROUP BY store_id, product_id) b
+                 FROM batches WHERE status='在库' GROUP BY store_id, product_id) b
         WHERE c.store_id = b.store_id AND c.product_id = b.product_id AND c.qty_total <> b.total
         RETURNING c.product_id`, []);
+    // L-07 修复：上面的校准口径必须与 inventory.module reconcileInventoryCurrent 的 repair 子查询完全一致
+    // （仅统计 status='在库' 批次），否则与「手动对账」两套口径交替回写 → 负余批次/售罄批次导致 inventory_current 反复摆动。
+    // 孤行（无在库批次却台账>0）由 reconcileInventoryCurrent 的 zero 分支统一清零，不在此重复处理。
     await q(`UPDATE daily_settlement SET stock_drift_fixed=$1 WHERE settle_date=CURRENT_DATE - 1`, [drift.length]);
     // ── P3-2：净利 = 毛利 − 门店硬消耗日摊（store.cost.* 月值 ÷ 当月天数；store_settings 门店覆盖生效）──
     try {

@@ -6,6 +6,7 @@ import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { SettingsService } from './settings.module';
 import { isChainStoreNode, hqMemberPost } from './member-chain.module'; // V5.0.0 批次5：连锁建档卡号由总部生成
 import * as bcrypt from 'bcryptjs';
+import { randomInt, randomBytes } from 'crypto';   // S-06/L-12：加密随机 + 占位卡号
 import { memberGrowth } from './member-growth.service';   // V5.0.17：等级判定改成长值口径
 import { notifyStaff } from '../common/notices';   // V5.0.18：资产对账异常通知
 
@@ -113,17 +114,20 @@ class MembersController {
                chain: true };
     }
     return tx(async c => {
-      const seq = await cx(c, `SELECT COALESCE(MAX(id),0)+1 AS n FROM members`);
-      const cardNo = `M${String(seq[0].n).padStart(6, '0')}`;
+      // L-12 修复：原 MAX(id)+1 无锁发号，并发注册同号撞 card_no 唯一约束。
+      // 改两步：先以随机占位卡插入拿自身 id，再回写 M{id} —— 卡号=主键 id 不变式保持、天然免竞态。
+      const tmpCard = 'MTMP' + randomBytes(8).toString('hex');
       const m = await cx(c,
         `INSERT INTO members (store_id, card_no, phone, name, pinyin_code, gender, birthday,
                               register_channel, privacy_agreed)
          VALUES (${hqStore},$1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-        [cardNo, b.phone ?? null, b.name ?? null, b.pinyinCode ?? null, b.gender ?? null,
+        [tmpCard, b.phone ?? null, b.name ?? null, b.pinyinCode ?? null, b.gender ?? null,
          b.birthday ?? null, b.registerChannel ?? '到店', !!b.privacyAgreed]);
+      const cardNo = `M${String(Number(m[0].id)).padStart(6, '0')}`;
+      await cx(c, `UPDATE members SET card_no=$2 WHERE id=$1`, [m[0].id, cardNo]);
       await cx(c, `INSERT INTO member_accounts (member_id) VALUES ($1)`, [m[0].id]);
       await audit(curStore(), user.sub, '会员', 'member.register', 'member', m[0].id, { cardNo });
-      return m[0];
+      return { ...m[0], card_no: cardNo };
     });
   }
 
@@ -195,7 +199,9 @@ class MembersController {
   async resetPassword(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
     const m = await q1(`SELECT id, card_no FROM members WHERE id=$1 AND deleted_at IS NULL`, [id]);
     if (!m) throw new BizException(40404, '会员不存在', 404);
-    const temp = 'Mb' + Math.random().toString(36).slice(2, 8) + Math.floor(Math.random() * 10);
+    // S-06：临时密码改加密安全随机（10 位 base62，禁用非加密 PRNG）
+    const C62 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const temp = 'Mb' + Array.from({ length: 10 }, () => C62[randomInt(0, 62)]).join('');
     await q(`UPDATE members SET password_hash=$2, password_set_at=now(), login_fail_count=0, locked_until=NULL WHERE id=$1`,
       [id, bcrypt.hashSync(temp, 10)]);
     await audit(curStore(), user.sub, '会员', 'member.password.reset', 'member', id, { cardNo: m.card_no });

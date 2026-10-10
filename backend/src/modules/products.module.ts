@@ -6,6 +6,8 @@ import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { decryptSecret } from '../common/secret';
 import { genPinyin } from '../common/pinyin';   // V4.18.2 拼音码自动生成
+import { EXTERNAL_API_TIMEOUT_MS, EXTERNAL_API_FAST_TIMEOUT_MS } from '../common/timeouts';   // V5.0.19i（Q-07）
+import { sizeOf } from '../common/paging';   // V5.0.19i（Q-07）
 import { storePrice } from './store-price.service';  // V4.26.5 门店覆盖价（按门店隔离价格）
 import { PRODUCT_VISIBLE, PRODUCT_BROWSABLE, COST_REF } from '../common/sql';   // V5.0.0 商品可售/可查可见性 + 标准进价 L1
 import { hqStoreId, chainEnabled, crossStore, assertStoreAllowed } from '../common/scope';  // V5.0.0 连锁数据范围
@@ -142,7 +144,7 @@ async function crawlBingTitle(code: string): Promise<{ title: string } | null> {
   const res = await fetch(`https://cn.bing.com/search?q=${encodeURIComponent(code)}`, {
     headers: { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
                'accept-language': 'zh-CN,zh;q=0.9' },
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(EXTERNAL_API_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`bing HTTP ${res.status}`);
   const html = await res.text();
@@ -202,7 +204,7 @@ async function lookupMxnzp(code: string) {
   const res = await fetch(
     `https://www.mxnzp.com/api/barcode/goods/details?barcode=${encodeURIComponent(code)}` +
     `&app_id=${encodeURIComponent(appId)}&app_secret=${encodeURIComponent(appSecret)}`,
-    { signal: AbortSignal.timeout(6000) });
+    { signal: AbortSignal.timeout(EXTERNAL_API_FAST_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`mxnzp HTTP ${res.status}`);
   const j: any = await res.json();
   if (!j || j.code !== 1 || !j.data) return null;
@@ -217,7 +219,7 @@ async function lookupOpenFoodFacts(code: string) {
   const res = await fetch(
     `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json` +
     `?fields=product_name,product_name_zh,quantity,brands,categories`,
-    { signal: AbortSignal.timeout(6000), headers: { 'user-agent': 'CommunitySupermarket-POS/1.0' } });
+    { signal: AbortSignal.timeout(EXTERNAL_API_FAST_TIMEOUT_MS), headers: { 'user-agent': 'CommunitySupermarket-POS/1.0' } });
   if (!res.ok) throw new Error(`OFF HTTP ${res.status}`);
   const j: any = await res.json();
   if (!j || j.status !== 1 || !j.product) return null;
@@ -484,7 +486,7 @@ class ProductsController {
   ) {
     const kw = (keyword || '').trim();
     const pn = Math.max(1, Number(page) || 1);
-    const sz = Math.min(100, Math.max(1, Number(size) || 20));
+    const sz = sizeOf(size, 20, 100);   // V5.0.19i（Q-07）
     const sc = (scope || 'sellable').toLowerCase();
     const selfStore = curStore();
     const hqId = await hqStoreId();
@@ -1260,7 +1262,7 @@ class ProductsController {
   @Get('pool')
   async poolList(@Query('q') qkw: string, @Query('size') size: string, @Query('offset') offset: string) {
     const kw = String(qkw || '').trim();
-    const lim = Math.min(200, Math.max(1, Number(size) || 50));
+    const lim = sizeOf(size, 50, 200);   // V5.0.19i（Q-07）
     const off = Math.max(0, Number(offset) || 0);
     const where = kw ? `WHERE barcode ILIKE $1 OR name ILIKE $1 OR brand ILIKE $1 OR category ILIKE $1` : '';
     const args: any[] = kw ? [`%${kw}%`] : [];
@@ -1565,9 +1567,8 @@ class PriceChangeController {
         }
       }
       const ym = new Date().toISOString().slice(0, 7).replace('-', '');
-      await seqLock(c, 'price_changes', 'pc_no', `${prefix}-${ym}-%`);
-      const seq = await c.query(`SELECT count(*)+1 AS n FROM price_changes WHERE pc_no LIKE $1`, [`${prefix}-${ym}-%`]);
-      const no = `${prefix}-${ym}-${String(seq.rows[0].n).padStart(3, '0')}`;
+      const seq = (await seqLock(c, 'price_changes', 'pc_no', `${prefix}-${ym}-%`))[0];
+      const no = `${prefix}-${ym}-${String(seq.n).padStart(3, '0')}`;
       const head = await c.query(
         `INSERT INTO price_changes (pc_no, effective_date, remark, item_count, diff_total, created_by, price_type, status, apply_scope, target_store_id)
          VALUES ($1, COALESCE($2::date, CURRENT_DATE), $3, $4, $5, $6, $7, 'pending', $8, $9) RETURNING id, pc_no`,
@@ -1934,8 +1935,7 @@ class BundleController {
           WHERE i.bundle_id=$1 ORDER BY i.id FOR UPDATE`, [bd.id])).rows;
       if (!items.length) throw new BizException(40003, '组合明细为空，不能组装');
       const ym = new Date().toISOString().slice(0, 7).replace('-', '');
-      await seqLock(c, 'bundle_ops', 'op_no', `ZZ-${ym}-%`);
-      const seq = (await c.query(`SELECT count(*)+1 AS n FROM bundle_ops WHERE op_no LIKE $1`, [`ZZ-${ym}-%`])).rows[0];
+      const seq = (await seqLock(c, 'bundle_ops', 'op_no', `ZZ-${ym}-%`))[0];
       const no = `ZZ-${ym}-${String(seq.n).padStart(3, '0')}`;
 
       let total = 0;
@@ -1985,8 +1985,7 @@ class BundleController {
       if (!items.length) throw new BizException(40003, '组合明细为空，不能拆分');
       const sumQty = items.reduce((a, it) => a + Number(it.qty), 0);
       const ym = new Date().toISOString().slice(0, 7).replace('-', '');
-      await seqLock(c, 'bundle_ops', 'op_no', `CF-${ym}-%`);
-      const seq = (await c.query(`SELECT count(*)+1 AS n FROM bundle_ops WHERE op_no LIKE $1`, [`CF-${ym}-%`])).rows[0];
+      const seq = (await seqLock(c, 'bundle_ops', 'op_no', `CF-${ym}-%`))[0];
       const no = `CF-${ym}-${String(seq.n).padStart(3, '0')}`;
 
       // FIFO 消费组合批次（temp refId=0，落单后补记到单据）

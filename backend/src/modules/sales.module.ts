@@ -1,6 +1,11 @@
 import { Module, Controller, Post, Get, Body, Param, Query, ParseIntPipe } from '@nestjs/common';
 import { q, q1, tx, cx, r2, r3, audit, seqLock } from '../common/db';
-import { consumeBatches } from './sales.fifo';
+import { consumeBatchesMany } from './sales.fifo';
+import { orderDiscountRedLine, calcOrderDiscountCents, applyRoundRule } from './sales.pure';   // Q-02：折扣/抹零纯函数（单测锁行为）
+import { computeCheckoutLines } from './sales.checkout.pricing';   // Q-01：定价域服务（单测+结账E2E 兜底）
+import { processCheckoutPayments } from './sales.checkout.payments';   // Q-01：支付域服务（单测+结账E2E 兜底）
+import { persistCheckoutOrder } from './sales.checkout.persist';   // Q-01：落单域服务（单测+结账E2E 兜底）
+import { finalizeCheckoutAssets } from './sales.checkout.assets';   // Q-01：资产域服务（单测+结账E2E 兜底）
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms, JWT_SECRET } from '../common/auth';
 import * as jwt from 'jsonwebtoken';
@@ -9,12 +14,41 @@ import { syncMemberLevel } from './members.module';
 import { memberGrowth } from './member-growth.service';   // V5.0.17：消费成长值
 import { applyPromotions, grantPostCheckoutRewards } from './promotions.module';
 import { applyCoupons, couponStockAfter, logCoupon } from './coupons.module';   // V5.0 多选核销 + 核销出库流水
-import { storePrice } from './store-price.service';   // V4.26.5 门店覆盖价：结算按当前门店取价
-import { COST_REF } from '../common/sql';              // V5.0.0 R8：进价口径 L1 优先（红线兜底）
 import { enqueueSync, nodeIdentity } from '../common/outbox';  // V5.0.0 批次4A：同事务上行入队（hq/单店 no-op）
 import { SyncStoreService } from './sync-store.service'; // V5.0.0：结算后事件触发立即推送
 import { isChainStoreNode, hqMemberPost, offlineBalanceCredit, HQ_UNREACHABLE_CODE } from './member-chain.module'; // V5.0.0 批次5+P2-1：会员资产权威账本在总部；断网挂账
 import { curStore, curScope } from '../common/context';   // V4.28.0：销售列表/明细按数据范围收敛（审计 F-04）
+
+/** L-04：结账事务内已成功的总部扣款记录（本地事务回滚时用于补偿撤销，防「HQ 已扣、本地无单」资损） */
+export interface HqDebitRec {
+  asset: 'balance' | 'dividend' | 'points';
+  cardNo: string;
+  orderNo: string;
+  storeId: number;
+  operatorId: number | string;
+  amount?: number;   // balance / dividend（元）
+  points?: number;   // points 抵扣
+}
+
+/**
+ * L-04 两阶段补偿：本地事务回滚（本地无单）后，撤销已成功的总部扣款。
+ * 余额/分红 → 总部 /hq/member/credit（原路退，按 orderNo 幂等）；积分 → /hq/member/points 负向冲回。
+ * 补偿失败（总部仍不可达等）仅留审计转人工对账，绝不静默吞掉资损。
+ */
+async function reverseHqDebits(debits: HqDebitRec[]): Promise<void> {
+  for (const d of debits) {
+    try {
+      if (d.asset === 'points') {
+        await hqMemberPost('points', { cardNo: d.cardNo, orderNo: d.orderNo, points: -(d.points ?? 0) });
+      } else {
+        await hqMemberPost('credit', { cardNo: d.cardNo, orderNo: d.orderNo, asset: d.asset, amount: d.amount });
+      }
+    } catch (err: any) {
+      await audit(d.storeId, d.operatorId as any, '收银', 'hq_debit_compensation_failed', 'sales_order', null,
+        { asset: d.asset, orderNo: d.orderNo, error: String(err?.message ?? err).slice(0, 300) }).catch(() => {});
+    }
+  }
+}
 
 interface CheckoutItem { productId: number; qty: number; unitName?: string; unitPrice?: number;
   lineRemark?: string; manualEntry?: boolean; manualBarcode?: string;
@@ -40,6 +74,7 @@ interface CheckoutDto {
   discountReason?: string;    // 折扣原因（如：员工折扣/会员日/审批人），必须填写
   tableId?: number;           // V4.21.0 P16 批2 台位档案：堂食落单挂台位（自动转「使用中」）
   priceAuthTicket?: string;   // V4.25.5 店长授权票据（改价/折扣/赠品的现场授权，POST /auth/authorize 换取，120 秒有效）
+  creditAmount?: number;      // 会员挂账金额（元）：当场不支付、转 member_credits 账期欠款；需 pos.credit.enabled 开 + 指定会员，Σ(支付+挂账)=应收
   guestPhone?: string;        // V5.0.15 挂单/外卖顾客联系电话
 }
 
@@ -66,10 +101,11 @@ export class SalesService {
     // ── V4.25.5 店长现场授权：凡涉及「改价 / 单品折扣 / 赠品 / 整单折扣」，必须携带有效授权票据 ──
     //   票据由 POST /auth/authorize（店长工号 + 授权码）签发，120 秒有效、scope=price；
     //   作用仅为「授权本次价格操作」，不切换登录身份；无票据直接拒绝（50035）。
-    const needsPriceAuth = (dto.items as any[]).some(it => it && !it.custom
+    const needsPriceAuth = (dto.items as any[]).some(it => it && !(it.custom || it.customEntry)
       && (it.unitPrice !== undefined || it.discRate !== undefined || it.gift))
       || (Number(dto.orderDiscount) > 0);
     let priceAuthorizer: { id: number; empNo: string; name: string } | null = null;
+    let ticketJti: string | null = null;   // S-08：票据一次性消费标记（签发端已带 jti）
     if (needsPriceAuth) {
       const tk = String((dto as any).priceAuthTicket || '');
       if (!tk) throw new BizException(50035, '改价/折扣需店长现场授权：请在弹出框输入店长工号与授权码');
@@ -77,6 +113,7 @@ export class SalesService {
         const pl: any = jwt.verify(tk, JWT_SECRET);
         if (pl?.scope !== 'price' || !pl?.sub) throw new Error('bad scope');
         priceAuthorizer = { id: Number(pl.sub), empNo: String(pl.empNo || ''), name: String(pl.name || '') };
+        ticketJti = pl.jti ? String(pl.jti) : null;
       } catch {
         throw new BizException(50036, '店长授权已过期或无效，请重新授权（授权有效期 120 秒）');
       }
@@ -102,7 +139,10 @@ export class SalesService {
       var emergencyCap = cap;
     }
 
-    const out = await tx(async c => {
+    const hqDebits: HqDebitRec[] = [];
+    let out: any = null;
+    try {
+    out = await tx(async c => {
       // ── 0- 离线补传幂等（8.5.1）：同 clientRef 重发直接返回原单，不重复入账 ──
       //    数据库另有 ux_sales_client_ref 部分唯一索引兜底并发双击
       if (dto.clientRef) {
@@ -112,6 +152,14 @@ export class SalesService {
           return { orderId: Number(dup[0].id), orderNo: dup[0].order_no,
                    payable: Number(dup[0].payable_amount), idempotent: true };
         }
+      }
+
+      // S-08：授权票据一次性消费——jti 抢占（随本事务提交/回滚），防 120s 窗口内重放二次改价
+      if (ticketJti) {
+        await cx(c, `DELETE FROM auth_ticket_used WHERE used_at < now() - interval '1 day'`);
+        const usedIns = await cx(c,
+          `INSERT INTO auth_ticket_used (jti) VALUES ($1) ON CONFLICT (jti) DO NOTHING RETURNING jti`, [ticketJti]);
+        if (!usedIns.length) throw new BizException(50036, '该店长授权票据已被使用（票据一次性有效），请重新授权后再结算');
       }
 
       // ── 0- 扫码购无收银员归属（6.4.2 自助结算）：流水/审计的 employee_id 置空 ──
@@ -171,248 +219,11 @@ export class SalesService {
       const floorRate = Number.isFinite(rawRate) && rawRate > 0
         ? Math.min(1, Math.max(0.01, rawRate)) : 0.8;
 
-      // ── 1. 逐行计价 + FIFO 批次分配（内存先算，写库在后） ──
-      let goodsCents = 0, costCents = 0, levelDiscCents = 0; // RV-01 按分计算：累计一律整数分
-      const lines: any[] = [];
-      // V5.0.0 批次4B（M4-16）：连锁门店（非总部仓）禁用负库存软模式 —— 服务端非负库存拦截。
-      // 懒计算 + 单次缓存（chainEnabled 60s 缓存；isHqStore 每单一次）；单店部署恒 false 零回归
-      let branchNegLock: boolean | null = null;
-      const isBranch = async (): Promise<boolean> => {
-        if (branchNegLock === null) {
-          try {
-            const { chainEnabled, isHqStore } = await import('../common/scope');
-            branchNegLock = (await chainEnabled()) && !(await isHqStore(user.storeId));
-          } catch { branchNegLock = false; }
-        }
-        return branchNegLock;
-      };
-      for (const it of dto.items) {
-        // ── V4.18.1 P15 开放键临时行：无码杂货手输 品名+价格+备注，不建档案不碰库存 ──
-        // product_id NOT NULL 口径 → 落占位商品（barcode='OPENKEY'，track_inventory=false，成本 0），
-        // 真实品名记 sale_items.custom_name，既有报表/退货/对账 JOIN 零破坏
-        if ((it as any).customEntry) {
-          const cname = String((it as any).name || '').trim();
-          if (!cname) throw new BizException(40003, '开放键行必须提供品名');
-          if (!(Number(it.unitPrice) > 0)) throw new BizException(40003, '开放键行单价必须大于 0');
-          if (!(Number(it.qty) > 0)) throw new BizException(40003, '开放键行数量必须大于 0');
-          const pps = await cx(c,
-            `SELECT * FROM products WHERE store_id=$1 AND barcode='OPENKEY' AND deleted_at IS NULL ORDER BY id LIMIT 1`, [user.storeId]);
-          const op = pps[0] ?? (await cx(c,
-            `INSERT INTO products (store_id, goods_no, name, barcode, sell_price, base_unit, track_inventory, status, min_price)
-             VALUES ($1, 'OPENKEY-' || $1, '开放键临时行', 'OPENKEY', 0, '件', false, 1, 0) RETURNING *`, [user.storeId]))[0];
-          const oQty = r3(Number(it.qty));
-          const oPrice = r2(Number(it.unitPrice));
-          const oCents = Math.round(toCents(oPrice) * oQty);
-          goodsCents += oCents;
-          lines.push({ customName: cname, p: op, unitName: '件', baseQty: oQty, unitPrice: oPrice, originPrice: oPrice,
-                       lineAmount: oCents / 100, lineCost: 0, allocs: [], priceChanged: true,
-                       lineRemark: it.lineRemark ?? null, manualBarcode: null, shortage: null });
-          continue;
-        }
-        // V4.25.4 + V5.0.0：随行取「标准进价 L1」——进价是改价/折扣的最终兜底红线（无最低卖价时也不得低于进价销售）
-        //   R8：L1（products.standard_cost）优先，为空回落旧口径（供应商最新报价）→ 存量商品零回归
-        const ps = await cx(c,
-          `SELECT p.*, ${COST_REF('p')} AS cost_price
-             FROM products p WHERE p.id=$1 AND p.deleted_at IS NULL`, [it.productId]);
-        const p = ps[0];
-        if (!p) throw new BizException(40404, `商品#${it.productId} 不存在`, 404);
-        // V4.26.5 按门店隔离价格：结算前用门店覆盖价改写 p.sell_price / p.member_price，
-        //   下游全部逻辑（原价/会员价/折扣红线/进价兜底）自动同口径；未设门店价的门店完全不受影响。
-        await storePrice.overlayOne(user.storeId, p);
-        if (p.status !== 1) throw new BizException(50020, `${p.name} 已停售`);
-
-        // 单位换算（V4.4.3 多单位）
-        let rate = 1;
-        let unitName: string = it.unitName || p.base_unit;
-        let packPrice: number | null = null; // 一品多包装：该单位的单位售价（如箱价55）
-        if (it.unitName && it.unitName !== p.base_unit) {
-          const us = await cx(c, `SELECT * FROM product_units WHERE product_id=$1 AND unit_name=$2`, [p.id, it.unitName]);
-          if (!us.length) throw new BizException(50022, `${p.name} 不存在单位「${it.unitName}」`);
-          rate = Number(us[0].rate);
-          packPrice = us[0].price === null || us[0].price === undefined ? null : Number(us[0].price);
-        }
-        const baseQty = r3(Number(it.qty) * rate);
-        if (!(baseQty > 0)) throw new BizException(40003, `${p.name} 数量必须大于 0`);
-
-        // 应急手输商品（V4.6.3：价目表未命中仅店长授权手输；条码记入行备注留痕，恢复后补录）
-        if (it.manualEntry) {
-          if (!dto.isEmergency) throw new BizException(50037, '手输商品仅限应急收银模式');
-          if (!user.perms.includes('pos.emergency.manual')) {
-            throw new BizException(42003, '无应急手输权限（pos.emergency.manual，仅店长）', 403);
-          }
-          if (!it.manualBarcode) throw new BizException(40003, '手输商品必须提供条码（manualBarcode）');
-        }
-        // 计价（服务端权威价）：手工改价 > 包装单位售价 > 商品会员价 > 等级折扣（开关） > 零售价
-        let priceChanged = false;
-        let unitPrice: number;
-        let originPrice: number;
-        let basePrice: number;
-        let lineAmountOverride: number | null = null; // 包装定价时行金额按包装价精确（避免换算摊分尾差）
-        // ── V4.18.1 P15 赠品行：0 元出库，库存照扣/成本照记；需 pos.price.manual 权限 + 留痕（§13 A3 手工赠）──
-        //  V4.28.9 促销赠品行（promoGift）：由「消费后奖励-送赠品」活动自动添加，0 元同一出库通道；
-        //  免店长授权（活动配置即授权），但结算时强校验活动有效性 + 门槛达标（防伪造免授权白拿，见 1.7 区）。
-        const isPromoGift = !!(it as any).promoGift;
-        const isGift = !!(it as any).gift || isPromoGift;
-        if ((it as any).gift && !isPromoGift) {
-          if (!user.perms.includes('pos.price.manual')) {
-            throw new BizException(42003, '手工赠品行需改价权限（pos.price.manual）', 403);
-          }
-          await audit(user.storeId, user.sub, '收银', '手工赠品', 'product', Number(p.id),
-            { name: p.name, qty: baseQty, reason: it.lineRemark ?? '' });
-        }
-        if (isGift) {
-          originPrice = Number(p.sell_price); basePrice = originPrice; unitPrice = 0; priceChanged = true;
-        } else if ((it as any).discRate !== undefined && (it as any).discRate !== null && Number((it as any).discRate) > 0) {
-          // ── V4.25.3 单品折扣（行级）：按折扣率打折，双红线校验 ──
-          //    ① 折扣率 ≥ 商品最低折扣 min_discount_rate；② 折后单价 ≥ 商品最低卖价 min_price
-          //      （未设 min_price 时按「售价 × sales.floor_guard_rate」兜底，V5.0.15 起可配置，默认 8 折）
-          //    任一越线：店长（pos.emergency.manual）可放行并留痕；否则拒绝
-          if (!user.perms.includes('pos.price.manual')) {
-            throw new BizException(42002, '单品折扣需改价权限（pos.price.manual）', 403);
-          }
-          const dRate = Number((it as any).discRate);
-          if (!(dRate > 0 && dRate < 100)) throw new BizException(40003, '单品折扣折数必须在 0~100 之间（如 88=88折）');
-          if (dRate < 1) throw new BizException(40003, `折数须为百分数（如 95=95折），收到 ${dRate} 将按 ${dRate}%成交，已拒绝`);
-          originPrice = Number(p.sell_price);
-          basePrice = originPrice;
-          unitPrice = r2(basePrice * dRate / 100);
-          // VQA-2（DEF-15 / Q5 裁决）：会员价生效时单品折扣取「折后价 vs 会员价」更优单享，禁止折上折、禁止折扣旁路会员价
-          if (dto.memberId != null && (p as any).member_discount !== null && (p as any).member_discount !== undefined && Number((p as any).member_discount) > 0) {
-            const mc = (p as any).member_price !== null && (p as any).member_price !== undefined && (p as any).member_price !== ''
-              ? Number((p as any).member_price) : r2(Number(p.sell_price) * Number((p as any).member_discount));
-            if (Number.isFinite(mc) && mc > 0 && mc < unitPrice) unitPrice = r2(mc);
-          }
-          priceChanged = true;
-          const minDiscRate = Number((p as any).min_discount_rate) || 0;
-          const minSalePrice = p.min_price !== null && p.min_price !== undefined && p.min_price !== ''
-            ? Number(p.min_price) : r2(Number(p.sell_price) * floorRate);
-          // V4.25.4 进价兜底：折后价不得低于进价（未设最低卖价时进价即最终红线）
-          const costP = Number((p as any).cost_price) || 0;
-          const floorP = Math.max(minSalePrice, costP);
-          const belowDisc = minDiscRate > 0 && dRate < minDiscRate;
-          const belowPrice = floorP > 0 && unitPrice < floorP;
-          if (belowDisc || belowPrice) {
-            if (!user.perms.includes('pos.emergency.manual')) {
-              throw new BizException(50034, belowDisc
-                ? `${p.name} 折扣 ${dRate} 折低于最低折扣 ${minDiscRate} 折（需店长放行）`
-                : (costP > minSalePrice
-                  ? `${p.name} 折后单价 ¥${unitPrice} 低于进价 ¥${costP}（不得低于进价销售；需店长放行）`
-                  : `${p.name} 折后单价 ¥${unitPrice} 低于最低售价 ¥${minSalePrice}（需店长放行）`));
-            }
-            await audit(user.storeId, user.sub, '收银', '低于最低折扣/售价放行', 'product', Number(p.id),
-              { name: p.name, discRate: dRate, unitPrice, minSalePrice, minDiscRate, costPrice: costP, floor: floorP });
-          }
-        } else if (it.unitPrice !== undefined && it.unitPrice !== null) {
-          // 应急手输走 pos.emergency.manual（店长授权），普通改价走 pos.price.manual
-          if (it.manualEntry) {
-            if (!(Number(it.unitPrice) > 0)) throw new BizException(40003, '手输商品单价必须大于 0');
-          } else if (!user.perms.includes('pos.price.manual')) {
-            throw new BizException(42002, '无手工改价权限（pos.price.manual）', 403);
-          }
-          originPrice = Number(p.sell_price);
-          unitPrice = Number(it.unitPrice);
-          basePrice = Number(p.sell_price);
-          priceChanged = true;
-          // ── V4.18.0 P14 最低售价硬拦 + V4.25.4 进价兜底：改价不得低于 max(最低卖价线, 最新进价) ──
-          //    最低卖价线 = 商品 min_price，未设时按「售价 × sales.floor_guard_rate」（V5.0.15 起可配置，默认 8 折）；
-          //    进价取最新供应商进价（取不到按 0 = 不启用）
-          const minP = p.min_price !== null && p.min_price !== undefined && p.min_price !== ''
-            ? Number(p.min_price) : r2(Number(p.sell_price) * floorRate);
-          const costP = Number((p as any).cost_price) || 0;
-          const floorP = Math.max(minP, costP);
-          if (floorP > 0 && unitPrice < floorP) {
-            if (!user.perms.includes('pos.emergency.manual')) {
-              throw new BizException(50033, costP > minP
-                ? `${p.name} 改价 ¥${unitPrice} 低于进价 ¥${costP}（不得低于进价销售；需店长放行）`
-                : `${p.name} 改价 ¥${unitPrice} 低于最低售价 ¥${minP}（需店长放行）`);
-            }
-            await audit(user.storeId, user.sub, '收银', '低于最低售价/进价放行', 'product', Number(p.id),
-              { name: p.name, unitPrice, minPrice: minP, costPrice: costP, floor: floorP });
-          }
-        } else if (packPrice !== null && packPrice > 0) {
-          // 包装定价（一品多包装：如箱价55，行金额精确=包装价×件数）
-          basePrice = r2(Number(p.sell_price) * rate);
-          originPrice = basePrice;
-          unitPrice = r2(packPrice / rate); // 记录用摊分单价（仅入库展示）
-          lineAmountOverride = r2(packPrice * Number(it.qty));
-        } else if (dto.memberId && p.member_discount !== null && p.member_discount !== undefined && Number(p.member_discount) > 0) {
-          // 会员价门控（V4.9.3）：会员折扣=是（>0）才参与会员价；未设会员价时按 售价×折扣 兜底
-          originPrice = Number(p.sell_price); basePrice = Number(p.sell_price);
-          unitPrice = p.member_price !== null && p.member_price !== undefined
-            ? Number(p.member_price) : r2(Number(p.sell_price) * Number(p.member_discount));
-        } else {
-          basePrice = Number(p.sell_price);
-          unitPrice = basePrice; originPrice = basePrice;
-          if (levelDiscountOn && levelCtx && levelCtx.discount < 1) {
-            unitPrice = r2(basePrice * levelCtx.discount); // 等级折扣（9.8折等，5.1.12）
-          }
-        }
-        // RV-01 按分计算：单价先取整分，×数量后取整——行金额无浮点尾差；落库前回除为元
-        const lineCents = lineAmountOverride !== null ? toCents(lineAmountOverride) : Math.round(toCents(unitPrice) * baseQty);
-        const lineDiscountCents = lineAmountOverride === null && levelDiscountOn && levelCtx && levelCtx.discount < 1 && !priceChanged
-          ? Math.round(baseQty * toCents(basePrice - unitPrice)) : 0;
-        levelDiscCents += lineDiscountCents;
-        const lineAmount = lineCents / 100;
-        const lineDiscount = lineDiscountCents / 100;
-
-        // FIFO 批次分配：FOR UPDATE 行锁 = 服务端唯一权威（前端库存/金额拦截仅体验层，一切以本事务落账为准·决策④）
-        // 硬拦（默认）：库存不足 50001 直接拒绝；软模式（stock.negative_sales=开）：差额挂末位批次记负 + 进挂起成本队列，不硬拦
-        const allocs: { batchId: number; qty: number; cost: number }[] = [];
-        let lineCost = 0;
-        let shortageHold: { qty: number; basis: string } | null = null;
-        if (p.track_inventory) {
-          const batches = await cx(c,
-            `SELECT id, remain_qty, inbound_cost FROM batches
-              WHERE store_id=$1 AND product_id=$2 AND status='在库' AND remain_qty > 0
-              ORDER BY expiry_date, inbound_date, id
-              FOR UPDATE`, [user.storeId, p.id]);
-          let totalAvail = 0;
-          for (const b of batches) totalAvail += Number(b.remain_qty);
-          const allowNeg = totalAvail < baseQty && !branchNegLock
-            && (await this.settings.getBool('stock.negative_sales', false));
-          if (totalAvail < baseQty && !allowNeg) {
-            throw new BizException(50001, `${p.name} 库存不足（现有 ${totalAvail}，需 ${baseQty}）`);
-          }
-          let need = baseQty;
-          for (const b of batches) {
-            if (need <= 0) break;
-            const take = Math.min(Number(b.remain_qty), need);
-            allocs.push({ batchId: b.id, qty: r3(take), cost: Number(b.inbound_cost) });
-            lineCost += take * Number(b.inbound_cost);
-            need = r3(need - take);
-          }
-          // 决策④：FIFO 吃完仍有差额 → 支持「负批次挂起」——末位批次挂负数并暂计其成本；
-          // 无任何在库批次时绝不按 0 成本静默吞掉：差额全额进入 pending_cost_adjusts 挂起队列，待盘点/财务回填真实成本
-          if (need > 1e-9 && allowNeg) {
-            const last = batches[batches.length - 1];
-            let basis = 'none';
-            if (last) {
-              allocs.push({ batchId: last.id, qty: r3(need), cost: Number(last.inbound_cost) });
-              lineCost += need * Number(last.inbound_cost);
-              basis = `batch:${last.id}`;
-            }
-            shortageHold = { qty: r3(need), basis };
-            await audit(user.storeId, user.sub, '收银', '负库存售卖', 'product', Number(p.id),
-              { name: p.name, stock: totalAvail, sold: baseQty, shortage: r3(need), costBasis: basis });
-          }
-        } else {
-          // 不记库存商品：成本取最近一次进价
-          const last = await cx(c,
-            `SELECT unit_cost FROM inbound_order_items WHERE product_id=$1 ORDER BY id DESC LIMIT 1`, [p.id]);
-          const cost = last.length ? Number(last[0].unit_cost) : 0;
-          lineCost = baseQty * cost;
-        }
-        const lineCostCents = Math.round(lineCost * 100); // RV-01 成本按分累计
-        lineCost = lineCostCents / 100;
-        goodsCents += lineCents;
-        costCents += lineCostCents;
-        const finalRemark = it.manualEntry
-          ? `手输:${it.manualBarcode}${it.lineRemark ? ' ' + it.lineRemark : ''}`
-          : (isPromoGift ? `赠品(促销)${it.lineRemark ? ':' + it.lineRemark : ''}` : (isGift ? `赠品${it.lineRemark ? ':' + it.lineRemark : ''}` : (it.lineRemark ?? null)));
-        lines.push({ p, unitName, baseQty, unitPrice, originPrice, lineAmount, lineCost, allocs, priceChanged, lineRemark: finalRemark,
-                     promoGift: isPromoGift, promoGiftId: isPromoGift ? Number((it as any).promoGiftId) || null : null,
-                     manualBarcode: it.manualEntry ? (it.manualBarcode ?? null) : null, shortage: shortageHold });
-      }
+      // ── 1. 逐行计价 + FIFO 批次分配 ──（Q-01：定价域拆至 sales.checkout.pricing.ts，行为逐字保留；
+      //   原块内 isBranch 未被调用的死代码观察已随迁并在彼处标记，待拍板后再启用）
+      const { lines, goodsCents, costCents, levelDiscCents } = await computeCheckoutLines({
+        c, user, dto, settings: this.settings, levelDiscountOn, levelCtx, floorRate,
+      });
 
       // ── 1.5 促销引擎（5.4 T12）：行级特价/第二件半价 → 整单级满减/满折，跨层叠加；
       //      整单优惠按行小比分摊到 sale_items（退货按行原路退）；会员价冲突取更优 ──
@@ -464,13 +275,9 @@ export class SalesService {
         for (const ln of lines) {
           const lnName = String((ln.p as any)?.name ?? '商品');
           // V4.25.4 进价兜底：红线价 = max(最低卖价线, 最新进价)；最低卖价线未设时按「售价 × floorRate」
-          const priceSet = Number((ln.p as any)?.min_price ?? (ln.p as any)?.minPrice ?? 0) || 0;
-          const sellP = Number((ln.p as any)?.sell_price) || 0;
-          const costP = Number((ln.p as any)?.cost_price) || 0;
-          const minP = Math.max(priceSet > 0 ? priceSet : Math.round(sellP * floorRate * 100) / 100, costP);
-          const minD = Number((ln.p as any)?.min_discount_rate) || 0;
-          const belowDisc = minD > 0 && rate < minD;
-          const belowPrice = minP > 0 && ln.unitPrice * (rate / 100) < minP - 0.005;
+          // Q-02：红线计算抽至 sales.pure.orderDiscountRedLine（纯函数+单测）；放行/拒绝与留痕留在事务内
+          const rl = orderDiscountRedLine(ln.p as any, ln.unitPrice, rate, floorRate);
+          const { minP, minD, costP, priceSet, belowDisc, belowPrice } = rl;
           if (belowDisc || belowPrice) {
             if (!isBossDiscount) {
               throw new BizException(40003, belowDisc
@@ -483,7 +290,8 @@ export class SalesService {
               { product: lnName, rate, minDiscRate: minD, minPrice: minP, costPrice: costP });
           }
         }
-        orderDiscountCents = Math.min(toCents(dto.orderDiscount), payableCents - 1);
+        // Q-02：折扣封顶（应收保底 1 分）抽至 sales.pure.calcOrderDiscountCents
+        orderDiscountCents = calcOrderDiscountCents(dto.orderDiscount, payableCents);
         if (orderDiscountCents > 0) {
           payableCents -= orderDiscountCents;
           await audit(user.storeId, user.sub, '收银', '整单折扣', 'sales_order', null,
@@ -494,13 +302,10 @@ export class SalesService {
       // V5.0.15：移至整单折扣之后 —— 先打折，再对折后金额抹零
       // RV-01：单位直接用分，向下去零 = 对 ruc 取余，整数运算零尾差
       const roundRule = String((await this.settings.getVal('pos.round_rule')) ?? '分');
-      const roundUnitC: Record<string, number> = { '分': 1, '角': 10, '5角': 50, '元': 100 };
-      const ruc = roundUnitC[roundRule];
-      let roundCents = 0;
-      if (ruc && ruc > 1 && payableCents > 0) {
-        roundCents = payableCents % ruc;
-        payableCents -= roundCents;
-      }
+      // Q-02：自动抹零抽至 sales.pure.applyRoundRule（纯函数+单测；先打折后抹零，整数取余零尾差）
+      const rr = applyRoundRule(payableCents, roundRule);
+      let roundCents = rr.roundCents;
+      payableCents = rr.payableCents;
       // ── 1.7b 手动抹零（V4.18.0 P14 抹零双轨）：收银员界面抹零至元/角，需 pos.price.manual 权限并留痕 ──
       let manualRoundCents = 0;
       if (dto.manualRound && dto.manualRound > 0) {
@@ -610,407 +415,33 @@ export class SalesService {
       const deliveryFee = deliveryFeeCents / 100;
       const profit = (payableCents - costCents) / 100;
 
-      // ── 2. 台位归属校验（V4.21.0 P16 批2）：堂食落单即占用（停用台位拒收） ──
-      let tableId: number | null = null;
-      let tableName: string | null = null;
-      if (dto.tableId) {
-        const tbs = await cx(c, `SELECT id, name, status FROM dining_tables WHERE id=$1 AND store_id=$2`, [dto.tableId, user.storeId]);
-        if (!tbs.length) throw new BizException(40404, '台位不存在');
-        if (tbs[0].status === '停用') throw new BizException(40005, '该台位已停用，请先在台位管理恢复');
-        tableId = Number(tbs[0].id);
-        tableName = tbs[0].name;
-      }
-
-      // ── 2. 单号 + 主单 ──
-      const d = new Date();
-      const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-      const seq = await seqLock(c, 'sales_orders', 'order_no', `XS-${ymd}-%`);
-      const orderNo = `XS-${ymd}-${String(seq[0].n).padStart(4, '0')}`;
-      const order = await cx(c,
-        `INSERT INTO sales_orders (store_id, order_no, channel, is_emergency, member_id, cashier_id, status,
-                                   goods_amount, promo_amount, coupon_amount, payable_amount, cost_amount,
-                                   profit_amount, member_discount, round_amount, shift_id, promo_id, coupon_id,
-                                   remark, delivery_fee, client_ref, order_discount, pay_status, pay_paid_at, table_id,
-                                   coupon_ids, guest_phone)
-         VALUES ($1,$2,$3,$4,$5,$6,'已完成',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,'paid',now(),$22,$23,$24) RETURNING id`,
-        [user.storeId, orderNo, dto.channel || '收银台', !!dto.isEmergency, dto.memberId ?? null, operatorId,
-         goodsAmount, promo.promoAmount, couponAmount, payable, costTotal, profit, levelDiscountTotal,
-         roundAmount, shiftId, promo.orderPromoId, couponIdUsed, dto.remark ?? null, deliveryFee,
-         dto.clientRef ?? null, orderDiscountCents / 100, tableId,
-         couponIdsUsed.length ? JSON.stringify(couponIdsUsed) : null, dto.guestPhone ?? null]);
-      const orderId = order[0].id;
-      if (tableId) {
-        // 落单即占用（预留/空闲 → 使用中；使用中幂等无碍）
-        await cx(c, `UPDATE dining_tables SET status='使用中', updated_at=now() WHERE id=$1`, [tableId]);
-      }
-      // ── 1.6b 券实例核销留痕 + 核销出库流水（V5.0）──
-      for (const mcId of couponIdsUsed) {
-        const usedCpn = await cx(c,
-          `SELECT cp.type, cp.id AS coupon_id, cp.store_id, mc.member_id, mc.times_used, cp.discount
-             FROM member_coupons mc JOIN coupons cp ON cp.id=mc.coupon_id WHERE mc.id=$1`, [mcId]);
-        if (!usedCpn.length) continue;
-        const uc = usedCpn[0];
-        if (uc.type === '次卡') {
-          // 次卡计次核销（5.3）：累加次数；用尽才置「已使用」并记核销出库
-          const total = Number(uc.discount), used = Number(uc.times_used ?? 0) + 1;
-          const finished = used >= total;
-          await cx(c,
-            `UPDATE member_coupons SET times_used=$2, used_at=now(), used_order_id=$3${finished ? ", status='已使用'" : ''} WHERE id=$1`,
-            [mcId, used, orderId]);
-          if (finished) {
-            const sa = await couponStockAfter(c, Number(uc.coupon_id));
-            await logCoupon(c, { storeId: Number(uc.store_id), couponId: Number(uc.coupon_id), memberCouponId: mcId,
-              moveType: '核销出库', qty: -1, memberId: Number(uc.member_id), operatorId, docNo: orderNo,
-              stockAfter: sa, remark: '结算核销(次卡完毕)' });
-          }
-        } else {
-          // 一次性券：用后即销
-          await cx(c,
-            `UPDATE member_coupons SET status='已使用', used_at=now(), used_order_id=$2 WHERE id=$1`,
-            [mcId, orderId]);
-          const sa = await couponStockAfter(c, Number(uc.coupon_id));
-          await logCoupon(c, { storeId: Number(uc.store_id), couponId: Number(uc.coupon_id), memberCouponId: mcId,
-            moveType: '核销出库', qty: -1, memberId: Number(uc.member_id), operatorId, docNo: orderNo,
-            stockAfter: sa, remark: '结算核销' });
-        }
-      }
-
-      // ── 3. 明细 + 批次消耗 + 库存流水 ──
-      for (const ln of lines) {
-        const item = await cx(c,
-          `INSERT INTO sale_items (order_id, product_id, unit_name, qty, unit_price, origin_price,
-                                   line_amount, line_cost, line_profit, price_changed, line_remark, promo_id,
-                                   supplier_id, biz_mode, manual_barcode, custom_name)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
-          [orderId, ln.p.id, ln.unitName, ln.baseQty, ln.unitPrice, ln.originPrice,
-           ln.lineAmount, ln.lineCost, r2(ln.lineAmount - ln.lineCost), ln.priceChanged, ln.lineRemark, ln.promoId,
-           ln.p.supplier_default_id ?? null, ln.p.biz_mode ?? '购销', ln.manualBarcode ?? null, (ln as any).customName ?? null]);
-        if (ln.shortage) {
-          // 决策④：无批次/末位批次之外的差额挂起记录——成本回填工作队列（盘点/财务经 GET /sales/pending-shortages 处理）
-          await cx(c,
-            `INSERT INTO pending_cost_adjusts (store_id, product_id, order_id, sale_item_id, qty, cost_basis)
-             VALUES ($1,$2,$3,$4,$5,$6)`,
-            [user.storeId, ln.p.id, orderId, item[0].id, ln.shortage.qty, ln.shortage.basis]);
-        }
-        await consumeBatches(c, {
-          storeId: user.storeId, productId: ln.p.id, saleItemId: item[0].id,
-          orderId, allocs: ln.allocs, employeeId: operatorId,
-        });
-        if (ln.p.track_inventory) {
-          await cx(c,
-            `UPDATE inventory_current SET qty_total = qty_total - $2, updated_at=now()
-              WHERE store_id=$1 AND product_id=$3`, [user.storeId, ln.baseQty, ln.p.id]);
-        }
-      }
-
-      // ── 4. 支付（多支付组合；有效消费只按「本金+现金类」部分计，5.1.16）──
-      // RV-01 按分计算：支付/拆分全程整数分，通道逐分比对、余额本赠拆分、合计比对零浮点误差
-      let paidCents = 0;
-      let validSpendCents = 0; // 有效消费（分）：储值本金 + 现金/扫码；分红/积分/赠送部分不计
-      // V4.18.3 P15 批2：积分抵现单笔上限（pos.points.max_pct %，0/缺省=不启用上限）
-      const ptsMaxPct = await this.settings.getNum('pos.points.max_pct', 20);
-      const ptsCapCents = ptsMaxPct > 0 ? Math.floor(payableCents * ptsMaxPct / 100) : payableCents;
-      let ptsUsedCents = 0;
-      let creditCents = 0;     // V4.18.3 P15 批2：赊账（会员挂账）合计 → 落单后建 member_credits 欠款
-      const payLog: { channel: string; amount: number; externalNo: string | null }[] = []; // V5.0.0：上行快照
-      // V5.0.0 批次5（M5-4）：连锁门店节点会员卡号缓存（一次结账只查一次）
-      let chainCardNo: string | null = null;
-      for (const pay of (dto.payments ?? [])) {
-        let amountCents = toCents(pay.amount);
-        // 扫码购自助结算（6.4.2）：auto 通道自动按应收付清（余额/微信/支付宝直付 VQA-D3 泛化）
-        if (pay.auto) {
-          amountCents = payableCents - paidCents;
-          if (!(amountCents > 0)) continue;
-        }
-        if (amountCents < 0) throw new BizException(40003, '支付金额不能为负数');
-        // V5.0.15 QA 发现：抹零后应收可能为 0（如抹元规则下 0.99 元商品被抹到 0），
-        // 此时收银台会提交 amount=0 的现金单，沿用「必须大于 0」会直接 40003 卡住收银。
-        // 应收为 0 时允许 0 元支付；应收 >0 时仍要求每笔为正，
-        // 「Σ支付 = 应收」的强校验在下方 50031 兜底，不会因此放过金额不符。
-        if (amountCents === 0 && payableCents > 0) throw new BizException(40003, '支付金额必须大于 0');
-        // ── V4.13.2 通道成功应答校验：带 gatewayOutTradeNo 的支付必须对上网关 SUCCESS 且金额逐分一致的单，
-        //    防止店员谎报到账/截图造假（成熟做法的等价保障：只有真通道应答才能落单）──
-        let gatewayTxnId: string | null = null;
-        if (pay.gatewayOutTradeNo) {
-          const txns = await cx(c,
-            `SELECT * FROM pay_gateway_txns WHERE out_trade_no=$1 AND status='SUCCESS' AND store_id=$2 FOR UPDATE`,
-            [String(pay.gatewayOutTradeNo).trim(), user.storeId]);
-          const txn = txns[0];
-          if (!txn) throw new BizException(40902, '支付通道流水不存在或未成功，禁止结账（请先完成通道扣款）');
-          if (Number(txn.amount_cents) !== amountCents)
-            throw new BizException(40902, `通道扣款金额(${Number(txn.amount_cents) / 100})与支付金额(${amountCents / 100})不一致`);
-          if (Number(txn.order_id)) throw new BizException(40902, '该通道流水已关联其他订单');
-          gatewayTxnId = txn.transaction_id;
-        }
-        let balanceFlowId: number | null = null;
-        let dividendFlowId: number | null = null;
-        let pointsFlowId: number | null = null;
-        let hqTicket: string | null = null;   // V5.0.0 批次5：总部资产扣款凭证（MCF 单号，随 external_no 留痕）
-        if (pay.channel === '余额') {
-          if (!dto.memberId) throw new BizException(50030, '余额支付必须指定会员');
-          if (await isChainStoreNode()) {
-            // ── 批次5（M5-4，R3）：连锁门店节点 —— 余额权威账本在总部，在线扣款拿 ticket 作支付凭证；
-            //    总部不可达 → 明确报错（事务回滚，收银员可改其他支付方式继续结账，不阻断收银）；
-            //    本地不重复记账（镜像由总部 member_mirror 下行覆盖）；本金/赠送拆分以总部返回为准。
-            if (!chainCardNo) {
-              const mcs = await cx(c, `SELECT card_no FROM members WHERE id=$1`, [dto.memberId]);
-              chainCardNo = mcs[0]?.card_no ?? null;
-            }
-            if (!chainCardNo) throw new BizException(50030, '会员卡号缺失，无法余额支付');
-            let d: any;
-            try {
-              d = await hqMemberPost('debit', { cardNo: chainCardNo, orderNo, asset: 'balance', amount: amountCents / 100 });
-            } catch (e: any) {
-              // ── P2-1（§3.5.4）：总部「网络不可达」（50071）且门店开启挂账 + 限额内 → 先记账后清算；
-              //    业务拒绝（余额不足等）与限额超限照旧阻断，收银员改用其他支付方式。
-              if (Number(e?.bizCode) !== HQ_UNREACHABLE_CODE) throw e;
-              const off = await offlineBalanceCredit(c, {
-                storeId: user.storeId, memberId: dto.memberId, cardNo: chainCardNo,
-                orderNo, amountCents, nodeCode: (await nodeIdentity())?.nodeCode,
-              });
-              hqTicket = off.ticket;
-              validSpendCents += amountCents;   // 挂账全额暂按本金计有效消费（清算后总部拆分为准，报表口径近似）
-            }
-            if (d) {
-              hqTicket = String(d.ticket);
-              validSpendCents += Math.round(Number(d.principalPart ?? 0) * 100);   // 本金部分进有效消费（5.1.16）
-            }
-          } else {
-          const accs = await cx(c, `SELECT * FROM member_accounts WHERE member_id=$1 FOR UPDATE`, [dto.memberId]);
-          const acc = accs[0];
-          if (!acc || Math.round(Number(acc.balance) * 100) < amountCents)
-            throw new BizException(50030, `会员余额不足（余额 ${acc ? acc.balance : 0}）`);
-          // 口径B 本金/赠送按比例拆分（5.1.2）：principal_part 进有效消费，赠送部分不计（RV-01 按分）
-          const totalBalC = Math.round(Number(acc.balance) * 100);
-          const principalBalC = Math.round(Number(acc.principal_balance ?? acc.balance) * 100);
-          let principalCents = totalBalC > 0 ? Math.round(amountCents * principalBalC / totalBalC) : 0;
-          if (principalCents > amountCents) principalCents = amountCents;
-          if (principalCents > principalBalC) principalCents = principalBalC;
-          const giftCents = amountCents - principalCents;
-          const afterCents = totalBalC - amountCents;
-          const fl = await cx(c,
-            `INSERT INTO balance_flows (store_id, member_id, direction, amount, principal_part, gift_part,
-                                        biz_type, ref_type, ref_id, balance_after, employee_id)
-             VALUES ($1,$2,'出',$3,$4,$5,'消费','sale',$6,$7,$8) RETURNING id`,
-            [user.storeId, dto.memberId, amountCents / 100, principalCents / 100, giftCents / 100, orderId, afterCents / 100, operatorId]);
-          balanceFlowId = fl[0].id;
-          await cx(c,
-            `UPDATE member_accounts SET balance=$2, principal_balance = principal_balance - $3,
-                    gift_balance = gift_balance - $4, updated_at=now()
-              WHERE member_id=$1`, [dto.memberId, afterCents / 100, principalCents / 100, giftCents / 100]);
-          validSpendCents += principalCents;
-          }
-        } else if (pay.channel === '分红抵扣') {
-          if (!dto.memberId) throw new BizException(50033, '分红抵扣必须指定会员');
-          if (await isChainStoreNode()) {
-            // ── 批次5：分红账本在总部（分红引擎只在总部跑），扣减在线执行，防跨店双花
-            if (!chainCardNo) {
-              const mcs = await cx(c, `SELECT card_no FROM members WHERE id=$1`, [dto.memberId]);
-              chainCardNo = mcs[0]?.card_no ?? null;
-            }
-            if (!chainCardNo) throw new BizException(50033, '会员卡号缺失，无法分红抵扣');
-            const d = await hqMemberPost('debit', { cardNo: chainCardNo, orderNo, asset: 'dividend', amount: amountCents / 100 });
-            hqTicket = String(d.ticket);
-          } else {
-          const accs = await cx(c, `SELECT * FROM member_accounts WHERE member_id=$1 FOR UPDATE`, [dto.memberId]);
-          const acc = accs[0];
-          if (!acc || Math.round(Number(acc.dividend_balance) * 100) < amountCents) {
-            throw new BizException(50033, `分红余额不足（余额 ${acc ? acc.dividend_balance : 0}，仅限消费抵扣 5.7）`);
-          }
-          await cx(c, `UPDATE member_accounts SET dividend_balance = dividend_balance - $2, updated_at=now() WHERE member_id=$1`,
-            [dto.memberId, amountCents / 100]);
-          const df = await cx(c,
-            `INSERT INTO dividend_records (store_id, member_id, record_type, amount, ref_type, ref_id, operator_id)
-             VALUES ($1,$2,'抵扣',$3,'sale',$4,$5) RETURNING id`,
-            [user.storeId, dto.memberId, amountCents / 100, orderId, user.sub]);
-          dividendFlowId = df[0].id;
-          // 分红支付不计有效消费（5.1.16：堵「只花分红、本金永不动」漏洞）
-          }
-        } else if (pay.channel === '积分抵扣') {
-          if (!dto.memberId) throw new BizException(50034, '积分抵扣必须指定会员');
-          // V4.18.3 P15 批2：比例优先用收银台键 pos.points.rate（每 1 元所需积分），缺省回落 points.redeem_rate；
-          //          单笔上限 pos.points.max_pct（%应收），超出直接拒绝（§13 定稿：比例可设+单笔上限）
-          if (ptsUsedCents + amountCents > ptsCapCents) {
-            throw new BizException(50034, `积分抵现超出单笔上限（≤应收的 ${ptsMaxPct}%），本单最多可抵 ${ptsCapCents / 100} 元`);
-          }
-          const rate = await this.settings.getNum('pos.points.rate', 0);
-          const effRate = rate > 0 ? rate : await this.settings.getNum('points.redeem_rate', 100); // 多少积分 = 1 元
-          const need = Math.ceil((amountCents / 100) * effRate);
-          if (await isChainStoreNode()) {
-            // ── 批次5：积分账本在总部（R4），兑换在线扣减，防跨店双花；本地只落支付凭证
-            if (!chainCardNo) {
-              const mcs = await cx(c, `SELECT card_no FROM members WHERE id=$1`, [dto.memberId]);
-              chainCardNo = mcs[0]?.card_no ?? null;
-            }
-            if (!chainCardNo) throw new BizException(50034, '会员卡号缺失，无法积分抵扣');
-            const d = await hqMemberPost('debit', { cardNo: chainCardNo, orderNo, asset: 'points', points: need });
-            hqTicket = String(d.ticket);
-          } else {
-          const ms = await cx(c, `SELECT points FROM members WHERE id=$1 FOR UPDATE`, [dto.memberId]);
-          const cur = ms.length ? Number(ms[0].points) : 0;
-          if (cur < need) throw new BizException(50034, `积分不足（需 ${need} 分，可用 ${cur} 分）`);
-          await cx(c, `UPDATE members SET points = points - $2, updated_at=now() WHERE id=$1`, [dto.memberId, need]);
-          await cx(c, `UPDATE member_accounts SET points = points - $2, updated_at=now() WHERE member_id=$1`, [dto.memberId, need]);
-          const pf = await cx(c,
-            `INSERT INTO points_flows (member_id, direction, points, biz_type, ref_type, ref_id, balance_after)
-             VALUES ($1,'减',$2,'兑换','sale',$3,$4) RETURNING id`,
-            [dto.memberId, need, orderId, cur - need]);
-          pointsFlowId = pf[0].id;
-          }
-          ptsUsedCents += amountCents;
-          // 积分抵扣部分不计有效消费
-        } else if (pay.channel === '赊账') {
-          // ── P2-3（2026-09-18 老板口径定版）：会员结账余额不足 → 组合支付（余额抵扣 + 现金/微信/支付宝
-          //    当场结清），不得赊账。会员「赊账」支付通道停用；历史欠款（member_credits）销账/关闭
-          //    端点保留（/pos/credits/*）；大客户团购应收（bigcustomer 赊账）是 B2B 业务，不在本口径内。
-          throw new BizException(40003,
-            '会员赊账已停用：余额不足请用组合支付（余额抵扣一部分 + 现金/微信/支付宝当场结清），不产生欠款');
-        } else {
-          validSpendCents += amountCents; // 现金/扫码等真实货币支付
-        }
-        await cx(c,
-          `INSERT INTO sale_payments (order_id, channel, amount, balance_flow_id, dividend_flow_id, points_flow_id, external_no)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [orderId, pay.channel, amountCents / 100, balanceFlowId, dividendFlowId, pointsFlowId, pay.externalNo ?? gatewayTxnId]);
-        // V4.13.2：通道流水回填关联销售单（对账/追溯链路）
-        if (pay.gatewayOutTradeNo) {
-          await cx(c, `UPDATE pay_gateway_txns SET order_id=$1 WHERE out_trade_no=$2 AND order_id IS NULL AND store_id=$3`,
-            [orderId, String(pay.gatewayOutTradeNo).trim(), user.storeId]);
-        }
-        payLog.push({ channel: String(pay.channel), amount: amountCents / 100, externalNo: hqTicket ?? gatewayTxnId ?? pay.externalNo ?? null });
-        paidCents += amountCents;
-      }
-      // ── 4.9 支付合计 == 应收（RV-01：全程整数分累计，逐分比对零浮点误差） ──
-      const validSpend = validSpendCents / 100;
-      if (paidCents !== payableCents)
-        throw new BizException(50031, `支付合计(${paidCents / 100})与应收(${payableCents / 100})不一致`);
-
-      // ── 4.95 会员挂账落欠款（V4.18.3 P15 批2 §13.2 B2）：一笔挂账=一笔独立欠款，账期/原因留痕 ──
-      if (creditCents > 0 && dto.memberId) {
-        // V5.0.18 挂账单按实际回款日归属：含挂账金额的单 pay_paid_at 置空（日结等 COALESCE 回退创建日），
-        //   待销账全额结清时由 creditsSettle 回写 pay_paid_at=回款时刻 → 业务日跳到实际回款日。
-        await cx(c, `UPDATE sales_orders SET pay_paid_at=NULL WHERE id=$1`, [orderId]);
-        const dueDays = await this.settings.getNum('pos.credit.due_days', 30);
-        await cx(c,
-          `INSERT INTO member_credits (store_id, member_id, order_id, amount, due_date, reason, creator_id)
-           VALUES ($1,$2,$3,$4,(CURRENT_DATE + ($5::int)), $6, $7)`,
-          [user.storeId, dto.memberId, orderId, creditCents / 100, dueDays, dto.remark ?? null, operatorId]);
-        await audit(user.storeId, operatorId ?? user.sub, '收银', '会员挂账', 'sales_order', orderId,
-          { amount: creditCents / 100, dueDays });
-      }
-
-      // ── 5. 会员权益：积分（等级倍率 5.3）+ 有效消费窗口（V4.3.2 双门槛）+ 等级同步（5.1.12） ──
-      let levelResult: any = null;
-      let pointsEarned = 0;
-      if (dto.memberId) {
-        pointsEarned = Math.floor(payable * (levelCtx?.pointRate ?? 1));
-        const ms = await cx(c,
-          `UPDATE members SET points = points + $2, last_active_date = CURRENT_DATE, updated_at=now()
-            WHERE id=$1 RETURNING points`, [dto.memberId, pointsEarned]);
-        await cx(c,
-          `UPDATE member_accounts SET points = points + $2, updated_at=now() WHERE member_id=$1`,
-          [dto.memberId, pointsEarned]);
-        await cx(c,
-          `INSERT INTO points_flows (member_id, direction, points, biz_type, ref_type, ref_id, balance_after)
-           VALUES ($1,'加',$2,'消费','sale',$3,$4)`,
-          [dto.memberId, pointsEarned, orderId, Number(ms[0]?.points ?? 0)]);
-
-        const minSingle = await this.settings.getNum('dividend.min_single', 5);
-        const minWindow = await this.settings.getNum('dividend.min_window', 50);
-        const windowDays = await this.settings.getNum('dividend.window_days', 30);
-        if (validSpend >= minSingle) {
-          // 优先累加未达标的活跃窗口；同日已有窗口（含已达标）原地累加，避免唯一键冲突；
-          // 既无未达标窗口也无同日窗口时才开新窗口
-          const ws = await cx(c,
-            `SELECT * FROM member_activity_windows
-              WHERE member_id=$1 AND qualified=false AND window_start >= CURRENT_DATE - $2::int
-              ORDER BY id DESC LIMIT 1 FOR UPDATE`, [dto.memberId, windowDays]);
-          let win = ws.length ? ws[0] : null;
-          if (!win) {
-            const sameDay = await cx(c,
-              `SELECT * FROM member_activity_windows
-                WHERE member_id=$1 AND window_start=CURRENT_DATE FOR UPDATE`, [dto.memberId]);
-            win = sameDay.length ? sameDay[0] : null;
-          }
-          if (win) {
-            const valid = r2(Number(win.valid_total) + validSpend);
-            await cx(c,
-              `UPDATE member_activity_windows SET valid_total=$2, qualified = qualified OR $3,
-                      window_end = GREATEST(window_end, CURRENT_DATE), updated_at=now()
-                WHERE id=$1`, [win.id, valid, valid >= minWindow]);
-          } else {
-            await cx(c,
-              `INSERT INTO member_activity_windows (member_id, window_start, window_end, valid_total, qualified)
-               VALUES ($1, CURRENT_DATE, CURRENT_DATE + $2::int, $3, $4)`,
-              [dto.memberId, windowDays, validSpend, validSpend >= minWindow]);
-          }
-        }
-        // V5.0.17：消费成长值（仅非排除商品的现金实付部分；余额/分红/积分抵扣与券抵扣不计）
-        await memberGrowth.earnConsume(c, { memberId: Number(dto.memberId), orderId });
-        levelResult = await syncMemberLevel(c, dto.memberId);
-      }
-
-      // V4.14.1 消费后奖励：满阈值发购物券/登记赠品（事务内，失败不阻断收银）
-      let rewards: any[] = [];
-      if (dto.memberId) {
-        try { rewards = await grantPostCheckoutRewards(c, user.storeId, Number(dto.memberId), payable, orderId, user.sub); } catch { rewards = []; }
-      }
-
-      await audit(user.storeId, operatorId, '收银',
-        dto.isEmergency ? 'sale.checkout.emergency' : dto.selfCheckout ? 'sale.checkout.self' : 'sale.checkout',
-        'sales_order', orderId, { orderNo, payable, costTotal, profit, validSpend, levelDiscount: levelDiscountTotal,
-          promoAmount: promo.promoAmount, orderPromoId: promo.orderPromoId, channel: dto.channel || '收银台',
-          deliveryFee, tableId: tableId ?? undefined, tableName: tableName ?? undefined });
-
-      // 决策④：负库存挂起标记——软模式差额不再静默；negativeHold/pendingShortages 供收银端提示与盘点工作台拉取
-      const negLines = lines.filter((l: any) => l.shortage);
-
-      // ── 6. 上行入队（V5.0.0 批次4A）：与业务【同事务】，崩溃/断电也不丢数据（方案 §4.3.1）。
-      //    总部/单店节点（node_role='hq'）内部 no-op，sync_outbox 恒空 = 单店零回归。
-      //    队列表异常时让它抛出 → 与业务一起回滚（保持「业务成功 ⇔ 变更入队」原子性）。
-      let memberCard: string | null = null;
-      if (dto.memberId) {
-        const mc = await cx(c, `SELECT card_no FROM members WHERE id=$1`, [dto.memberId]);
-        memberCard = mc[0]?.card_no ?? null;
-      }
-      // 批次5（M5-5）：活跃窗口快照随单上行（分红资格判定窗口总部可见）
-      let windowSnap: any = null;
-      if (dto.memberId) {
-        windowSnap = (await cx(c,
-          `SELECT window_start, window_end, valid_total, qualified FROM member_activity_windows
-            WHERE member_id=$1 ORDER BY id DESC LIMIT 1`, [dto.memberId]))[0] ?? null;
-      }
-      // ── P2-2（§4.2 明细链补齐）：逐批出库明细随单上行（批次号跨库对齐，总部落 sync_sale_batches 对账）──
-      const batchIds = [...new Set(lines.flatMap((ln: any) => (ln.allocs ?? []).map((a: any) => Number(a.batchId))))].filter(Boolean);
-      const bnoMap = new Map<number, string>();
-      if (batchIds.length) {
-        for (const r of await cx(c, `SELECT id, batch_no FROM batches WHERE id = ANY($1::bigint[])`, [batchIds])) {
-          bnoMap.set(Number(r.id), String(r.batch_no));
-        }
-      }
-      await enqueueSync(c, 'sale_order', orderId, {
-        orderNo, channel: dto.channel || '收银台', payable, goodsAmount,
-        costAmount: costTotal, profit, roundAmount, orderDiscount: orderDiscountCents / 100,
-        deliveryFee, remark: dto.remark ?? null, isEmergency: !!dto.isEmergency,
-        memberCard, shiftNo: shiftId ?? null, createdAt: new Date().toISOString(),
-        pointsEarned, validSpend,   // 批次5（M5-5）：总部累加积分/total_consume（R4 连锁累计）
-        items: lines.map((ln: any) => ({
-          goodsNo: ln.p.goods_no, barcode: ln.p.barcode ?? '', name: ln.p.name,
-          unitName: ln.unitName, qty: ln.baseQty, unitPrice: ln.unitPrice,
-          lineAmount: ln.lineAmount, lineCost: ln.lineCost,
-          batches: (ln.allocs ?? []).map((a: any) => ({
-            batchNo: bnoMap.get(Number(a.batchId)) ?? '', qty: a.qty, unitCost: a.cost,
-          })).filter((x: any) => x.batchNo),
-        })),
-        payments: payLog,
+      // ── 2/3. 落单域：台位 + 单号/主单 + 券核销 + 明细/批次/库存 ──
+      //   （Q-01：拆至 sales.checkout.persist.ts，行为逐字保留；P-03 批量化落账随迁）
+      const { orderId, orderNo, tableId, tableName } = await persistCheckoutOrder({
+        c, user, dto, lines, goodsAmount, promo, couponAmount, payable, costTotal, profit,
+        levelDiscountTotal, roundAmount, shiftId, couponIdUsed, couponIdsUsed,
+        orderDiscountCents, deliveryFee, operatorId,
       });
-
-      return { orderId, orderNo, goodsAmount, promoAmount: promo.promoAmount, couponAmount, payable, costTotal, profit,
-               roundAmount, orderDiscount: orderDiscountCents / 100, shiftId, points: dto.memberId ? pointsEarned : 0, validSpend, level: levelResult, rewards,
-               tableId: tableId ?? undefined, tableName: tableName ?? undefined,
-               negativeHold: negLines.length > 0,
-               pendingShortages: negLines.map((l: any) => ({ productId: Number(l.p.id), name: l.p.name, qty: l.shortage.qty, basis: l.shortage.basis })) };
+      // ── 4. 支付 ──（Q-01：支付域拆至 sales.checkout.payments.ts，行为逐字保留；
+      //   creditCents 自赊账通道停用起恒 0、4.95 挂账块为死路径——原样随迁）
+      const { validSpendCents, creditCents, payLog } = await processCheckoutPayments({
+        c, user, dto, settings: this.settings, orderId, orderNo, payableCents, operatorId, hqDebits,
+      });
+      const validSpend = validSpendCents / 100;
+      // ── 5/6. 资产域：会员权益 + 消费后奖励 + 审计 + 负库存标记 + 上行入队 ──
+      //   （Q-01：拆至 sales.checkout.assets.ts，行为逐字保留；返回即 tx 闭包结果）
+      return await finalizeCheckoutAssets({
+        c, user, dto, settings: this.settings, orderId, orderNo, payable, validSpend,
+        levelDiscountTotal, promo, couponAmount, goodsAmount, costTotal, profit, roundAmount,
+        orderDiscountCents, deliveryFee, shiftId, operatorId, tableId, tableName,
+        lines, levelCtx, payLog,
+      });
     });
+    } catch (e: any) {
+      // L-04：本地事务回滚（本地无单）后，撤销已成功的总部扣款，避免 HQ 已扣而本地无单的资损
+      if (hqDebits.length) { try { await reverseHqDebits(hqDebits); } catch { /* 失败已记入 reverseHqDebits 内审计 */ } }
+      throw e;
+    }
     // V5.0.0 批次4A：事务已提交 → 事件触发门店节点立即上行（hq/单店节点内部 no-op）
     SyncStoreService.kick();
     return out;
@@ -1178,18 +609,25 @@ class SalesController {
 
   /* ═══════════ 配货拣货（6.11 拣货单：线上订单 → 扫码校验 → 缺货登记 → 完成） ═══════════ */
   @Get('picking')
-  async pickingList(@CurrentUser() user: AuthUser, @Query('status') status?: string) {
-    return q(
+  async pickingList(@CurrentUser() user: AuthUser,
+                    @Query('status') status?: string, @Query('page') page?: string, @Query('size') size?: string) {
+    const pageSize = Math.min(Math.max(Number(size) || 15, 1), 200);
+    const pg = Math.max(Number(page) || 1, 1);
+    const where = `WHERE o.store_id=$1 AND o.status='已完成'
+          AND o.channel IN ('小程序','H5','外卖','大客户团购')
+          AND ($2::text IS NULL OR o.picking_status = $2)`;
+    const params: any[] = [user.storeId, status || null];
+    const tot = await q1(`SELECT count(*)::int AS n FROM sales_orders o ${where}`, params);
+    const rows = await q(
       `SELECT o.id, o.order_no, o.channel, o.pickup_mode, o.created_at, o.picking_status,
               o.payable_amount, o.member_id,
               (SELECT count(*) FROM sale_items i WHERE i.order_id = o.id)::int AS item_count,
               m.name AS member_name, m.phone
          FROM sales_orders o LEFT JOIN members m ON m.id = o.member_id
-        WHERE o.store_id=$1 AND o.status='已完成'
-          AND o.channel IN ('小程序','H5','外卖','大客户团购')
-          AND ($2::text IS NULL OR o.picking_status = $2)
-        ORDER BY o.id DESC LIMIT 100`,
-      [user.storeId, status || null]);
+        ${where}
+        ORDER BY o.id DESC LIMIT $3 OFFSET $4`,
+      [...params, pageSize, (pg - 1) * pageSize]);
+    return { items: rows, total: Number(tot?.n || 0), page: pg, size: pageSize };
   }
 
   @Get('picking/:id')

@@ -65,6 +65,7 @@ export async function render(view) {
           <div class="fld" style="flex:none"><label>审核状态</label><span class="seg" id="qStat" style="display:flex;gap:2px;flex-wrap:nowrap">
             <button class="btn sm segbtn" data-v="未审核">未审核</button>
             <button class="btn sm segbtn" data-v="已审核">已审核</button>
+            <button class="btn sm segbtn" data-v="已驳回">已驳回</button>
             <button class="btn sm segbtn" data-v="已作废">已作废</button>
             <button class="btn sm segbtn on" data-v="">全部</button></span></div>
           <div class="fld" style="flex:1;min-width:0"><label>&nbsp;</label><span style="display:flex;gap:6px;flex-wrap:nowrap;justify-content:flex-end">
@@ -125,7 +126,7 @@ export async function render(view) {
   view.querySelector('#qPrints').onclick = () => { if (inPrSel.size) openA5Print('inbound', [...inPrSel]); };
   // V4.15.1 入库单列表每页 15 条分页
   const IB_SIZE = 15;
-  let ibRows = [], ibPage = 1, ibPages = 1;
+  let ibRows = [], ibPage = 1, ibPages = 1, ibTotal = 0;
   let detailId = 0;
 
   /* ── 分页式：列表页 ⇄ 新增页 ── */
@@ -374,10 +375,10 @@ export async function render(view) {
   let qStatus = '';
   view.querySelectorAll('#qStat .segbtn').forEach(b => b.onclick = () => {
     view.querySelectorAll('#qStat .segbtn').forEach(x => x.classList.remove('on'));
-    b.classList.add('on'); qStatus = b.dataset.v; loadList();
+    b.classList.add('on'); qStatus = b.dataset.v; loadList(1);
   });
-  view.querySelector('#qGo').onclick = loadList;
-  view.querySelector('#qRefresh').onclick = loadList;
+  view.querySelector('#qGo').onclick = () => loadList(1);
+  view.querySelector('#qRefresh').onclick = () => loadList(ibPage);
   view.querySelector('#qBatch').onclick = async () => {
     const ids = [...view.querySelectorAll('[data-chk]:checked')].filter(c => c.dataset.auditable === '1').map(c => c.dataset.chk);
     if (!ids.length) return toast('请勾选未审核的入库单', false);
@@ -426,12 +427,13 @@ export async function render(view) {
       : '';
     view.querySelector('#inMeta').innerHTML = `
       供应商：<b>${esc(o.supplier_name || '无')}</b>　
-      状态：<span class="tag ${o.status === '已审核' ? 'g' : o.status === '已作废' ? 'r' : 'y'}">${esc(o.status || '无')}</span>　
+      状态：<span class="tag ${o.status === '已审核' ? 'g' : (o.status === '已作废' || o.status === '已驳回') ? 'r' : 'y'}">${esc(o.status || '无')}</span>　
       制单人：${esc(o.maker_name || '无')}　
       日期：${(o.created_at || '').slice(0, 10) || '无'}　
       大批次：<span class="mono">${esc(o.inbound_no || '无')}</span>　
       关联采购订单：${o.po_no ? `<span class="mono">${esc(o.po_no)}</span>` : '无'}
-      ${opSignHtml}${bizSignHtml}`;
+      ${opSignHtml}${bizSignHtml}
+      ${o.status === '已驳回' && o.reject_reason ? `<div style="margin-top:6px;color:var(--err)">✖ 驳回原因：${esc(o.reject_reason)}</div>` : ''}`;
     view.querySelector('#inItems').innerHTML = its.length ? `
       <table><thead><tr><th class="seq">序号</th><th>条码</th><th>商品</th><th>单位</th><th class="num">数量</th>
         <th class="num">进价</th><th class="num">售价</th><th>生产日期</th><th>批次</th><th class="num">进货金额</th></tr></thead>
@@ -448,8 +450,15 @@ export async function render(view) {
     // V5.0.3：弹窗内直接审核 / 作废（未审核→审核+作废；其余可审核状态→作废）
     const acts = [];
     if (o.status === '未审核') acts.push(`<button class="btn pri" id="inAudit">✓ 审核</button>`);
+    if (o.status === '已驳回') acts.push(`<button class="btn pri" id="inReopen">✏️ 重开为未审核</button>`);
     if (o.status && o.status !== '已作废') acts.push(`<button class="btn warn" id="inVoid">✖ 作废</button>`);
     view.querySelector('#inActs').innerHTML = acts.join('');
+    const reopenBtn = view.querySelector('#inReopen');
+    if (reopenBtn) reopenBtn.onclick = async () => {
+      await must(post(`/purchase/inbounds/${detailId}/reopen`, {}), '单据已重开为「未审核」，可修改明细后重新提审');
+      loadList();
+      openDetail(detailId);
+    };
     const auditBtn = view.querySelector('#inAudit');
     if (auditBtn) auditBtn.onclick = async () => {
       await must(post(`/purchase/inbounds/${detailId}/audit`), '审核通过，批次已生成');
@@ -475,26 +484,26 @@ export async function render(view) {
     openA5Print('inbound', [detailId]);
   };
 
-  async function loadList() {
-    const d = await must(get('/purchase/inbounds?size=100'));
-    const allRows = d.items || d || [];
+  async function loadList(page = 1) {
     // V4.9.7 供应商改输入匹配：按名称模糊过滤（含未输完整名）
     const supName = view.querySelector('#qSup').value.trim();
     const supHit = supName ? supList.find(x => x.name === supName)
       || supList.find(x => (x.name || '').includes(supName) || supName.includes(x.name || '')) : null;
     const sup = supHit ? String(supHit.id) : '';
     const from = view.querySelector('#qFrom').value, to = view.querySelector('#qTo').value;
-    const rows = allRows.filter(r => {
-      if (qStatus && r.status !== qStatus) return false;
-      if (sup && String(r.supplier_id ?? r.supplierId ?? '') !== sup) return false;
-      const day = (r.created_at || r.createdAt || '').slice(0, 10);
-      if (from && day < from) return false;
-      if (to && day > to) return false;
-      return true;
-    });
-    const sum = rows.reduce((s, r) => s + (Number(r.total_amount ?? r.totalAmount) || 0), 0);
+    // V5.0.18g：服务端分页——筛选条件下推 SQL + page/size 翻页，任意历史单据均可查询（无窗口上限）；
+    // total/合计由后端按同条件聚合返回
+    const qs = new URLSearchParams({ page: String(page), size: String(IB_SIZE) });
+    if (qStatus) qs.set('status', qStatus);
+    if (sup) qs.set('supplierId', sup);
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    const d = await must(get('/purchase/inbounds?' + qs.toString()));
+    const rows = (d.items || d || []);
+    ibTotal = Number(d.total ?? rows.length);
+    const sum = Number(d.sumAmount ?? 0);
     view.querySelector('#qSum').textContent = fmt(sum);
-    view.querySelector('#qCount').textContent = `共 ${rows.length} 张单据`;
+    view.querySelector('#qCount').textContent = `共 ${ibTotal} 张单据`;
     // V4.15.1：全选态只看「可勾选（未审核/已作废）」的行——原来 all rows 全是不可删时也判 true，表头复选框恒勾且取消无效
     const deligible = rows.filter(b => b.status === '未审核' || b.status === '已作废');
     // V4.26.2 合并为一列后，回显条件与勾选范围一致（原来只统计「可删行」，本页全是已审核单时
@@ -503,9 +512,9 @@ export async function render(view) {
     void deligible;
     // V4.15.1：每页 15 条本地分页（原 size=100 一页铺全量）
     ibRows = rows;
-    ibPages = Math.max(Math.ceil(rows.length / IB_SIZE), 1);
+    ibPages = Math.max(Math.ceil(ibTotal / IB_SIZE), 1);
     if (ibPage > ibPages) ibPage = ibPages;
-    const pageRows = rows.slice((ibPage - 1) * IB_SIZE, ibPage * IB_SIZE);
+    const pageRows = rows;   // V5.0.18g：服务端分页，rows 即当前页
     view.querySelector('#iList').innerHTML = rows.length ? `
       ${docTable({
         cols: [
@@ -530,7 +539,7 @@ export async function render(view) {
               { h: Math.round(Number(b.total_qty ?? 0)), cls: 'num' },
               { h: money(b.total_amount ?? b.totalAmount), cls: 'num' },
               { h: esc(b.inbound_no || b.inboundNo || '—'), cls: 'mono', style: 'font-size:12px' },
-              `<span class="tag ${b.status === '已审核' ? 'g' : b.status === '已作废' ? 'r' : 'y'}">${esc(b.status)}</span>`,
+              `<span class="tag ${b.status === '已审核' ? 'g' : (b.status === '已作废' || b.status === '已驳回') ? 'r' : 'y'}" ${b.status === '已驳回' && b.reject_reason ? `title="驳回原因：${esc(b.reject_reason)}"` : ''}>${esc(b.status)}</span>`,
               dt(b.created_at || b.createdAt),
               `<td style="white-space:nowrap">
           ${b.status === '未审核' ? `<button class="btn sm pri" data-audit="${b.id}">✓ 审核</button>` : ''}
@@ -542,7 +551,7 @@ export async function render(view) {
       })}`
       + pagerBar({ page: ibPage, pages: ibPages, total: rows.length, size: IB_SIZE, unit: '张' })
       : '<div class="empty">无符合条件的入库单</div>';
-    bindPager(view.querySelector('#iList'), p => { ibPage = p; loadList(); });
+    bindPager(view.querySelector('#iList'), p => { ibPage = p; loadList(p); });
     // V4.9.6 双击行任意处打开明细；表头复选框全选/取消全选
     view.querySelectorAll('[data-in]').forEach(tr => tr.ondblclick = () => openDetail(tr.dataset.in));
     const chkAll = view.querySelector('#iChkAll');

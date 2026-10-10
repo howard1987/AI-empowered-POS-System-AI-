@@ -797,7 +797,13 @@ export async function render(view) {
   }
   // V4.9.7 ➕添加行（费用单空表一键加行）
   view.querySelector('#feeAdd').onclick = () => { feeLines.push({ feeName: '', feeTypeId: '', direction: '', amount: '', remark: '' }); drawFeeLines(); };
+  let feeGoInFlight = false;
   view.querySelector('#feeGo').onclick = async () => {
+    if (feeGoInFlight) return;           // F-04：在飞守卫，防双击重复保存费用行
+    feeGoInFlight = true;
+    const feeBtn = view.querySelector('#feeGo');
+    if (feeBtn) feeBtn.disabled = true;
+    try {
     const rows = feeLines.filter(l => (l.feeTypeId || (l.feeName || '').trim()) && Number(l.amount) > 0);
     if (!rows.length) return toast('无有效费用行（需费用项+金额>0）', false);
     if (!curSup) return toast('页头先选供应商', false);
@@ -818,6 +824,10 @@ export async function render(view) {
     feeLines.length = 0;
     drawFeeLines();
     await feeCards();
+    } finally {
+      feeGoInFlight = false;
+      if (feeBtn) feeBtn.disabled = false;
+    }
   };
 
   /* ── 费用协议 / 费用单列表 ── */

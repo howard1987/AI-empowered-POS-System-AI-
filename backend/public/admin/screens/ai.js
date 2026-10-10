@@ -99,7 +99,7 @@ export async function render(view) {
   };
 
   async function tasks() {
-    const rows = await must(get('/ai/orders'));
+    const rows = await must(get('/ai/orders?size=500'));   // V5.0.18g：工单列表不再被默认 100 截断
     const arr = rows.items || rows || [];
     view.querySelector('#tList').innerHTML = arr.length ? `
       <table><thead><tr><th class="seq">序号</th><th>工单号</th><th>类型</th><th>状态</th><th>预检</th><th class="num">样本(总/待审/入库/不合格)</th><th class="num">目标</th><th>创建人</th><th>创建时间</th><th>操作</th></tr></thead>

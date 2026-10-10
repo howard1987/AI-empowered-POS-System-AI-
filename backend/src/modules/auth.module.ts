@@ -725,8 +725,9 @@ class AuthService {
     const hasPerm = superAdmin || (await hasPermCode(emp.id, 'pos.price.authorize'));
     if (!hasPerm) throw new BizException(41022, '该工号无改价/折扣授权资格（需店长级权限）', 403);
     if (!bcrypt.compareSync(String(authCode), emp.auth_code_hash)) throw new BizException(41023, '授权码不正确', 401);
+    // S-08：票据带 jti（一次性消费标记），结账时落 auth_ticket_used 防窗口内重放
     const ticket = jwt.sign(
-      { sub: Number(emp.id), empNo: emp.emp_no, name: emp.name, scope: 'price' },
+      { sub: Number(emp.id), empNo: emp.emp_no, name: emp.name, scope: 'price', jti: crypto.randomUUID() },
       JWT_SECRET, { expiresIn: 120 });
     await audit(Number(emp.store_id), Number(emp.id), '收银', 'auth.price_authorize', 'employee', Number(emp.id),
       { by: `${emp.emp_no}(${emp.name})` });
@@ -740,7 +741,7 @@ class AuthService {
     const hasPerm = superAdmin || (await hasPermCode(user.sub, 'pos.price.authorize'));
     if (!hasPerm) throw new BizException(41022, '当前账号无改价/折扣授权资格（需店长级权限）', 403);
     const ticket = jwt.sign(
-      { sub: Number(user.sub), empNo: user.empNo, name: user.name, scope: 'price' },
+      { sub: Number(user.sub), empNo: user.empNo, name: user.name, scope: 'price', jti: crypto.randomUUID() },
       JWT_SECRET, { expiresIn: 120 });
     await audit(user.storeId, Number(user.sub), '收银', 'auth.price_authorize_self', 'employee', Number(user.sub),
       { by: `${user.empNo}(${user.name})`, via: 'self' });
@@ -755,6 +756,19 @@ const EMP_DELETE_GRACE_DAYS = 90;
 @Controller('auth')
 class AuthController {
   private svc = new AuthService();
+
+  /** V5.0.19h（F-05）：签发短时图片访问票据（60s，scope:img）。
+   *  背景：<img src="/uploads/..."> 无法带 Authorization 头，旧实现把长效 12h 员工 JWT 拼进 ?token=，
+   *  一旦被 access log/Referer/历史记录捕获即可长期冒用。改用 60s 短时票据：
+   *  ①泄露窗口 12h→60s；②scope:img 仅图片中间件接受，不能调业务接口。
+   *  前端 imgUrl 改为取本票据拼 ?token=，登录后预取 + 定时刷新（见 admin/api.js）。 */
+  @Post('img-ticket')
+  async imgTicket(@CurrentUser() user: AuthUser) {
+    const ticket = jwt.sign(
+      { sub: Number(user.sub), empNo: user.empNo, name: user.name, kind: 'employee', scope: 'img' },
+      JWT_SECRET, { expiresIn: 60 });
+    return { ticket, expiresIn: 60 };
+  }
 
   /** V5.0.18g：删除员工——停用满 90 天冷静期后方可。
    *  无任何业务记录 → 物理删除；有业务记录 → 「注销归档」：全量快照入 employee_delete_archive，
@@ -810,7 +824,7 @@ class AuthController {
           `INSERT INTO employee_delete_archive (store_id, emp_no, name, snapshot, archived_by) VALUES ($1,$2,$3,$4,$5)`,
           [emp.store_id, emp.emp_no, emp.name, JSON.stringify(snapshot), user?.sub ?? null]);
         await c.query(
-          `UPDATE employees SET status='已注销', password_hash=NULL, phone=NULL, auth_code_hash=NULL, updated_at=now() WHERE id=$1`, [eid]);
+          `UPDATE employees SET status='已注销', token_version=COALESCE(token_version,0)+1, password_hash=NULL, phone=NULL, auth_code_hash=NULL, updated_at=now() WHERE id=$1`, [eid]);
       });
     }
     clearAuthStateCache(eid); // 注销/删除后 60s 守卫缓存立即失效
@@ -1092,7 +1106,7 @@ class AuthController {
   ) {
     if (!['在职', '停用'].includes(body.status)) throw new BizException(40003, '状态仅支持 在职/停用');
     // V5.0.18g：停用写 disabled_at（90 天删除冷静期起点）；复职清空
-    const r = await q1(`UPDATE employees SET status=$2,
+    const r = await q1(`UPDATE employees SET status=$2, token_version=COALESCE(token_version,0)+1,
         disabled_at = CASE WHEN $2='停用' THEN now() ELSE NULL END, updated_at=now()
       WHERE id=$1 AND store_id=$3 RETURNING id`, [id, body.status, user.storeId]);
     if (!r) throw new BizException(41004, '员工不存在', 404);

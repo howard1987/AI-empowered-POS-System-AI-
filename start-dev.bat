@@ -22,10 +22,10 @@ echo ============================================
 echo.
 
 REM ----------------------------------------------------------------------
-REM PostgreSQL: 只由稳定的 Windows 服务 pos-cashier-pg 提供
-REM   服务以 LocalService 运行，不受本机 UAC/管理员令牌影响，且不会弹出
-REM   控制台窗口 —— 彻底规避旧 watchdog 误判 PG 已死、每分钟重启 postgres
-REM   导致的「闪 cmd 弹窗」风暴。
+REM PostgreSQL is provided ONLY by the stable Windows service pos-cashier-pg.
+REM The service runs as LocalService, unaffected by UAC/admin tokens, and does
+REM not pop a console window -- this avoids the old watchdog wrongly thinking
+REM PG is dead and restarting postgres every minute (the "cmd flash" storm).
 REM ----------------------------------------------------------------------
 powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Get-Service -Name 'pos-cashier-pg' -ErrorAction SilentlyContinue) { 'YES' }" 2>nul | findstr /i "YES" >nul
 if errorlevel 1 (
@@ -40,9 +40,11 @@ if errorlevel 1 (
 )
 
 REM ----------------------------------------------------------------------
-REM 后端/Web/H5 由轻量隐藏启动器 dev-launch.mjs 接管
-REM   detached + windowsHide → 无可见窗口、不管理 PG、不会触发重启风暴。
-REM   dev-launch 自身按端口探活，重复运行也不会重复拉起子服务。
+REM Backend / Web / H5 are taken over by a lightweight hidden launcher,
+REM dev-launch.mjs. It uses detached + windowsHide so there is no visible
+REM window, it does not manage PG, and it will not trigger a restart storm.
+REM dev-launch probes by port, so running this script repeatedly will not
+REM start duplicate child services.
 REM ----------------------------------------------------------------------
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%launch-dev.ps1"
 

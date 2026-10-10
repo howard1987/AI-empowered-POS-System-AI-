@@ -7,7 +7,8 @@ const API = {
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const money = n => Number(n ?? 0).toFixed(2);
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// V5.0.19i（F-08）：补单引号转义（与 admin/pwa/boss 的 esc 对齐；属性值拼接防绕过）
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 async function call(method, path, body) {
   const res = await fetch(API.base + path, {
@@ -454,7 +455,8 @@ function madd(p) {
   const id = Number(p.id);
   if (mallStock(p) <= 0 && Number(p.trackInventory) === 1) return toast('该商品暂时缺货');
   const hit = MCART.get(id);
-  MCART.set(id, { p, qty: (hit ? hit.qty : 0) + 1 });
+  // V5.0.19i（F-08）：数量上界 9999（原无上界，连点可造天文数字提交）
+  MCART.set(id, { p, qty: Math.min((hit ? hit.qty : 0) + 1, 9999) });
   renderMBar();
 }
 

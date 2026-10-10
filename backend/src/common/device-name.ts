@@ -44,11 +44,18 @@ export function detectDeviceName(ua: string, type?: string): string {
   if (/\biPod\b/i.test(s)) return 'iPod';
 
   // ── 安卓：Android 13; V2309A Build/xxx   或   Android 13; V2309A
+  // V5.0.19i：HeyTapBrowser（OPPO 自带浏览器）UA 是「Android 13; zh-cn; PHJ110 Build/…」——
+  // locale 段（zh-cn）插在机型位之前，首段捕获会误返回 "zh-cn"。命中 locale 形态时跳过它取下一段。
   const am = s.match(/Android[^;)]*;\s*([^;)]+?)(?:\s+Build\/|\s*\)|;)/i);
   if (am) {
     let model = am[1].trim();
     // 某些定制 UA 在 ; 后跟的是 Linux/代号，抓到它反而比空着更糟
     if (/^(Linux|KO|WE|OPM|MMB|AOSP)/i.test(model)) model = '';
+    // locale 段（zh-cn / en-us / zh-hans-cn 等）不是机型：向后找 Build 前的下一个分号段
+    if (/^[a-z]{2,3}(-[a-z]{2,6})*$/i.test(model)) {
+      const m2 = s.match(new RegExp(';\\s*' + model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ';\\s*([^;)]+?)(?:\\s+Build\\/|;|\\))', 'i'));
+      model = m2 ? m2[1].trim() : '';
+    }
     if (model) {
       for (const [re, brand] of BRAND_PREFIX) {
         if (re.test(model)) return brand + ' ' + model;

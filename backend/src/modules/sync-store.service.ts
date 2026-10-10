@@ -172,11 +172,11 @@ export class SyncStoreService implements OnModuleInit, OnModuleDestroy {
                   WHERE idem_key=$1 AND status IN ('pending','failed')`, [key]);
       }
       for (const rj of rejected) {
-        await q(`UPDATE sync_outbox SET status='failed', last_error=$2,
+        await q(`UPDATE sync_outbox SET last_error=$2,
                    retry = retry + 1,
                    next_retry_at = now() + (CASE WHEN retry + 1 >= $3 THEN NULL
                      ELSE make_interval(secs => $4) END),
-                   status = CASE WHEN retry + 1 >= $3 THEN 'dead' ELSE status END
+                   status = CASE WHEN retry + 1 >= $3 THEN 'dead' ELSE 'failed' END
                  WHERE idem_key=$1`, [rj.idemKey, String(rj.reason ?? 'rejected').slice(0, 500), MAX_RETRY,
                    BACKOFF_SEC[Math.min(rejected.length ? 0 : 0, BACKOFF_SEC.length - 1)]]);
       }
@@ -184,10 +184,10 @@ export class SyncStoreService implements OnModuleInit, OnModuleDestroy {
       const answered = new Set([...accepted, ...rejected.map(r => r.idemKey)]);
       for (const b of batch) {
         if (!answered.has(b.idem_key)) {
-          await q(`UPDATE sync_outbox SET status='failed', last_error='总部未应答',
+          await q(`UPDATE sync_outbox SET last_error='总部未应答',
                      retry = retry + 1,
                      next_retry_at = now() + make_interval(secs => $2),
-                     status = CASE WHEN retry + 1 >= $3 THEN 'dead' ELSE status END
+                     status = CASE WHEN retry + 1 >= $3 THEN 'dead' ELSE 'failed' END
                    WHERE id=$1`, [b.id, BACKOFF_SEC[Math.min(Number(b.retry), BACKOFF_SEC.length - 1)], MAX_RETRY]);
         }
       }
@@ -197,10 +197,10 @@ export class SyncStoreService implements OnModuleInit, OnModuleDestroy {
     } catch (e: any) {
       // 整批网络失败：全部推迟
       for (const b of batch) {
-        await q(`UPDATE sync_outbox SET status='failed', last_error=$2,
+        await q(`UPDATE sync_outbox SET last_error=$2,
                    retry = retry + 1,
                    next_retry_at = now() + make_interval(secs => $3),
-                   status = CASE WHEN retry + 1 >= $4 THEN 'dead' ELSE status END
+                   status = CASE WHEN retry + 1 >= $4 THEN 'dead' ELSE 'failed' END
                  WHERE id=$1`, [b.id, String(e?.message ?? e).slice(0, 500),
                  BACKOFF_SEC[Math.min(Number(b.retry), BACKOFF_SEC.length - 1)], MAX_RETRY]).catch(() => {});
       }
@@ -223,15 +223,21 @@ export class SyncStoreService implements OnModuleInit, OnModuleDestroy {
     const d = j?.data ?? j;
     if (!res.ok || !d) throw new Error(`pull HTTP ${res.status}`);
     const changes: any[] = d.changes ?? [];
+    // L-08 修复：水位只推进到「连续成功前缀」——绝不因后续高版本成功而跳过中间失败版本
+    // （否则失败版本被永久跳过、主数据静默漂移）。失败版本已落入 sync_inbox(status='failed') 等待重放。
+    changes.sort((a: any, b: any) => Number(a.version) - Number(b.version)); // 保证升序，连续前缀才有意义
     let applied = 0, failed = 0;
-    let maxVer = since;
+    let contigVer = since;   // 连续成功前缀水位（一旦出现缺口即停止推进）
+    let gap = false;
     for (const ch of changes) {
+      const v = Number(ch.version);
       try {
         await this.applyChange(ch);
         applied++;
-        maxVer = Math.max(maxVer, Number(ch.version));
+        if (!gap) contigVer = v;   // 仅未出现缺口时推进；缺口之后的成功不再抬高水位
       } catch (e: any) {
         failed++;
+        gap = true;
         await q(`INSERT INTO sync_inbox (from_node, entity, entity_id, op, payload, version, idem_key, status, last_error)
                  VALUES ('HQ',$1,$2,$3,$4::jsonb,$5,$6,'failed',$7)
                  ON CONFLICT (idem_key) DO UPDATE SET last_error=EXCLUDED.last_error, status='failed'`,
@@ -239,19 +245,22 @@ export class SyncStoreService implements OnModuleInit, OnModuleDestroy {
            ch.version, ch.idemKey ?? `HQ:${ch.version}`, String(e?.message ?? e).slice(0, 500)]).catch(() => {});
       }
     }
-    if (maxVer > since) {
+    if (contigVer > since) {
       await q(`UPDATE sync_nodes SET in_version=$2, last_ok_at=now(), last_seen_at=now()
-                WHERE node_code=$1 AND is_self`, [id.nodeCode, maxVer]);
+                WHERE node_code=$1 AND is_self`, [id.nodeCode, contigVer]);
+    }
+    if (gap && failed > 0) {
+      console.warn(`[sync] 下行存在失败版本（${failed} 条）已落入重放队列，水位停在 ${contigVer}（未跳过任何失败版本）；请排查 sync_inbox status='failed'`);
     }
     if (changes.length) {
       await fetch(`${id.hqBase!.replace(/\/$/, '')}/sync/pull/ack`, {
         method: 'POST', headers: this.headers(id),
-        body: JSON.stringify({ nodeCode: id.nodeCode, version: maxVer }),
+        body: JSON.stringify({ nodeCode: id.nodeCode, version: contigVer }),  // ack 用连续前缀，HQ 才会重发缺口版本
         signal: AbortSignal.timeout(15_000),
       }).catch(() => {});
       await q(`INSERT INTO sync_runs (node_code, direction, ended_at, sent, recv, failed, duration_ms, msg)
                VALUES ($1,'pull',now(),0,$2,$3,$4,$5)`,
-        [id.nodeCode, applied, failed, Date.now() - t0, `since=${since} → ${maxVer}`]).catch(() => {});
+        [id.nodeCode, applied, failed, Date.now() - t0, `since=${since} → ${contigVer}${gap ? ' (缺口:' + failed + ')' : ''}`]).catch(() => {});
     }
   }
 

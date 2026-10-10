@@ -312,6 +312,27 @@ app.whenReady().then(() => {
   session.defaultSession.on('select-usb-device', (_event, devices, callback) => {
     callback(devices && devices.length ? devices[0].deviceId : '');
   });
+  // V5.0.19h（F-06）源锁定：仅放行「配置服务器 origin」下的远程资源 + 本地 file/data/blob/浏览器内部协议，
+  // 其余一律 cancel。mitmproxy 类「劫持内网 HTTP 注入脚本」在此被拦（非白名单源不加载）。
+  // 注意：白名单派生自 DESKTOP_CFG.server（用户配置的后端地址），ws/wss 同 host:port 一并放行（客显 SSE）。
+  {
+    const srv = String(DESKTOP_CFG.server || '').trim();
+    if (srv) {
+      let allowed = '', wsAllowed = '';
+      try { allowed = new URL(/^https?:\/\//.test(srv) ? srv : 'http://' + srv).origin; wsAllowed = allowed.replace(/^http/, 'ws'); } catch { /* 格式异常（向导未配齐）→ 不设源锁，避免误伤 */ }
+      if (allowed) {
+        session.defaultSession.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, cb) => {
+          const u = details.url;
+          if (u.startsWith(allowed) || u.startsWith(wsAllowed)
+              || u.startsWith('file://') || u.startsWith('data:')
+              || u.startsWith('blob:') || u.startsWith('chrome') || u.startsWith('about:')) return cb({});
+          console.error('[源锁定] 拦截非白名单请求:', u.slice(0, 160));
+          cb({ cancel: true });
+        });
+        console.log('[安全] 源锁定白名单 origin =', allowed);
+      }
+    }
+  }
   // V4.22.1：首次启动先弹服务器配置向导（无配置文件且未设 POS_SERVER）；否则探活后进收银台
   if (DESKTOP_CFG.ui === 'pwa' && !hasConfigFile() && !process.env.POS_SERVER) openSetup();
   else startCashier();
@@ -487,7 +508,12 @@ ipcMain.handle('pos:peripherals', () => ({
 }));
 ipcMain.on('pos:scan-feed', (_e, code) => scanner.feed(code));       // keyboard 模式由渲染层喂入
 ipcMain.on('pos:scale-feed', (_e, kg) => scale.feedMock(kg));
-ipcMain.on('pos:scanner-event', (_e, code) => mainWindow.webContents.send('pos:scan', code));
+ipcMain.on('pos:scanner-event', (_e, code) => {
+  // V5.0.19h（F-06）：主窗可能已销毁（关闭竞态/重启壳形态）—— 直接访问 webContents 会抛
+  // 「Object has been destroyed」致主进程崩溃。与项目其余 20+ 处访问 mainWindow 一致加守卫。
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('pos:scan', code);
+});
 
 // ─── IPC：小票打印（58/80） ───
 ipcMain.handle('pos:print-receipt', async (_e, { order, widthMm }) => {
@@ -528,9 +554,28 @@ ipcMain.handle('pos:print-a5', async (_e, { doc, fields }) => {
 });
 
 // ─── IPC：V4.20.0 P16 通用 HTML 静默打印（PWA 小票/交接单/日报共用；隐藏窗口 silent，无预览弹窗） ───
+// V5.0.19h（F-06）加固：① 内容 CSP（禁外联脚本/只放 inline style+data: 图）② 尺寸上界（防超大/伪装 HTML 撑爆渲染）③ 失败留日志
+const PRINT_HTML_MAX = 512 * 1024;   // 512KB：单张 80mm 热敏小票通常 < 8KB，A5 单据 < 64KB，留足余量又挡异常
+/** 把任意 HTML 片段/文档包进带 CSP 的安全外壳（已有完整文档结构的注入到 head，否则包装） */
+function sanitizePrintHtml(raw) {
+  const html = String(raw || '');
+  const csp = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:;">';
+  // 已是完整文档 → 在 <head> 后注入 CSP（若无 head 则紧接 <html> 后）
+  if (/<html[\s>]/i.test(html)) {
+    if (/<head[\s>]/i.test(html)) return html.replace(/(<head[^>]*>)/i, '$1' + csp);
+    return html.replace(/(<html[^>]*>)/i, '$1<head>' + csp + '</head>');
+  }
+  return '<!DOCTYPE html><html><head><meta charset="utf-8">' + csp + '</head><body>' + html + '</body></html>';
+}
 ipcMain.handle('pos:print-html', async (_e, { html, widthMm }) => {
+  const raw = String(html || '');
+  if (raw.length > PRINT_HTML_MAX) {
+    const reason = 'print-html 内容超尺寸上界（' + raw.length + ' > ' + PRINT_HTML_MAX + ' 字节，已拒绝打印）';
+    console.error('[print-html]', reason);
+    return { ok: false, reason };
+  }
   const w = ensurePrintWindow();
-  await w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(String(html || '')));
+  await w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(sanitizePrintHtml(raw)));
   const wmm = Number(widthMm) || 80;
   const margin = wmm <= 58 ? 0.12 : 0.16;   // 热敏小票窄边距（英寸）
   return new Promise(resolve => {
@@ -538,6 +583,9 @@ ipcMain.handle('pos:print-html', async (_e, { html, widthMm }) => {
       { silent: true, printBackground: true,
         margins: { marginType: 'custom', top: margin, bottom: margin, left: margin, right: margin },
         pageSize: { width: wmm * 1000, height: 297 * 1000 } },   // 微米：80mm→80000
-      (success, reason) => resolve({ ok: success, reason }));
+      (success, reason) => {
+        if (!success) console.error('[print-html] 打印失败:', String(reason || '').slice(0, 200), '（内容 ' + raw.length + ' 字节）');
+        resolve({ ok: success, reason });
+      });
   });
 });

@@ -10,8 +10,10 @@
 import { Body, Controller, Delete, Get, Module, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { BizException } from '../common/http';
-import { q, q1, r2, tx, audit, seqLock } from '../common/db';
+import { q, q1, r2, tx, audit, seqLock, cx } from '../common/db';   // V5.0.19i（Q-03）：cx 统一取自 common/db
+import { sizeOf, pageOf } from '../common/paging';   // V5.0.19i（Q-07）：分页钳制统一
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { readFile } from 'fs/promises';
 import { join, basename } from 'path';
 import { runDetection, clearSessionCache, prewarmModels } from './ai.detect';
 import { matchSamples } from './ai.sample-match';
@@ -25,8 +27,6 @@ import { AiModelsController } from './ai.models';
 import { AiOcrController, AiSignatureController } from './ai.ocr';
 import { uploadsFilePath, saveUploadImage, isRealImage } from '../common/uploads';
 import { scheduleFrameCleanup } from './ai.housekeeping';
-
-const cx = (c: any, sql: string, params: any[] = []) => c.query(sql, params).then((r: any) => r.rows);
 
 /** dHash 样本库比对（识别链路两条分支共用：mock/sample 引擎分支 + VL 失败降级分支）。
  *  V5.0.6 收敛：原两处 10 行 SQL + 映射完全重复。 */
@@ -578,8 +578,7 @@ export class AiController {
     const targetCount = productIds.length ? productIds.length : (b.targetCount ?? null);
     return tx(async c => {
       const ymd = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '');
-      await seqLock(c, 'ai_tasks', 'task_no', `${prefix}${ymd}-%`);
-      const seq = await cx(c, `SELECT count(*)+1 AS n FROM ai_tasks WHERE task_no LIKE $1`, [`${prefix}${ymd}-%`]);
+      const seq = await seqLock(c, 'ai_tasks', 'task_no', `${prefix}${ymd}-%`);
       const taskNo = `${prefix}${ymd}-${String(seq[0].n).padStart(4, '0')}`;
       const rows = await cx(c,
         `INSERT INTO ai_tasks (store_id, task_type, task_no, scope, target_count, assigned_to, created_by, remark)
@@ -590,10 +589,13 @@ export class AiController {
     });
   }
 
-  /** 任务列表（V4.14.1：带商品维度进度 totalProducts/doneProducts，目标样本数=采集商品数量） */
+  /** 任务列表（V4.14.1：带商品维度进度 totalProducts/doneProducts，目标样本数=采集商品数量；V5.0.18g：服务端分页） */
   @Get('tasks')
-  tasks(@CurrentUser() user: AuthUser) {
-    return q(
+  async tasks(@CurrentUser() user: AuthUser, @Query('page') page?: string, @Query('size') size?: string) {
+    const pageSize = sizeOf(size, 15, 200);   // V5.0.19i（Q-07）parsePaging 统一钳制
+    const pg = pageOf(page);
+    const tot = await q1(`SELECT count(*)::int AS n FROM ai_tasks WHERE store_id=$1`, [user.storeId]);
+    const rows = await q(
       `SELECT t.*,
               CASE WHEN t.scope ? 'productIds' AND jsonb_array_length(t.scope->'productIds') > 0
                    THEN jsonb_array_length(t.scope->'productIds') END AS total_products,
@@ -603,7 +605,8 @@ export class AiController {
                    AND s.product_id = ANY (ARRAY(SELECT jsonb_array_elements_text(t.scope->'productIds'))::bigint[])
               ) END AS done_products
          FROM ai_tasks t
-        WHERE t.store_id=$1 ORDER BY t.id DESC LIMIT 50`, [user.storeId]);
+        WHERE t.store_id=$1 ORDER BY t.id DESC LIMIT $2 OFFSET $3`, [user.storeId, pageSize, (pg - 1) * pageSize]);
+    return { items: rows, total: Number(tot?.n || 0), page: pg, size: pageSize };
   }
 
   /** 开始执行（待执行 → 进行中） */
@@ -703,8 +706,7 @@ export class AiController {
       // 不再用 AICJ+日期-FREE 合并单（此前同日多次采集全部并进一张 FREE 工单，第一批审核完成后
       // 第二批挂进"已完成"工单，绕过了审核流程）。ymd 同时从 UTC 改为本地日期（与 createTask 一致）。
       const ymd = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '');
-      await seqLock(c, 'ai_tasks', 'task_no', `AICJ${ymd}-%`);
-      const seq = await cx(c, `SELECT count(*)+1 AS n FROM ai_tasks WHERE task_no LIKE $1`, [`AICJ${ymd}-%`]);
+      const seq = await seqLock(c, 'ai_tasks', 'task_no', `AICJ${ymd}-%`);
       const taskNo = `AICJ${ymd}-${String(seq[0].n).padStart(4, '0')}`;
       const task = await cx(c,
         `INSERT INTO ai_tasks (store_id, task_type, task_no, scope, target_count, done_count, progress, assigned_to, created_by, remark)
@@ -815,7 +817,7 @@ export class AiController {
   samples(@Query('status') status = '', @Query('keyword') keyword = '',
           @Query('page') page = '1', @Query('size') size = '10', @CurrentUser() user: AuthUser) {
     const pn = Math.max(1, Number(page) || 1);
-    const sz = Math.min(100, Math.max(1, Number(size) || 10));
+    const sz = sizeOf(size, 10, 100);   // V5.0.19i（Q-07）
     const kw = (keyword || '').trim();
     return q(
       `SELECT s.*, p.name AS product_name, p.barcode AS product_barcode,
@@ -869,9 +871,12 @@ export class AiController {
    *   - 回退 → 样本置不合格、任务回到进行中由店员重新拍照（工单号黄色）
    *  统一状态颜色规则（全模块一致）：绿=已审核通过/成功 · 红=待审核/待办需行动 · 黄=进行中/回退待重拍/临期 · 灰=停用/失效 · 蓝=信息提示 */
 
-  /** 工单列表（含任务工单号 + 样本数统计） */
+  /** 工单列表（含任务工单号 + 样本数统计；V5.0.18g：服务端分页） */
   @Get('orders')
-  async orders(@CurrentUser() user: AuthUser) {
+  async orders(@CurrentUser() user: AuthUser, @Query('page') page?: string, @Query('size') size?: string) {
+    const pageSize = sizeOf(size, 15, 200);   // V5.0.19i（Q-07）parsePaging 统一钳制
+    const pg = pageOf(page);
+    const tot = await q1(`SELECT count(*)::int AS n FROM ai_tasks WHERE store_id=$1`, [user.storeId]);
     return q(
       `SELECT t.*, u.name AS creator_name,
               COALESCE(cnt.total, 0) AS sample_total,
@@ -897,8 +902,8 @@ export class AiController {
                  OR (s.task_id IS NULL AND s.annotation->>'taskId' = t.id::text)
          ) cnt ON true
         WHERE t.store_id = $1
-        ORDER BY t.id DESC LIMIT 100`, [user.storeId],
-    );
+        ORDER BY t.id DESC LIMIT $2 OFFSET $3`, [user.storeId, pageSize, (pg - 1) * pageSize],
+    ).then(rows => ({ items: rows, total: Number(tot?.n || 0), page: pg, size: pageSize }));
   }
 
   /** 工单详情（任务头 + 工单内全部样本图，按商品分组由前端渲染） */
@@ -1129,7 +1134,9 @@ export class AiController {
       if (!existsSync(file)) { skipped++; continue; }
       const clsName = String(s.product_name || `商品${s.product_id}`).replace(/[\\/:*?"<>|]/g, '_');
       classes[clsName] = Number(s.product_id);
-      items.push({ name: `dataset/train/${clsName}/${s.id}_${s.product_id}.jpg`, data: readFileSync(file) });
+      // P-07：异步读替代同步读 —— 大样本量导出不再停摆事件循环（期间全店识别/结账卡死）。
+      // 注：该端点当前无前端调用方（全库零引用），保留契约仅做 IO 加固；未来量大再考虑流式 zip+下载链接。
+      items.push({ name: `dataset/train/${clsName}/${s.id}_${s.product_id}.jpg`, data: await readFile(file) });
       copied++;
     }
     const names = Object.entries(classes).map(([k], i) => `${i}: ${JSON.stringify(k)}`).join('\n');
@@ -1198,7 +1205,7 @@ print('完成：runs/detect/train/weights/best.onnx 导入训练台，并设置 
   @Get('label/pending')
   @RequirePerms('ai.train.launch')
   labelPending(@Query('page') page = '1', @Query('size') size = '20', @CurrentUser() user: AuthUser) {
-    const pn = Math.max(1, Number(page) || 1), sz = Math.min(100, Math.max(1, Number(size) || 20));
+    const pn = pageOf(page), sz = sizeOf(size, 20, 100);   // V5.0.19i（Q-07）
     return q(
       `SELECT s.id, s.product_id, p.name AS product_name, s.image_path, s.status,
               COALESCE(s.annotation->>'angle','') AS angle,
@@ -1284,7 +1291,7 @@ print('完成：runs/detect/train/weights/best.onnx 导入训练台，并设置 
   async hardcases(@Query('days') days = '30', @Query('kind') kind = 'all', @Query('limit') limit = '100',
                   @CurrentUser() user: AuthUser) {
     const d = Math.min(180, Math.max(1, Number(days) || 30));
-    const lim = Math.min(500, Math.max(1, Number(limit) || 100));
+    const lim = sizeOf(limit, 100, 500);   // V5.0.19i（Q-07）
     const kindCond = kind === 'corrected'
       ? `AND l.corrected`
       : kind === 'lowconf'
@@ -1397,7 +1404,7 @@ print('完成：runs/detect/train/weights/best.onnx 导入训练台，并设置 
       const f = uploadsFilePath(String(s.image_path));
       if (!existsSync(f)) { skipped++; continue; }
       const rel = String(s.image_path).replace(/^\/uploads\//, '');
-      items.push({ name: `backup/images/${rel}`, data: readFileSync(f) });
+      items.push({ name: `backup/images/${rel}`, data: await readFile(f) });   // P-07：异步读防事件循环停摆
       manifest.push({ productId: Number(s.product_id), productName: s.product_name, barcode: s.product_barcode,
                       imagePath: String(s.image_path), source: s.source, annotation: s.annotation,
                       status: s.status, createdAt: s.created_at });

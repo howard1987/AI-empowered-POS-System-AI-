@@ -9,6 +9,7 @@ import { q, q1, r2, tx, cx, audit, seqLock } from '../common/db';
 import { BizException } from '../common/http';
 import { getWeather, factorsOf } from './weather.service';
 import { PRODUCT_VISIBLE, COST_REF } from '../common/sql';   // V5.0.0 商品可售可见性（连锁：门店只看已下发）；VQA-D3 预算成本口径复用 COST_REF
+import { EXTERNAL_API_TIMEOUT_MS } from '../common/timeouts';   // V5.0.19i（Q-07）
 
 const SQL_ORDER_DONE = `status IN ('已完成','部分退款')`;
 const fmtD = (v: any): string => {
@@ -110,8 +111,7 @@ export class AibrainEngine {
         const sup = await cx(c, `SELECT id FROM suppliers WHERE store_id=$1 ORDER BY id LIMIT 1`, [storeId]);
         if (!sup.length) throw new BizException(40404, '尚未建档供应商，请先在采购模块添加', 404);
         const day = fmtD(new Date()).replace(/-/g, '');
-        await seqLock(c, 'purchase_orders', 'po_no', `CG-${day}-%`);
-        const seq = await cx(c, `SELECT count(*)+1 AS n FROM purchase_orders WHERE po_no LIKE $1`, [`CG-${day}-%`]);
+        const seq = await seqLock(c, 'purchase_orders', 'po_no', `CG-${day}-%`);
         const poNo = `CG-${day}-${String(Number(seq[0].n)).padStart(3, '0')}`;
         const totalQty = r2(items.reduce((a, i) => a + Number(i.actualQty ?? i.suggestQty ?? 0), 0));
         const po = await cx(c,
@@ -1278,7 +1278,7 @@ export class AibrainEngine {
     for (const y of years) {
       let j: any = null;
       try {
-        const res = await fetch(`https://timor.tech/api/holiday/year/${y}`, { signal: AbortSignal.timeout(8000) });
+        const res = await fetch(`https://timor.tech/api/holiday/year/${y}`, { signal: AbortSignal.timeout(EXTERNAL_API_TIMEOUT_MS) });
         if (res.ok) j = await res.json();
       } catch { /* 网络失败静默，下方统一报错 */ }
       if (!j || Number(j.code) !== 0 || !j.holiday) continue;

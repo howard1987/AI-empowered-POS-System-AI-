@@ -1,6 +1,7 @@
 import { Module, Controller, Post, Get, Put, Delete, Body, Param, Query, ParseIntPipe, UseGuards, Req } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
+import { randomInt, randomBytes } from 'crypto';   // S-06/L-12：加密随机 + 占位卡号
 import { q, q1, tx, cx, audit, seqLock } from '../common/db';
 import { curStore, curEmp } from '../common/context';
 import { allow, failAndLock, lockedFor, clearFailures, clientIp } from '../common/ratelimit';
@@ -127,16 +128,18 @@ export class MemberAppController {
       return { token: memberToken(m), member: { id: Number(m.id), cardNo: created.cardNo, name: b.name ?? null, phone: b.phone } };
     }
     const m = await tx(async c => {
-      const seq = await cx(c, `SELECT COALESCE(MAX(id),0)+1 AS n FROM members`);
-      const cardNo = `M${String(seq[0].n).padStart(6, '0')}`;
+      // L-12 修复：同 members.module —— 随机占位卡插入 → 按 id 回写 M{id}（并发免撞唯一约束）
+      const tmpCard = 'MTMP' + randomBytes(8).toString('hex');
       const rows = await cx(c,
         `INSERT INTO members (store_id, card_no, phone, name, password_hash, password_set_at,
                               register_channel, privacy_agreed, birthday, security_questions)
          VALUES (${await new SettingsService().getNum('member.hq_store_id', 1)},$1,$2,$3,$4,now(),'H5',true,$5,$6) RETURNING *`,
-        [cardNo, b.phone, b.name ?? null, hash, b.birthday ?? null,
+        [tmpCard, b.phone, b.name ?? null, hash, b.birthday ?? null,
          secQs.length ? JSON.stringify(secQs) : null]);
+      const cardNo = `M${String(Number(rows[0].id)).padStart(6, '0')}`;
+      await cx(c, `UPDATE members SET card_no=$2 WHERE id=$1`, [rows[0].id, cardNo]);
       await cx(c, `INSERT INTO member_accounts (member_id) VALUES ($1)`, [rows[0].id]);
-      return rows[0];
+      return { ...rows[0], card_no: cardNo };
     });
     await audit(curStore(), null, '会员', 'member.h5.register', 'member', Number(m.id), { cardNo: m.card_no, channel: 'H5' });
     if (b.linkOrderId) await this.linkGuestOrder(Number(m.id), b.phone, Number(b.linkOrderId));
@@ -213,6 +216,7 @@ export class MemberAppController {
       `SELECT m.id, m.card_no, m.phone, m.name, m.points, m.status, m.last_active_date, m.invalid_at,
               l.name AS level_name, l.discount,
               a.balance, a.principal_total, a.points AS account_points,
+              a.gift_balance,
               a.dividend_balance, a.dividend_cumulative, a.dividend_capped, a.dividend_weight
          FROM members m
          LEFT JOIN member_levels l ON l.id = m.level_id
@@ -229,7 +233,9 @@ export class MemberAppController {
       assets: {
         balance: Number(m.balance),
         principalTotal: Number(m.principal_total),          // 口径B：累计充值本金
-        giftBalance: r2(Number(m.balance) - Number(m.principal_total) > 0 ? Number(m.balance) - Number(m.principal_total) : 0),
+        // Q-04 B3：直接读 gift_balance 台账列（原 `balance − principal_total` 二次推导混用
+        // 「当前余额 − 累计充值」口径，赠送/退款场景下与台账不一致）
+        giftBalance: r2(Number(m.gift_balance ?? 0)),
         points: Number(m.points),
         dividendBalance: Number(m.dividend_balance),
         dividendCumulative: Number(m.dividend_cumulative),
@@ -339,14 +345,15 @@ export class MemberAppController {
     return { ...res, leaveCode };
   }
 
-  /** 生成店内唯一 6 位离场核销码 */
+  /** 生成店内唯一 6 位离场核销码（S-06：加密安全随机，禁用 Math.random/可预测时间戳回退） */
   private async genLeaveCode(storeId: number): Promise<string> {
     for (let i = 0; i < 10; i++) {
-      const code = String(Math.floor(100000 + Math.random() * 900000));
+      const code = String(randomInt(0, 1000000)).padStart(6, '0');
       const dup = await q1(`SELECT 1 FROM sales_orders WHERE store_id=$1 AND delivery_code=$2`, [storeId, code]);
       if (!dup) return code;
     }
-    return String(Date.now()).slice(-6);
+    // 10 次全碰撞（百万分之一^10 概率）仍失败 → 明确报错而非回退可预测值
+    throw new BizException(50000, '核销码生成失败，请重试');
   }
 
   /** 修改密码（需登录+原密码） */
@@ -438,8 +445,7 @@ export class MemberAppController {
     const r = await tx(async c => {
       const d = new Date();
       const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-      await seqLock(c, 'recharge_orders', 'order_no', `RC-${ymd}-%`);
-      const seq = await cx(c, `SELECT count(*)+1 AS n FROM recharge_orders WHERE order_no LIKE $1`, [`RC-${ymd}-%`]);
+      const seq = await seqLock(c, 'recharge_orders', 'order_no', `RC-${ymd}-%`);
       const orderNo = `RC-${ymd}-${String(seq[0].n).padStart(4, '0')}`;
       const rows = await cx(c,
         `INSERT INTO recharge_orders (order_no, store_id, member_id, plan_id, principal, gift, remark)

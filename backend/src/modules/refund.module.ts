@@ -1,6 +1,17 @@
 import { Module, Controller, Get, Post, Body, Param, ParseIntPipe } from '@nestjs/common';
 import { q, q1, tx, cx, r2, r3, audit, seqLock } from '../common/db';
 import { BizException } from '../common/http';
+
+/** Q-05：资金降级路径留痕（2026-10-10）
+ *  退款链路有多处「失败不阻断退货」的降级分支（促销重算、积分回补/冲减、时限配置解析）。
+ *  降级语义本身是对的（宁可少退也不能卡住退货），但原先 `catch {}` 把异常完全吞掉：
+ *  金额口径悄悄变化无从排查 —— 顾客投诉"退少了"时日志里一片空白。
+ *  现在：降级行为保持不变（照样不阻断），但必须写一条带单号上下文的 WARN。 */
+function degrade(tag: string, ctx: Record<string, any>, e: any): void {
+  try {
+    console.warn(`[资金降级] ${tag} | ctx=${JSON.stringify(ctx).slice(0, 200)} | err=${String(e?.message ?? e).slice(0, 200)}`);
+  } catch { /* 留痕本身绝不能影响业务 */ }
+}
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { SettingsService } from './settings.module';
 import { PayGatewayService } from './pay.gateway';
@@ -8,49 +19,17 @@ import { enqueueSync } from '../common/outbox';            // V5.0.0 批次4A：
 import { SyncStoreService } from './sync-store.service';   // V5.0.0：事件触发立即推送
 import { isChainStoreNode, hqMemberPost } from './member-chain.module'; // V5.0.0 批次5：会员资产权威账本在总部（R3/R4）
 import { applyPromotions } from './promotions.module';  // V5.0.15：退款时重算促销活动
+import { apportionRefundCents, apportionRefundByChannel } from './refund.pure';   // Q-02：退款分摊纯函数（单测锁行为）
 import { memberGrowth } from './member-growth.service';   // V5.0.17：退货扣回成长值
 import { syncMemberLevel } from './members.module';         // V5.0.17：扣减后重判等级（保级/缓冲）
 
 /** 元→分（RV-01 按分计算；与 sales.module 同一定义） */
 const toCents = (yuan: number | string): number => Math.round(Number(yuan) * 100);
 
-/**
- * 销售退款闭环（方案 5.2.6 售后 / sale_refunds 表 001 基线 + 008 状态列）：
- *   create   按原销售明细行原路退（qty ≤ 原行 − 已退）；整单级优惠（促销/券/抹零）按行小比分摊回冲；
- *            金额 ≤ 免审限额（sales.refund.limit）→ 事务内直接执行；超过 → 「待审核」
- *   execute  退款执行（创建直退与审核通过共用）：
- *            1) restock → 按原销售批次回加（sale_item_batches 反向 + batches.remain_qty + stock_flows return_sale）
- *               ＋成本回冲（V5.0.15）：按「退回批次数量 × 该批次单位成本」同步冲减
- *               sale_items.line_cost/line_profit 与 sales_orders.cost_amount/profit_amount，
- *               并在 sale_refunds.cost_amount 留痕；不回冲会让退货后毛利虚高、分红基数失真
- *            2) 支付原路退：余额回加（本金/赠送按原流水比例拆分）/ 分红抵扣冲回 / 积分抵扣回加 / 现金扫码留痕（班次 refund_cash 冲减）
- *            3) 会员积分按退款比例扣回（消费所得积分）
- *            4) 有效消费窗口冲减（未达标窗口 valid_total 扣减，堵「退款保活跃」漏洞 5.1.16）
- *   audit    限额之上审核：通过 → 执行；驳回 → 状态「已驳回」（留痕不执行）
- * 错误码：50070 订单/退款单不存在（404）· 50071 状态不允许 · 50072 可退数量不足 · 50073 审核权限/状态机
- */
-
-export interface RefundItemDto { saleItemId: number; qty: number; }
-
-export class RefundService {
-  private settings = new SettingsService();
-  private paygw = new PayGatewayService();
-
-  /**
-   * 计算按行退款金额（V5.0.15 新口径：券不回退 + 活动重新计算）
-   *
-   *   ① **优惠券不回退**：券是一次性核销商品，退款既不退还券、也不回补券额。
-   *      券额在「退前应实付」与「退后新应收」两边同样抵扣，差额中自然抵消。
-   *   ② **促销活动重新计算**：按「退后剩余商品」重跑促销引擎 ——
-   *      若退后不再满足满减门槛，则整单促销归零，按活动前实价重算。
-   *      例：A50 + B30 + C15 + D10 = 105，满 100 减 5 → 实付 100；
-   *          退 C(15) 后剩 90，不满足门槛 → 促销归零 → 退后应收 90 → 应退 100 − 90 = **10 元**
-   *          （旧口径按货值比例回冲满减，会退约 14.29 元，等于让顾客白拿 4.29 元优惠）。
-   *   ③ 抹零按退后应收重新计算（规则同 pos.round_rule）。
-   *   ④ 退款金额 = 退前剩余实付 − 退后剩余应收，再按行分摊（尾差进最后一行）。
-   *      「退前剩余实付」= 原实付 − 本单之前已退金额，故多次部分退款同样正确。
-   */
-  private async calcRows(c: any, order: any, items: { saleItemId: number; qty: number; line: any }[]) {
+/** L-19（拍板 2026-10-09）：退款金额行级重算——单店/跨店退货共用同一口径。
+ *  订单级净额：退前剩余实付（实付−已退）− 退后应收（剩余商品重跑促销 + 券不回退同额抵扣 + 抹零重算），
+ *  再按「退货数量×成交单价」权重分摊到行（尾差进最后一行）。跨店退货在总部侧复用本函数（applyPromotions 按原单 store_id 取活动）。 */
+export async function calcRefundRows(c: any, settings: SettingsService, order: any, items: { saleItemId: number; qty: number; line: any }[]) {
     // 本单之前已退（按行）
     const prevByLine = new Map<number, number>();
     const prevRows = await cx(c,
@@ -105,7 +84,9 @@ export class RefundService {
       try {
         const promo = await applyPromotions(c, order.store_id, lines, order.member_id);
         newPromoCents = toCents(Number(promo?.promoAmount || 0));
-      } catch { /* 重算失败按无促销处理，保守少退 */ }
+      } catch (e) {   // Q-05：降级保留（按无促销→保守少退），但必须留痕
+        degrade('促销重算失败，按无促销处理（保守少退）', { orderNo: order.order_no }, e);
+      }
       newPromoCents = Math.min(newPromoCents, remainGoodsCents);
     }
 
@@ -113,7 +94,7 @@ export class RefundService {
     const couponCents = toCents(order.coupon_amount);
 
     // 抹零按退后应收重算
-    const roundRule = String((await this.settings.getVal('pos.round_rule')) ?? '分');
+    const roundRule = String((await settings.getVal('pos.round_rule')) ?? '分');
     const roundUnitC: Record<string, number> = { '分': 1, '角': 10, '5角': 50, '元': 100 };
     const ruc = roundUnitC[roundRule] || 1;
     let afterPayableCents = Math.max(remainGoodsCents - newPromoCents - couponCents, 0);
@@ -124,19 +105,53 @@ export class RefundService {
     let amountCents = Math.max(basePaidCents - afterPayableCents, 0);
 
     // 按行分摊：以「退货数量 × 成交单价」为权重，尾差进最后一行
+    // Q-02：抽至 refund.pure.apportionRefundCents（纯函数+单测锁行为）
     const weights = items.map(it => Number(it.qty) * Number(it.line.unit_price || 0));
-    const totalW = weights.reduce((s, x) => s + x, 0);
-    const rowCents = weights.map((w, i) => {
-      if (i === weights.length - 1) return amountCents;      // 最后一行兜底尾差
-      return totalW > 0 ? Math.round(amountCents * (w / totalW)) : 0;
-    });
-    // 扣除已分摊部分，保证合计恒等于 amountCents
-    let used = 0;
-    for (let i = 0; i < rowCents.length - 1; i++) { rowCents[i] = Math.min(rowCents[i], amountCents - used); used += rowCents[i]; }
-    if (rowCents.length) rowCents[rowCents.length - 1] = Math.max(amountCents - used, 0);
+    const rowCents = apportionRefundCents(weights, amountCents);
 
     return { rowAmts: rowCents.map(x => x / 100), amount: amountCents / 100 };
   }
+
+/**
+ * 销售退款闭环（方案 5.2.6 售后 / sale_refunds 表 001 基线 + 008 状态列）：
+ *   create   按原销售明细行原路退（qty ≤ 原行 − 已退）；整单级优惠（促销/券/抹零）按行小比分摊回冲；
+ *            金额 ≤ 免审限额（sales.refund.limit）→ 事务内直接执行；超过 → 「待审核」
+ *   execute  退款执行（创建直退与审核通过共用）：
+ *            1) restock → 按原销售批次回加（sale_item_batches 反向 + batches.remain_qty + stock_flows return_sale）
+ *               ＋成本回冲（V5.0.15）：按「退回批次数量 × 该批次单位成本」同步冲减
+ *               sale_items.line_cost/line_profit 与 sales_orders.cost_amount/profit_amount，
+ *               并在 sale_refunds.cost_amount 留痕；不回冲会让退货后毛利虚高、分红基数失真
+ *            2) 支付原路退：余额回加（本金/赠送按原流水比例拆分）/ 分红抵扣冲回 / 积分抵扣回加 / 现金扫码留痕（班次 refund_cash 冲减）
+ *            3) 会员积分按退款比例扣回（消费所得积分）
+ *            4) 有效消费窗口冲减（未达标窗口 valid_total 扣减，堵「退款保活跃」漏洞 5.1.16）
+ *   audit    限额之上审核：通过 → 执行；驳回 → 状态「已驳回」（留痕不执行）
+ * 错误码：50070 订单/退款单不存在（404）· 50071 状态不允许 · 50072 可退数量不足 · 50073 审核权限/状态机
+ */
+
+export interface RefundItemDto { saleItemId: number; qty: number; }
+
+export class RefundService {
+  private settings = new SettingsService();
+  private paygw = new PayGatewayService();
+
+  /**
+   * 计算按行退款金额（V5.0.15 新口径：券不回退 + 活动重新计算）
+   *
+   *   ① **优惠券不回退**：券是一次性核销商品，退款既不退还券、也不回补券额。
+   *      券额在「退前应实付」与「退后新应收」两边同样抵扣，差额中自然抵消。
+   *   ② **促销活动重新计算**：按「退后剩余商品」重跑促销引擎 ——
+   *      若退后不再满足满减门槛，则整单促销归零，按活动前实价重算。
+   *      例：A50 + B30 + C15 + D10 = 105，满 100 减 5 → 实付 100；
+   *          退 C(15) 后剩 90，不满足门槛 → 促销归零 → 退后应收 90 → 应退 100 − 90 = **10 元**
+   *          （旧口径按货值比例回冲满减，会退约 14.29 元，等于让顾客白拿 4.29 元优惠）。
+   *   ③ 抹零按退后应收重新计算（规则同 pos.round_rule）。
+   *   ④ 退款金额 = 退前剩余实付 − 退后剩余应收，再按行分摊（尾差进最后一行）。
+   *      「退前剩余实付」= 原实付 − 本单之前已退金额，故多次部分退款同样正确。
+   */
+  private async calcRows(c: any, order: any, items: { saleItemId: number; qty: number; line: any }[]) {
+    return calcRefundRows(c, this.settings, order, items);
+  }
+
 
   /** 退款执行（事务内）：批次回加 + 支付原路退 + 积分扣回 + 活跃窗口冲减 */
   private async executeInTx(c: any, refundId: number, user: AuthUser) {
@@ -174,7 +189,7 @@ export class RefundService {
     // 1) 回库存：按原销售批次逐批回加（sale_item_batches 为原行批次消耗，按行销量比例拆回各批次）
     if (rf.restock) {
       const items = await cx(c,
-        `SELECT ri.sale_item_id, ri.qty, sib.batch_id, sib.qty AS orig_qty, sib.unit_cost, si.qty AS line_qty
+        `SELECT ri.sale_item_id, ri.qty, sib.batch_id, sib.qty AS orig_qty, sib.unit_cost, si.qty AS line_qty, si.line_amount AS line_amount
            FROM sale_refund_items ri
            JOIN sale_items si ON si.id = ri.sale_item_id
            JOIN sale_item_batches sib ON sib.sale_item_id = si.id
@@ -185,6 +200,7 @@ export class RefundService {
       //   而毛利同时驱动「销售明细报表(行级)」「日报/AI 脑(单级快照)」与「分红基数」，口径全部失真。
       //   这里按与回库存完全相同的分摊口径（退回批次数量 × 该批次单位成本）累计，保证两者一致。
       const costByLine = new Map<number, number>();
+      const revByLine = new Map<number, number>();   // L-09：退回商品对应收入（行单价 × 退回量），与成本回冲同口径
       for (const it of items) {
         // 该批次原消耗占行销量比例 × 退款量 = 回加量
         const backQty = r3(Number(it.line_qty) > 0
@@ -199,29 +215,34 @@ export class RefundService {
            VALUES ($1,$2,$3,'入库',$4,'return_sale',$5,$6,$7)`,
           [bRow.store_id, bRow.product_id, it.batch_id, backQty, refundId, it.sale_item_id, user.sub]);
         touched.add(it.batch_id);
+        const sid = Number(it.sale_item_id);
         // 成本回冲累计到行（同一 sale_item 可能横跨多个批次）
         const backCost = r3(backQty * Number(it.unit_cost));
-        if (backCost > 0) {
-          const sid = Number(it.sale_item_id);
-          costByLine.set(sid, r3((costByLine.get(sid) || 0) + backCost));
-        }
+        if (backCost > 0) costByLine.set(sid, r3((costByLine.get(sid) || 0) + backCost));
+        // L-09：收入按退回量 × 行单价同额回冲（此前只冲成本不冲收入 → 全额退货后毛利=全部销售额、分红/提成基数虚高）
+        const revBack = r3(Number(it.line_qty) > 0 ? backQty * Number(it.line_amount) / Number(it.line_qty) : 0);
+        if (revBack > 0) revByLine.set(sid, r3((revByLine.get(sid) || 0) + revBack));
       }
-      // 1.1) 行级：line_cost 冲减、line_profit 重算（口径与 checkout 一致：line_amount − line_cost）
+      // 1.1) 行级：line_cost / line_amount 冲减 + line_profit 重算（口径与 checkout 一致：line_amount − line_cost）
       for (const [sid, backCost] of costByLine) {
+        const revBack = revByLine.get(sid) || 0;
         await cx(c,
           `UPDATE sale_items
               SET line_cost = GREATEST(COALESCE(line_cost,0) - $2, 0),
-                  line_profit = line_amount - GREATEST(COALESCE(line_cost,0) - $2, 0)
-            WHERE id=$1`, [sid, backCost]);
+                  line_amount = GREATEST(COALESCE(line_amount,0) - $3, 0),
+                  line_profit = GREATEST(COALESCE(line_amount,0) - $3, 0) - GREATEST(COALESCE(line_cost,0) - $2, 0)
+            WHERE id=$1`, [sid, backCost, revBack]);
       }
-      // 1.2) 单级：cost_amount 冲减、profit_amount 重算（口径与 checkout 一致：payable − cost）
+      // 1.2) 单级：cost_amount / payable_amount 冲减 + profit_amount 重算（口径与 checkout 一致：payable − cost）
       const totalBack = r3(Array.from(costByLine.values()).reduce((s, x) => s + x, 0));
-      if (totalBack > 0) {
+      const totalRevBack = r3(Array.from(revByLine.values()).reduce((s, x) => s + x, 0));
+      if (totalBack > 0 || totalRevBack > 0) {
         await cx(c,
           `UPDATE sales_orders
               SET cost_amount = GREATEST(COALESCE(cost_amount,0) - $2, 0),
-                  profit_amount = payable_amount - GREATEST(COALESCE(cost_amount,0) - $2, 0)
-            WHERE id=$1`, [rf.order_id, totalBack]);
+                  payable_amount = GREATEST(COALESCE(payable_amount,0) - $3, 0),
+                  profit_amount = GREATEST(COALESCE(payable_amount,0) - $3, 0) - GREATEST(COALESCE(cost_amount,0) - $2, 0)
+            WHERE id=$1`, [rf.order_id, totalBack, totalRevBack]);
         await cx(c, `UPDATE sale_refunds SET cost_amount=$2 WHERE id=$1`, [refundId, totalBack]);
       }
       // 汇总即时库存（按本次涉及商品重算）
@@ -246,12 +267,11 @@ export class RefundService {
       const mc = await cx(c, `SELECT card_no FROM members WHERE id=$1`, [memberId]);
       chainCardNo = mc[0]?.card_no ?? null;
     }
+    // Q-02：渠道分摊抽至 refund.pure.apportionRefundByChannel（纯函数+单测；前面渠道按占比取整分，末渠道尾差兜底）
+    const channelBackCents = apportionRefundByChannel(pays.map((p: any) => toCents(p.amount)), rfCents, backRatio);
     for (let i = 0; i < pays.length; i++) {
       const pay = pays[i];
-      // 前面渠道按占比取整分；最后一渠道 = 退款总额 − 已分摊（尾差兜底）
-      const backCents = i === pays.length - 1
-        ? Math.max(rfCents - pays.slice(0, i).reduce((s, p) => s + Math.round(toCents(p.amount) * (pays.length > 1 ? backRatio : 0)), 0), 0)
-        : Math.round(toCents(pay.amount) * backRatio);
+      const backCents = channelBackCents[i];
       if (backCents <= 0) continue;
       const back = backCents / 100;
       if (pay.channel === '余额') {
@@ -296,7 +316,10 @@ export class RefundService {
           try {
             await hqMemberPost('credit', { cardNo: chainCardNo, orderNo: order.order_no,
               refundNo: rf.refund_no, asset: 'points', ratio: backRatio });
-          } catch { /* 推算不出不阻断退货 */ }
+          } catch (e) {   // Q-05：降级保留（不阻断退货），但积分回补缺失必须可追溯
+            degrade('总部积分回补失败（不阻断退货，积分可能少回补）',
+              { orderNo: order.order_no, refundNo: rf.refund_no, ratio: backRatio }, e);
+          }
           continue;
         }
         const pf = (await cx(c, `SELECT points FROM points_flows WHERE id=$1`, [pay.points_flow_id]))[0];
@@ -333,7 +356,10 @@ export class RefundService {
             try {
               await hqMemberPost('credit', { cardNo: chainCardNo, orderNo: order.order_no,
                 refundNo: rf.refund_no, asset: 'points', points: -cut });
-            } catch { /* 冲减失败不阻断退货 */ }
+              } catch (e) {   // Q-05：降级保留，但积分冲减缺失必须可追溯（否则会员多占积分）
+                degrade('总部积分冲减失败（不阻断退货，积分可能未扣回）',
+                  { orderNo: order.order_no, refundNo: rf.refund_no, points: -cut }, e);
+              }
           } else {
           const ms = await cx(c, `SELECT points FROM members WHERE id=$1 FOR UPDATE`, [memberId]);
           await cx(c, `UPDATE members SET points = points - $2, updated_at=now() WHERE id=$1`, [memberId, cut]);
@@ -501,7 +527,10 @@ if (!['已完成', '部分退款'].includes(order.status)) throw new BizExceptio
           ?? await this.settings.getVal('refund.window_by_category');   // 旧键兜底（迁移 166 前/未迁移库）
         const obj = typeof raw === 'string' ? JSON.parse(raw) : (raw ?? {});
         if (obj && typeof obj === 'object') catWin = obj as Record<string, number>;
-      } catch { /* 配置解析失败按默认处理 */ }
+      } catch (e) {   // Q-05：降级保留（全部行按默认时限），但配置失效会改变可退范围，必须留痕
+        degrade('退货时限分类配置解析失败，全部行按默认时限判定',
+          { orderNo: order.order_no, defaultWin }, e);
+      }
       const orderAgeDays = order.created_at
         ? Math.floor((Date.now() - new Date(order.created_at).getTime()) / 86400000) : 0;
       // P2-M8：赊账/挂账渠道订单走大客户对账冲减，禁止在线原路退（防止应收口径漂移）

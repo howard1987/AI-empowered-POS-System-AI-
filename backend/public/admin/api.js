@@ -59,6 +59,8 @@ export function setAuth(token, user) {
   API.user = user || null;
   if (token) localStorage.setItem('token', token); else localStorage.removeItem('token');
   if (user) localStorage.setItem('user', JSON.stringify(user)); else localStorage.removeItem('user');
+  // V5.0.19h（F-05）：登录成功预取图片票据并启动定时刷新；登出清票据
+  if (token) { refreshImgTicket(); ensureImgTicketTimer(); } else clearImgTicket();
 }
 
 export function logout() {
@@ -66,18 +68,32 @@ export function logout() {
   location.hash = '#/login';
 }
 
-export async function call(method, path, body) {
-  const res = await fetch(API.base + path, {
-    method,
-    headers: {
-      ...(API.token ? { authorization: 'Bearer ' + API.token } : {}),
-      ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  const j = await res.json().catch(() => ({ code: -1, msg: 'HTTP ' + res.status, data: null }));
-  if (res.status === 401) { logout(); }
-  return j; // { code, msg, data }
+export async function call(method, path, body, opts) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), opts && opts.timeout ? opts.timeout : 15000);
+  try {
+    const res = await fetch(API.base + path, {
+      method,
+      signal: ctrl.signal,
+      headers: {
+        ...(API.token ? { authorization: 'Bearer ' + API.token } : {}),
+        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    clearTimeout(timer);
+    const j = await res.json().catch(() => ({ code: -1, msg: 'HTTP ' + res.status, data: null }));
+    if (res.status === 401) { logout(); }
+    return j; // { code, msg, data }
+  } catch (e) {
+    clearTimeout(timer);
+    // F-03：弱网下 fetch 抛错（超时/DNS/断网）统一返回 {code:-1}，避免 unhandledrejection 致页面「点了没反应」
+    return {
+      code: -1,
+      msg: e && e.name === 'AbortError' ? '请求超时，请稍后重试' : '网络异常，请检查连接',
+      data: null,
+    };
+  }
 }
 
 export const get  = p => call('GET', p);
@@ -104,16 +120,34 @@ export function unwrapList(r, key = 'items') {
 export const money = n => '¥' + Number(n ?? 0).toFixed(2);
 /** 两位小数（不带 ¥）：金额/数量列统一口径（原各屏各自 `fmt` 的收敛点） */
 export const num2 = n => (Number(n) || 0).toFixed(2);
-/** 图片地址补全：/uploads/... 相对路径 → 拼后端 base（Web 后台在 :8088，图片文件在后端 :3100）
- *  V4.28.5 F-09：/uploads 已挂登录鉴权，<img src> 无法带 Authorization 头 → 自动拼 ?token=；
- *  非 /uploads 图片（data:/blob: 等）不受影响。 */
+// V5.0.19h（F-05）：图片短时票据 —— <img src> 无法带 Authorization 头，旧实现拼长效 JWT 进 ?token=，
+// 一旦被 access log/Referer/历史记录捕获即可长期冒用。改用 /auth/img-ticket 签发的 60s 短时票据：
+// ①泄露窗口 12h→60s；②scope:img 仅图片中间件接受，不能调业务接口。
+// 票据缓存 50s（留 10s 余量），过期前自动刷新；setAuth 成功后预取，call 收到 401 时清缓存。
+let _imgTicket = '', _imgTicketExp = 0;
+export async function refreshImgTicket() {
+  if (_imgTicketExp > Date.now() + 8000) return _imgTicket;
+  try {
+    const r = await call('POST', '/auth/img-ticket');
+    _imgTicket = (r && r.data && r.data.ticket) || ''; _imgTicketExp = Date.now() + 50000;
+  } catch { _imgTicket = ''; _imgTicketExp = 0; }   // 登录态丢失等 → imgUrl 退回无 token（图片 401 提示重新登录）
+  return _imgTicket;
+}
+function clearImgTicket() { _imgTicket = ''; _imgTicketExp = 0; }
+/** 幂等启动票据定时刷新（45s 刷新，票据 50s 有效，留余量）。登出后 API.token 为空 → 回调空转无副作用 */
+function ensureImgTicketTimer() {
+  if (ensureImgTicketTimer._t) return;
+  ensureImgTicketTimer._t = setInterval(() => { if (API.token) refreshImgTicket(); }, 45000);
+}
+/** 图片地址补全：/uploads|/signatures 相对路径 → 拼后端 base + 60s img 票据。
+ *  非 uploads/signatures 图片（data:/blob: 等）不受影响。票据未就绪时返回无 token URL（图片 401，触发重登录）。 */
 export const imgUrl = p => {
   const s = String(p || '');
   if (!s) return '';
   if (/^(https?:|data:|blob:)/i.test(s)) return s;
   const url = API.base + (s.startsWith('/') ? s : '/' + s);
-  if (!/^\/uploads\//.test(s) || !API.token) return url;
-  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(API.token);
+  if (!/^\/(uploads|signatures)\//.test(s) || !API.token) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(_imgTicketExp > Date.now() ? _imgTicket : '');
 };
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -141,4 +175,15 @@ export async function must(promise, okMsg) {
   if (r.code !== 0) { toast(r.msg || ('错误码 ' + r.code), false); throw r; }
   if (okMsg) toast(okMsg);
   return r.data;
+}
+
+// F-03：弱网兜底——全局捕获未处理的 Promise 拒绝，弹出 toast 而非静默失败（桌面端范本同策略）
+if (typeof window !== 'undefined' && !window.__apiUnhandledGuard__) {
+  window.__apiUnhandledGuard__ = true;
+  window.addEventListener('unhandledrejection', (ev) => {
+    const r = ev && ev.reason;
+    if (r && r.__handledByApi) return;
+    console.warn('[api] 未处理的 Promise 拒绝：', r);
+    try { toast('网络异常，请检查连接后重试', false); } catch { /* 早期无容器忽略 */ }
+  });
 }

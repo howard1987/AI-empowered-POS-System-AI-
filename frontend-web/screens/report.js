@@ -235,9 +235,9 @@ export async function render(view) {
   let sdRows = [];
   let sdTotal = {};
   let sdPage = 1;
-  function drawSale() {   // 用缓存 sdRows 重画（翻页不重新请求）
-    const pg = paginate(sdRows, sdPage, 10);
-    sdPage = pg.page;
+  let sdCount = 0;
+  function drawSale() {   // V5.0.18g：服务端分页（翻页重新请求，count 为总行数）
+    const pg = { page: sdPage, slice: sdRows, pages: Math.max(Math.ceil(sdCount / 10), 1) };
     const t = sdTotal;
     const max = Math.max(...sdRows.map(r => Number(r.revenue)), 0);
     view.querySelector('#sdBody').innerHTML = sdRows.length ? `
@@ -252,16 +252,16 @@ export async function render(view) {
         <td class="num" style="color:${Number(r.profit) < 0 ? 'var(--warn)' : 'inherit'}">${money(r.profit)}</td>
         <td class="num">${Number(r.revenue) ? (Number(r.profit) / Number(r.revenue) * 100).toFixed(1) + '%' : '—'}</td>
         <td class="num">${Number(t.revenue) ? (Number(r.revenue) / Number(t.revenue) * 100).toFixed(1) + '%' : '—'}</td></tr>`).join('')}</tbody>
-      <tfoot><tr><td colspan="4" class="num">合计 ${sdRows.length} 项</td>
+      <tfoot><tr><td colspan="4" class="num">合计 ${sdCount || sdRows.length} 项</td>
         <td class="num">${t.orderCount}</td><td class="num">${money(t.revenue)}</td><td class="num">${money(t.cost)}</td>
         <td class="num">${money(t.profit)}</td><td colspan="2"></td></tr></tfoot></table>
       <div class="bar muted" style="margin-top:6px">Top1 销售额 ${money(max)}（柱状占比示意）</div>
       ${pg.bar}`
       : '<div class="empty">无数据：请调整日期区间或筛选条件</div>';
-    bindPager(view.querySelector('#sdBody'), p => { sdPage = p; drawSale(); });
+    bindPager(view.querySelector('#sdBody'), p => { sdPage = p; loadSale(sdPage); });
   }
-  async function loadSale() {
-    const p = new URLSearchParams();
+  async function loadSale(page = 1) {
+    const p = new URLSearchParams({ page: String(page), size: '10' });
     const from = view.querySelector('#sdFrom').value, to = view.querySelector('#sdTo').value;
     const kw = view.querySelector('#sdKw').value.trim(), cat = view.querySelector('#sdCat').value;
     if (from) p.set('from', from);
@@ -271,10 +271,11 @@ export async function render(view) {
     const d = await must(get('/reports/sale-detail?' + p));
     sdRows = d.items || [];
     sdTotal = d.total || {};
-    sdPage = 1;
+    sdCount = Number(d.count || 0);
+    sdPage = Number(d.page || page);
     drawSale();
   }
-  view.querySelector('#sdGo').onclick = loadSale;
+  view.querySelector('#sdGo').onclick = () => loadSale(1);
   view.querySelector('#sdKw').addEventListener('keydown', e => { if (e.key === 'Enter') loadSale(); });
   view.querySelector('#sdCsv').onclick = () => csvDownload('商品销售明细.csv',
     ['商品', '分类', '销量', '单数', '销售额', '成本', '毛利'],
@@ -301,7 +302,7 @@ export async function render(view) {
     bindPager(view.querySelector('#mbBody'), p => { mbPage = p; drawMember(); });
   }
   async function loadMember() {
-    const p = new URLSearchParams();
+    const p = new URLSearchParams({ size: '5000' });   // V5.0.18g：不再被默认 100 截断（聚合维度，本地分页）
     const from = view.querySelector('#mbFrom').value, to = view.querySelector('#mbTo').value;
     if (from) p.set('from', from);
     if (to) p.set('to', to);
@@ -347,7 +348,7 @@ export async function render(view) {
     bindPager(view.querySelector('#emBody'), p => { emPage = p; drawEmployee(); });
   }
   async function loadEmployee() {
-    const p = new URLSearchParams();
+    const p = new URLSearchParams({ size: '5000' });   // V5.0.18g：不再被默认 100 截断
     const from = view.querySelector('#emFrom').value, to = view.querySelector('#emTo').value;
     const csh = view.querySelector('#emCashier').value;
     if (from) p.set('from', from);
@@ -403,7 +404,7 @@ export async function render(view) {
     bindPager(view.querySelector('#ivBody'), p => { ivPage = p; drawInventory(); });
   }
   async function loadInventory() {
-    const p = new URLSearchParams();
+    const p = new URLSearchParams({ size: '5000' });   // V5.0.18g：不再被默认 500 截断（SKU 增多也不会漏）
     const from = view.querySelector('#ivFrom').value, to = view.querySelector('#ivTo').value;
     const kw = view.querySelector('#ivKw').value.trim(), cat = view.querySelector('#ivCat').value;
     if (from) p.set('from', from);
@@ -430,8 +431,9 @@ export async function render(view) {
   async function loadGifts() {
     const from = view.querySelector('#gfFrom').value || '';
     const to = view.querySelector('#gfTo').value || '';
-    const qs = new URLSearchParams(); if (from) qs.set('from', from); if (to) qs.set('to', to);
-    const d = await must(get('/reports/gifts' + (qs.toString() ? '?' + qs.toString() : '')));
+    const qs = new URLSearchParams({ size: '5000' });   // V5.0.18g：不再被默认 300 截断
+    if (from) qs.set('from', from); if (to) qs.set('to', to);
+    const d = await must(get('/reports/gifts?' + qs.toString()));
     gfRows = d.rows || [];
     const s = d.summary || {};
     view.querySelector('#gfSum').innerHTML = `<div class="bar" style="flex-wrap:wrap">

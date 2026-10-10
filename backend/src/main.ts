@@ -11,6 +11,7 @@ import { AppModule } from './app.module';
 import { runWithStoreCtx } from './common/context';
 import { ensureLanCert, MDNS_HOST } from './common/cert';
 import { startMdns } from './common/mdns';
+import { logError } from './common/logger';
 
 // ── 进程级兜底（收银系统=门店关键服务，进程退出=全店收银中断）──
 // VQA-C2：启动轮转——error.log 超 5MB 滚动为 .1（单代备份，防无限增长）
@@ -21,14 +22,8 @@ try {
 // 背景：PG 瞬断 / 并发竞态等偶发未捕获异常会以 code=1 直接打崩整个后端，
 // 且崩溃时 stderr 无栈可查。策略：任何未捕获异常/拒绝 → 追加写 logs/error.log + 控制台，进程继续存活；
 // 坏掉的数据库连接由 pg-pool 自动丢弃重建，单个失败请求由业务层返回错误重试。
-const logFatal = (tag: string, e: unknown) => {
-  const line = `[${new Date().toISOString()}] [${tag}] ${(e as any)?.stack || (e as any)?.message || String(e)}\n`;
-  try {
-    fs.mkdirSync(join(__dirname, '..', 'logs'), { recursive: true });
-    fs.appendFileSync(join(__dirname, '..', 'logs', 'error.log'), line);
-  } catch { /* 日志失败不影响主流程 */ }
-  console.error(line.trimEnd());
-};
+// Q-07 #8：logFatal 迁移到统一 logger（error.log 由 logger.ts 独占写）
+const logFatal = (tag: string, e: unknown) => logError(tag, e);
 process.on('uncaughtException', (e) => logFatal('uncaughtException', e));
 process.on('unhandledRejection', (e) => logFatal('unhandledRejection', e));
 
@@ -91,9 +86,32 @@ async function bootstrap() {
         if (!token) throw new Error('no token');
         const payload: any = jwt.verify(token, JWT_SECRET);
         if (payload?.kind === 'member') throw new Error('member token 不可读员工图片');
+        // V5.0.19h（F-05）：query 传 token 必须是 60s img 短时票据（见 /auth/img-ticket），
+        // 拒绝长效员工 JWT 走 URL（防 access log/Referer 泄露后长期冒用）。header 场景不变（fetch 仍可用长效 token）。
+        if (!m && payload?.scope !== 'img') throw new Error('URL token 须为 img 短时票据');
         next();
       } catch {
         res.status(401).json({ code: 40100, msg: '图片目录需登录后访问（F-09）', data: null });
+      }
+    });
+  }
+  // S-03：签名 PNG 落盘 public/signatures，此前与 /uploads 同为静态直读、无需登录即可按路径取（顾客签字可被冒名/泄露）。
+  //   复用 /uploads 同款鉴权闸门（Bearer 或 ?token；member token 一律 401）。
+  {
+    const { JWT_SECRET: SIG_JWT_SECRET } = await import('./common/auth');
+    const sigJwt = (await import('jsonwebtoken')).default;
+    app.use('/signatures', (req: any, res: any, next: any) => {
+      try {
+        const m = /^Bearer (.+)$/.exec(String(req.headers['authorization'] || ''));
+        const token = m ? m[1] : String(req.query.token || '');
+        if (!token) throw new Error('no token');
+        const payload: any = sigJwt.verify(token, SIG_JWT_SECRET);
+        if (payload?.kind === 'member') throw new Error('member token 不可读签名图片');
+        // V5.0.19h（F-05）：同 /uploads，query 须为 img 短时票据（见 /auth/img-ticket）
+        if (!m && payload?.scope !== 'img') throw new Error('URL token 须为 img 短时票据');
+        next();
+      } catch {
+        res.status(401).json({ code: 40100, msg: '签名目录需登录后访问（S-03）', data: null });
       }
     });
   }
@@ -128,6 +146,10 @@ async function bootstrap() {
       if (/[\\/]pwa[\\/]/.test(p)) {
         const relaxed = /(^|[\\/])(ai-train-env|label-review)\.html$/.test(p);
         res.setHeader('Content-Security-Policy', relaxed ? PWA_CSP_RELAXED : PWA_CSP_STRICT);
+      }
+      // V5.0.19i（F-08）：admin/member 页防点击劫持 —— meta CSP 不支持 frame-ancestors，反嵌套走 HTTP 头
+      if (/[\\/](admin|member)[\\/]/.test(p)) {
+        res.setHeader('X-Frame-Options', 'SAMEORIGIN');
       }
     },
   }); // 极简管理页

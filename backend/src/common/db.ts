@@ -28,7 +28,10 @@ export const pool = new Pool({
   idleTimeoutMillis: 30000,
   // 统一会话时区（本地部署单店为中国门店）：CURRENT_DATE / ::date / now() 均按东八区，
   // 避免 UTC 集群下凌晨时段「今日」落到昨天的口径漂移
-  options: '-c TimeZone=Asia/Shanghai',
+  // Q-06 超时护栏：单条语句 30s / 事务内空闲 60s —— 防"失控查询/忘提交的事务"
+  // 长期占着连接把 40 连接的池拖光（报表全表扫、调试断点挂事务都会触发）。
+  // 30s 远大于正常结账单语句耗时（P-03 批量化后为毫秒级），不会误伤业务。
+  options: '-c TimeZone=Asia/Shanghai -c statement_timeout=30000 -c idle_in_transaction_session_timeout=60000',
 });
 
 // 会话时区兜底（部分驱动版本不支持 startup options 时保证生效）
@@ -70,13 +73,21 @@ export async function tx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
 }
 
 /**
- * P2-M9：单号发号——事务级 advisory lock 串行化同前缀取号，杜绝并发 count(*)+1 撞 UNIQUE
- * 返回 [{n}] 形状以兼容既有 seq[0].n 用法；table/col 仅允许内部字面量（防注入）
+ * P-01：原子发号——用 doc_seq 计数器替代「全局事务级 advisory 锁 + 每笔 LIKE count(*)+1」。
+ * 语义与原实现完全一致（返回同前缀下「当前行数 + 1」），但：
+ *   - 首次见到某 (table,col,pattern) 时按表内匹配行数初始化计数器，之后纯 O(1) 自增；
+ *   - INSERT … ON CONFLICT DO UPDATE 保证并发安全，无需 advisory lock（消除高并发取号串行化与慢前缀扫描）。
+ * 返回 [{n}] 形状以兼容既有 seq[0].n 用法；table/col 仅允许内部字面量（防注入）。
  */
 export async function seqLock(c: PoolClient, table: string, col: string, pattern: string): Promise<{ n: number }[]> {
   if (!/^[a-z_]+$/.test(table) || !/^[a-z_]+$/.test(col)) throw new Error('seqLock 仅允许内部表/列名');
-  await c.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`seq:${table}:${pattern}`]);
-  const r = await c.query(`SELECT count(*)+1 AS n FROM ${table} WHERE ${col} LIKE $1`, [pattern]);
+  const key = `seq:${table}:${col}:${pattern}`;
+  const r = await c.query(
+    `INSERT INTO doc_seq (k, n)
+       VALUES ($1, (SELECT COALESCE(count(*),0)::int FROM ${table} WHERE ${col} LIKE $2) + 1)
+     ON CONFLICT (k) DO UPDATE SET n = doc_seq.n + 1
+     RETURNING n`,
+    [key, pattern]);
   return r.rows as { n: number }[];
 }
 
@@ -92,16 +103,29 @@ export const r3 = (n: number) => Math.round(n * 1000) / 1000;
 /** 权重/比例保留 4 位 */
 export const r4 = (n: number) => Math.round(n * 10000) / 10000;
 
-/** 审计留痕（十 权限与数据安全：敏感操作全量记录） */
+/** 审计留痕（十 权限与数据安全：敏感操作全量记录）。返回是否写入成功。
+ *
+ *  V5.0.19e 加固：改为「失败告警但不抛异常」。
+ *  旧行为是向上抛错，而调用方普遍写成 `await audit(...).catch(() => { })` —— 写不进去时
+ *  既没有日志也没有报错，留痕被静默吞掉（2026-10-09 事故里就出现过 `audit_logs_pkey`
+ *  主键冲突的未处理异常，留痕到底有没有落库无人知晓）。
+ *  现在：写失败一定落一条 ERROR 日志（含模块/动作），业务继续；需要强校验的调用方
+ *  可自行判断返回值（清库/恢复等场景另有不可删的 data_reset_history 兜底留痕）。 */
 export async function audit(
   storeId: number | null, employeeId: number | null,
   module: string, action: string,
   targetType?: string, targetId?: number, detail?: any,
-): Promise<void> {
+): Promise<boolean> {
   const cli = txStore.getStore(); // P3-2
-  await (cli ?? pool).query(
-    `INSERT INTO audit_logs (store_id, employee_id, module, action, target_type, target_id, detail)
-     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`,
-    [storeId, employeeId, module, action, targetType ?? null, targetId ?? null, detail ? JSON.stringify(detail) : null],
-  );
+  try {
+    await (cli ?? pool).query(
+      `INSERT INTO audit_logs (store_id, employee_id, module, action, target_type, target_id, detail)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`,
+      [storeId, employeeId, module, action, targetType ?? null, targetId ?? null, detail ? JSON.stringify(detail) : null],
+    );
+    return true;
+  } catch (e: any) {
+    console.error(`[审计留痕失败] ${module}/${action}（target=${targetType ?? '-'}/${targetId ?? '-'}）: ${e?.message || e}`);
+    return false;
+  }
 }

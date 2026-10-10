@@ -180,7 +180,7 @@ class DividendEngine {
         }
         for (const row of rows) { row.amount = (row._cents || 0) / 100; delete row._cents; }
       }
-      // 年化预警
+      // 年化预警（Q-04 B2：展示层阈值分母——评审明确豁免保留元域，不落账本）
       const totalBalance = rows.reduce((s: number, x: any) => s + x.balance, 0);
       const annualized = totalBalance > 0 ? pool * 365 / totalBalance * 100 : 0;
       return {

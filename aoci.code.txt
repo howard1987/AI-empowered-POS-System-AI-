@@ -4,15 +4,15 @@
 docker-compose.yml[CB7S]: F:本地化一键起PG: pgvector/pg15容器(cashier-pg,5432,卷pgdata,restart unless-stopped); 仅数据库服务, 应用由build-all产出server包独立运行。 | R:- | A:POSTGRES_PASSWORD默认cashier123(env可覆盖); 卷持久化; 不含应用层(设计上应用独立部署)。 | S:开发/演示快速起PG; 生产用内嵌便携PG(见build-all); 单容器。
 prod.yaml[CB7S]: F:根生产配置集: prod.yaml(服务端运行参数/端口/库连/运行模式/密钥env优先) 与 login.yaml(登录页标题/副标/默认服务地址/工号占位) 同属部署配置; 本地化部署主入口。 | R:- | A:env 优先于文件(max(32)随机持久化兜底见common/secret·auth); 改端口/库连须重启; 与build-all装配的.env.example配对; login.yaml仅文案不含凭据。 | S:不随发布包(含本机密钥); 首启自动生成缺失项; 单店部署即全部。
 .gitattributes[FG3T]: F:Git属性配置(5行)。 | R:- | A:- | S:-
-.gitignore[FG3T]: F:Git忽略规则: node_modules/dist/.env/.runtime/日志/备份/临时产物等。 | R:- | A:- | S:-
+.gitignore[FC6T]: F:Git忽略规则：构建产物(dist/release/*.exe)、运行资产(*.onnx/models/tts)、运行期数据(uploads/signatures/certs/.runtime)、日志备份、临时调试件、移动端构建、vendor PG客户端、tts调试产物。 | R:- | A:- | S:backend/tools 整目录被忽略：内含真实管理员密码的运维工具，绝不入仓库或安装包
 AGENTS.md[SG6T]: F:AOCI仓库认知说明: aoci.txt结构化认知索引定位与Entry语义(每受管对象一条F/R/A/S); 内容变更只需维护受影响条目。 | R:- | A:- | S:-
 LICENSE[SG2T]: F:项目许可证文本(17行)。 | R:- | A:- | S:-
 README.md[SG8M]: F:项目总览: 社区超市收银系统V5.0.0连锁版(云边协同·本地主库·会员驱动); 核心差异会员即股东每日按储值余额分红; 内置本地AI识别/智能定价/购销寄售对账/多门店; 店内本地部署为默认。 | R:code:deploy/README_DEPLOY.md | A:- | S:-
 login.yaml[XQ3T]: F:登录页自动化测试快照(playwright快照/aria快照,含页面结构与ref)。 | R:- | A:- | S:-
 start-backend.ps1[OV7S]: F:后端启动脚本(PowerShell,196行): 开发环境启动后端服务。 | R:- | A:- | S:-
-start-dev.bat[OV7S]: F:开发环境一键启动脚本(143行): 拉起后端与各端服务。 | R:- | A:- | S:-
+start-dev.bat[OV7S]: F:开发环境一键启动：经 launch-dev.ps1 隐藏拉起 dev-launch.mjs（后端/Web/H5 看护，PG 由独立服务提供）。 | R:code:launch-dev.ps1,code:dev-launch.mjs | A:- | S:-
 start-pos.bat[OV6T]: F:收银台启动脚本: 打开PWA收银端(36行)。 | R:- | A:- | S:-
-stop-dev.bat[OV4T]: F:开发环境停止脚本(8行)。 | R:- | A:- | S:-
+stop-dev.bat[OV4T]: F:开发环境停止脚本。 | R:- | A:- | S:-
 test-h5-member.bat[TQ5T]: F:测试启动器: 打开会员H5端(76行)。 | R:- | A:- | S:-
 test-pos.bat[TQ5T]: F:测试启动器: 打开EXE/收银台(49行)。 | R:- | A:- | S:-
 test-pwa-mobile.bat[TQ5T]: F:测试启动器: 手机模拟打开PWA(61行)。 | R:- | A:- | S:-
@@ -20,20 +20,26 @@ test-server.bat[TQ5T]: F:测试启动器: 打开服务端管理后台(49行)。 
 安全整改说明-P0P3.md[SS6S]: F:安全整改实施记录与架构债说明(P0→P3)。 | R:- | A:- | S:-
 版本修复记忆-V4.28.x.md[SG6S]: F:版本修复记忆V4.28.x(含V5.0.0连锁基线): 各版本修复要点速查。 | R:- | A:- | S:-
 金额分单位化专项评审.md[SG6S]: F:金额运算一律分单位专项评审(决策③,已确认并实施完毕)。 | R:- | A:- | S:-
+_ntpchk.ps1[RO3T]: F:与ntp.aliyun.com对时的PowerShell核查工具：UDP发NTP请求读Transmit Timestamp，打印NTP/本机时间与时钟偏差毫秒，用于排查服务器时钟漂移（本地时间错会导致日结/分红归属错日）。 | R:- | A:- | S:-
+cmd-window-monitor.ps1[XP5T]: F:CMD 弹窗取证监控（V5.0.18g）：抓「秒弹秒关」控制台窗口背后的真实进程（路径+完整命令行+启动时间），持续追加同目录 log。 | R:- | A:- | S:-
+dev-launch.mjs[XP5T]: F:轻量 dev 启动器：拉起并看护后端（3100/3443）、Web 后台（8088）、会员 H5（8089）；不管理 PG（由 Windows 服务 pos-cashier-pg 提供）。 | R:- | A:- | S:-
+launch-dev.ps1[XP5T]: F:隐藏启动 dev-launch.mjs（后端/Web/H5 看护，不管理 PG），由 start-dev.bat -File 调用避免引号解析问题。 | R:code:dev-launch.mjs | A:- | S:-
+代码精简与共享统一-V5.0.6.md[SV6M]: F:批次变更说明（V5.0.6）：重复实现收敛清单（如 sales.fifo 两路径共用、sales.pure 纯函数抽离）与迁移记录。 | R:- | A:- | S:-
+超市收银系统-V5.0.7-表格铺满与价签并入打印中心.md[SV6M]: F:批次变更说明（V5.0.7）：表格铺满（docTable）改造与价签现场打印并入打印中心的设计与影响面。 | R:- | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/src/===
-app.module.ts[KA1M]: F:根模块装配: 聚合所有业务模块(Auth/Products/Sales/Pay/Chain/Sync 等); 注册全局 AuthGuard/异常过滤器/响应拦截器; /health 连带探活 PG。 | R:- | A:模块顺序即依赖装配; ArchiveJob 作 provider 每日 03:40 归档; 控制器含 Fraud/Profile/AiMarket/AiPricing/RemoteSign; health 仍返 200 但附 db 状态供启动脚本判真就绪。 | S:仅装配声明; 新增模块须在此登记否则不生效; 无业务规则。
-main.ts[KA1M]: F:Nest 应用引导与进程级兜底: CORS 来源白名单(回环+同主机)、/uploads 登录鉴权(F-09)、未捕获异常追加 logs/error.log 且进程不退出、error.log 超 5MB 滚动、启动 mDNS/局域网证书。 | R:- | A:仅放行回环与同主机来源防内网跨源带凭据; /uploads 校验员工 Bearer(member token 拒读员工图); uncaughtException/unhandledRejection 追加日志后继续存活; V5 模块全量注册于 AppModule.imports。 | S:本地化部署内网来源可信; 错误详情仅落服务端不回前端; 不改动业务事务语义。
+app.module.ts[KA1M]: F:根模块装配：聚合所有业务模块（Auth/Products/Sales/Pay/Chain/Sync 等）；注册全局 AuthGuard/异常过滤器/响应拦截器；/health 连带探活 PG。 | R:- | A:模块顺序即依赖装配；ArchiveJob 作 provider 每日 03:40 归档；health 返 200 但附 db 状态供启动脚本判真就绪 | S:仅装配声明；新增模块须在此登记否则不生效；无业务规则。
+main.ts[KA1M]: F:Nest 应用引导与进程级兑底：CORS 来源白名单（回环+同主机）、/uploads 与 /signatures 登录鉴权、未捕获异常追加 logs/error.log 且进程不退出、error.log 超 5MB 滚动、启动 mDNS/局域网证书。 | R:- | A:/uploads 与 /signatures 静态中间件：Bearer header 收长效 token，query ?token= 只收 scope=img 60s 短票据（F-05，长效 JWT 走 URL 被 401）；对 admin/member 静态文档发 X-Frame-Options:SAMEORIGIN（F-08）；uncaughtException/unhandledRejection 追加日志后继续存活 | S:错误详情仅落服务端不回前端；收窄 query 闸门须同步三端 imgUrl 消费端。
 typings.d.ts[FV6T]: F:P3治理·onnxruntime-node类型垫片: 官方无声明文件,仅声明InferenceSession/Tensor最小面(any兜底),满足noImplicitAny双重引用。 | R:- | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/src/common/===
-auth.ts[CU9M]: F:JWT 鉴权与权限: JWT_SECRET 随机持久化; AuthGuard 校验 Bearer、默认密码门禁、按 perms 放行、停用/token_version 吊销; dataScope 入 JWT。 | R:- | A:权限点登录时一次性打入避免每请求查库; P0-F3 拒弱密钥与初始密码门禁; V5 数据范围 self/region/all 登录解析一次; setCtx 写权威归属。 | S:不依赖工号硬编码豁免(防用户名级绕过); 角色变更/改密需重新登录; 密钥文件随店迁移或改 env。
-cert.ts[CB7S]: F:局域网 HTTPS 证书自动跟随动态 IP: lanIPv4 探测网卡; ensureLanCert IP 变化自动重签(SAN 含 localhost/mDNS/IP), 失败只告警。 | R:- | A:IP 变化(换网段/DHCP)自动重签, 二维码随之指向新 IP; 失败只告警不阻断(HTTPS 可不启用); baseDir 由 main 传入防 dist 层级错位。 | S:自签名证书仅局域网可信; 手机/收银机用域名访问无需改配置; 不影响 IP 直连。
+auth.ts[CU9M]: F:JWT 鉴权与权限：JWT_SECRET 随机持久化；AuthGuard 校验 Bearer、默认密码门禁、按 perms 放行、停用/token_version 吊销；dataScope 入 JWT。 | R:- | A:权限点登录时一次性打入避免每请求查库；拒弱密钥与初始密码门禁；V5 数据范围 self/region/all 登录解析一次；setCtx 写权威归属 | S:不依赖工号硬编码豁免（防用户名级绕过）；角色变更/改密需重新登录；密钥文件随店迁移或改 env。
+cert.ts[CB7S]: F:局域网 HTTPS 证书自动跟随动态 IP：lanIPv4 探测网卡；ensureLanCert IP 变化自动重签（SAN 含 localhost/mDNS/IP），失败只告警。 | R:- | A:IP 变化自动重签，二维码随之指向新 IP；失败只告警不阻断；baseDir 由 main 传入防 dist 层级错位 | S:自签名证书仅局域网可信；不影响 IP 直连。
 context.ts[CU9M]: F:请求级店铺上下文(AsyncLocalStorage): runWithStoreCtx/setCtx/curStore/curScope; 写路径权威归属, 读路径可见范围; 无上下文回退 store=1/all。 | R:- | A:单店 54 处硬编码 store_id 统一改经守卫写上下文传递; V5 新增 dataScope 读路径可见范围(登录解析一次); self 无集合时至少含本店防误判不限制。 | S:多店扩张仅需保证写路径经守卫; 原 63 模块 SQL 不再逐处传参; job/CLI 默认 all 不拦。
-db.ts[DB9M]: F:PG 连接池与事务基础设施: q/q1 查询、tx 事务(AsyncLocalStorage 传连接)、seqLock 取号防撞、r2/r3/r4 四舍五入、audit 审计随事务回滚。 | R:- | A:空闲连接 error 事件监听防进程打崩; seqLock 仅允许内部表/列名防注入; 审计与业务同事务一致; NUMERIC 列返回字符串需 Number()。 | S:与 db/001_init.sql 基线一一对应; 后续引 ORM 需先评审迁移规范; 金额全程分整数。
-http.ts[CU9M]: F:统一响应与异常: BizException、AllExceptionsFilter(未知异常详情仅落日志不透前端, TypeError→40003, 413 超限)、WrapInterceptor 包装 {code,msg,data}。 | R:- | A:成功由拦截器包装, 失败由过滤器包装统一 {code,msg,data}; 未知异常不回 PG 报错原文(信息泄露); payload 过大 413 中文提示。 | S:错误码按开发执行文件第4节(50xxx 业务等); 详情落 logs/error.log; 不向客户端透传栈。
+db.ts[DB9M]: F:PG 连接池与事务基础设施：q/q1 查询、tx 事务（AsyncLocalStorage 传连接）、cx 事务内查询、seqLock 取号防撞、r2/r3/r4 四舍五入、audit 审计随事务回滚。 | R:- | A:空闲连接 error 事件监听防进程打崩；seqLock 仅允许内部表/列名防注入；审计与业务同事务一致；NUMERIC 列返回字符串需 Number() | S:与 db/001_init.sql 基线一一对应；后续引 ORM 需先评审迁移规范；金额全程分整数。
+http.ts[CU9M]: F:统一响应与异常：BizException、AllExceptionsFilter（未知异常详情仅落日志不透前端，TypeError→40003，413 超限）、WrapInterceptor 包装 {code,msg,data}。 | R:- | A:成功由拦截器包装，失败由过滤器包装统一 {code,msg,data}；未知异常不回 PG 报错原文（信息泄露）；payload 过大 413 中文提示 | S:错误码按开发执行文件第 4 节（50xxx 业务等）；详情落 logs/error.log；不向客户端透传栈。
 mdns.ts[CB7S]: F:局域网 mDNS 广播: startMdns 应答/宣告 pos-server.local→本机 IP; 设备用域名访问无需改配置; 无 IP 不应答, 失败只告警。 | R:- | A:启动+每60s 主动宣告(类 gratuitous ARP); 无局域网 IP 不应答; 失败只告警不阻断(仍可用 IP 直连)。 | S:Windows10+/iOS/macOS/Android Chrome 支持 .local; 与 cert.ts 的 MDNS_HOST 协同。
-secret.ts[KU8M]: F:敏感设置加密: AES-256-GCM(enc:v1); 主密钥 PAY_ENC_KEY 或随机持久化; encrypt/decrypt(兼容 LEGACY)/mask 脱敏。 | R:- | A:非 enc:v1: 旧值原样透传兼容; 重新保存自动升级新密钥; 密文前缀识别幂等; P0-F2 杜绝拿到源码=拿到密钥。 | S:明文/密文不出服务端; 界面只回脱敏值; 损坏抛错由调用方处理。
+secret.ts[KU8M]: F:敏感设置加密：AES-256-GCM（enc:v1）；主密钥 PAY_ENC_KEY 或随机持久化；encrypt/decrypt（兼容 LEGACY）/mask 脱敏。 | R:- | A:非 enc:v1 旧值原样透传兼容；重新保存自动升级新密钥；密文前缀识别幂等 | S:明文/密文不出服务端；界面只回脱敏值；损坏抛错由调用方处理。
 sql.ts[DB9M]: F:共享 SQL 片段(V5): PRODUCT_VISIBLE(可售)、COST_REF(L1 进价优先回落)、MIN_PRICE_EXPR(红线)、PRODUCT_BROWSABLE(可查); 一处定义多处引用。 | R:- | A:store_products 为空时仅命中本店(单店零回归); 可售必须走 VISIBLE 档案查询可用 BROWSABLE; L1 为空回落供应商最新报价(防存量红线失守)。 | S:调用方负责参数位置与别名; 单店部署行为与改造前 WHERE p.store_id=$1 一致。
 hlc.ts[OZ9L]: F:V5 混合逻辑时钟 HLC: (physical,counter,node_code) 全序, 落地 sync_hlc+sync_seq; hlcTick 业务事务内、hlcReceive 收远端; 排序键修正为 (biz_ts,node_code,seq)。 | R:- | A:物理时间=max(now,last); DB 为权威, 事务内写同生共死; 行缺失退化为进程内时钟兜底不炸; 原方案 seq 跨节点会撞已修正。 | S:跨店先后判断(会员消费/库存流水/批次/对账)用逻辑时钟不用物理时间; 多进程/重启/断电不回退。
 member-auth.ts[CU9M]: F:会员端 JWT 鉴权: MemberGuard 校验 Bearer(kind=member 与员工端互不通用)、MemberPublic 免登录、CurrentMember 装饰器。 | R:- | A:member token 不可用于员工端点(员工端反向同理); setCtx 写入会员端店铺上下文; 未登录抛 401。 | S:与员工端 JWT_SECRET 同源但 kind 区分; 仅会员档案/小程序相关端点使用。
@@ -45,76 +51,94 @@ password-policy.ts[CU9M]: F:密码强度策略(R8 员工/会员共用): 按 auth
 pinyin.ts[CB7S]: F:商品拼音码自动生成: genPinyin 中文名取拼音首字母、英数字原样、截 20 位; 解决手工 pinyin_code 大量 NULL。 | R:- | A:解决手工填 pinyin_code 大量 NULL 致拼音搜索无数据; 异常返回空不阻断建档。 | S:仅在商品建档/改名时调用; 与拼音搜索功能配套。
 ratelimit.ts[CU9M]: F:进程内限流器: allow 固定窗口、failAndLock 爆破锁、clientIp 取真实 socket(仅 TRUST_PROXY=1 信 XFF)。 | R:- | A:本地单实例进程内 Map 足够, 重启清零(已知取舍); buckets<512 不扫; IP 维度频控+账号维度爆破锁。 | S:单实例部署适用; 不跨进程共享计数; 代理前置需 TRUST_PROXY=1。
 scope.ts[CB7S]: F:V5 数据范围入口: chainEnabled(库有 hq 行=连锁, 缓存60s)、storeFilter(读过滤)、assertStoreAllowed(写越权403)、resolveReportStores; 单店无总部行→全空操作。 | R:- | A:单店无总部行→chainEnabled false→storeFilter 空片段/assertStoreAllowed 空操作(单店零回归100%一致); region 取交集、self 强制本店、all 不限制; 校验以服务端为准。 | S:总部行创建后最多60s生效; 写路径未指定归属视为本店; 与 V5 连锁方案§2.6 三道闸一致。
-uploads.ts[CB7S]: F:AI 图片存储入口: UPLOADS_DIR 可外置、按月分目录; uploadsFilePath 防路径穿越(拒 .. /绝对路径); 旧新路径通吃。 | R:- | A:新图按月分目录防单目录爆炸; 旧新路径通吃; P1-H3 路径穿越收口返回''。 | S:识别帧保留期清理见 ai.housekeeping; 历史图无子目录兼容; 与 /uploads 鉴权(main)协同。
+uploads.ts[CB7S]: F:AI 图片存储入口：UPLOADS_DIR 可外置、按月分目录；uploadsFilePath 防路径穿越（拒 .. /绝对路径）；旧新路径通吃；/signatures 顾客签名同套存储。 | R:- | A:新图按月分目录防单目录爆炸；P1-H3 路径穿越收口返回 '' | S:识别帧保留期清理见 ai.housekeeping；历史图无子目录兼容；与 /uploads、/signatures 鉴权（main）协同。
+device-name.ts[IH7M]: F:设备名称/类型自动识别（V5.0.11d，后端唯一收口点）：从 User-Agent 提取品牌型号（vivo/OPPO/小米/华为/荣耀/三星等前缀映射）推断 device_name/device_type。 | R:- | A:后端做而非前端的理由：UA 难伪造（前端 device_type 可自报）；设备友好名称是隐私 API 拿不到 | S:-
+logger.ts[CO6T]: F:统一运行日志出口（Log Adapter）：logInfo/logWarn 走 console，logError 额外独占追加写 backend/logs/error.log（唯一写入口）。 | R:- | A:业务审计仍走 audit()（DB），与本模块无关；存量 console.* 渐进迁移不强制 | S:-
+paging.ts[CG6T]: F:分页参数统一钉制：sizeOf(size,def,max) 钉 [1,max]、pageOf(page) 钉 ≥1、offsetOf、parsePaging 组合；Q-07 报告点名模块已迁移。 | R:- | A:各端点默认值/上限各异，调用点须显式传 (def,max)——不提供全局默认 | S:-
+sign-guard.ts[DB6T]: F:必签校验共享实现（Q-03 抽取）：assertSigned(settings,c,scene,table,bizId,docNo)——按 auth.sign_required_scenes 配置判定场景，未签字抛 50018；inventory/purchase 两模块薄委托。 | R:- | A:settings 参数只依赖 {getJson} 签名避免循环依赖 | S:-
+timeouts.ts[CG6T]: F:命名超时常量（Q-07）：DEVICE_PROBE_TIMEOUT_MS/HQ_HTTP_TIMEOUT_MS/EXTERNAL_API_TIMEOUT_MS/EXTERNAL_API_FAST_TIMEOUT_MS/TTS_PREHEAT_DELAY_MS。 | R:- | A:替换散落魔法数（6000/8000/3000），数值与原实现逐一相等纯命名 | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/src/modules/===
-auth.module.ts[II9M]: F:员工认证与账户安全：登录/PIN/扫码三路签发JWT（权限点与数据范围打入令牌）、超管按角色判定、设备授权、扫码登录票据、密码策略与首个管理员检测。 | R:- | A:令牌内零查库（perms/ds/ss登录时解析一次打入）；超管改按角色(超级管理员)判定非写死工号；设备授权开启后未授权设备40307待审批、超管豁免防锁死；数据范围self/region/all预解析门店集合(ss)；扫码票据内存态5分钟一次性。 | S:杜绝硬编码密钥与ADMIN工号绕过；member token拒用于员工端点；密码强度走common/password-policy共用策略；首管理员线索仅回工号+姓名不外传凭证。
-inventory.module.ts[DB9M]: F:库存中心：即时库存列表(含规格/保质期/供应商/金额)、批次FIFO溯源、临期预警(7黄3橙+超时处罚)、临期处置、盘点(账实分离录入即生效审核后置)。 | R:- | A:批次=供应商×入库单×批次号(FIFO溯源);临期处置状态机(未处理→处理中→已退换)时限内须完成;盘点盘亏按FIFO扣批盘盈调即时库存;处置完成库存快照经outbox上行;必签场景(可调auth.sign_required_scenes)未签拒过审。 | S:库存金额按本门店售价估(V4.26.5门店价隔离);连锁调拨范围经common/scope断言;临期时限默认48h可配。
-members.module.ts[DB9M]: F:会员中心：即输即查(手机/卡号/姓名/拼音码,本店收敛+脱敏)、建档(卡号自动生成+资产账户)、等级升降级(本金余额判级+宽限期)、储值/重置密码/详情。 | R:- | A:等级仅按本金余额判级(赠送不参与,连锁累计消费升级作废)；升级即生效可跨级,降级记level_below_since连续grace_days天才降;建档V5连锁门店→卡号由总部生成(防撞号)本地落镜像行资产以总部为准;手机号脱敏仅balance.adjust可见完整。 | S:会员主档归总部(hq_store_id)消费按交易店记账;连锁门店建档总部不可达明确报错不静默;查询按本店数据范围收敛(F-06)。
-pos.module.ts[EB9M]: F:收银台接口：全量价目表下发(条码/名称/售价/会员价/多单位/启停,版本=MD5写快照)、新鲜度硬闸、挂单/取单、库存实时查询、促销预览、商品详情(含批次溯源)。 | R:- | A:价目表随下发合成改价/折扣红线价=max(最低卖价线,标准进价L1)且不暴露进价；门店覆盖价重写红线；秤码解析元数据随价目表下发断网本地解析；缓存正确性三原则(常备全量/不缓存库存会员资产/哈希增量)。 | S:应急模式须价目表新鲜(freshness≤72h)否则禁入；库存/会员资产刻意走实时接口非缓存；价目表剔除OPENKEY占位与进价中间量。
-products.module.ts[DB9M]: F:商品建档与条码库：建档输码自动带出名称/规格/预估价（本店库→mxnzp→OpenFoodFacts→必应爬虫互补），xlsx/CSV批量导入，拼音码自动生成，门店覆盖价隔离。 | R:- | A:条码大数据「预填不锁定」——查到字段仅填空位可改；人工确认数据(barcode_cache manual)压过一切在线源并回写越用越准；必应爬虫限速码间≥3s每日上限标unverified；名称清洗去营销词/站点尾巴/条码数字。 | S:保质期为各源均无权威数据留人工必填；在线源/爬虫命中失败静默跳过不阻断建档；门店价经store-price.service按门店隔离。
-sales.module.ts[DB9L]: F:收银结账核心：服务端计价（改价需授权留痕、会员价优先）、FIFO扣批次（事务+行锁防超卖）、多支付组合（余额/分红/积分联动）、会员权益（积分/等级同步）。 | R:- | A:金额按分整数计算(RV-01)；整单/单品折扣与赠品须店长现场授权票据(120s,scope=price)；应急收银受价目表新鲜度72h硬闸；交接班归属校验；开放键临时行不建档案不碰库存；连锁门店非负库存服务端拦截。 | S:会员权益口径B拆分本金/赠送；分红/积分抵扣不计入有效消费(双门槛)；clientRef幂等防离线重发；最低售价红线=max(最低卖价线,进价L1)不得破。
+auth.module.ts[II9M]: F:员工认证与账户安全：登录/PIN/扫码三路签发 JWT（权限点与数据范围打入令牌）、超管按角色判定、设备授权、扫码登录票据、密码策略、/auth/img-ticket 签发图片短票据。 | R:- | A:令牌内零查库（perms/ds/ss 登录时解析一次打入）；设备授权开启后未授权设备 40307 待审批、超管豁免防锁死；img-ticket 签发 60s 票据 payload scope:'img'（F-05，仅 /uploads、/signatures query 闸门接受，不能调业务接口）；扫码票据内存态 5 分钟一次性 | S:杜绝硬编码密钥与 ADMIN 工号绕过；member token 拒用于员工端点；首管理员线索仅回工号+姓名不外传凭证。
+inventory.module.ts[DB9M]: F:库存中心：即时库存列表（含规格/保质期/供应商/金额）、批次 FIFO 溯源、临期预警（7黄3橙+超时处罚）、临期处置、盘点（账实分离录入即生效审核后置）。 | R:- | A:批次=供应商×入库单×批次号（FIFO 溯源）；临期处置状态机时限内须完成；盘点盘亏按 FIFO 扣批盘盈调即时库存；处置完成库存快照经 outbox 上行；必签校验委托 common/sign-guard（Q-03 统一） | S:库存金额按本门店售价估；连锁调拨范围经 common/scope 断言；临期时限默认 48h 可配。
+members.module.ts[DB9M]: F:会员中心：即输即查（手机/卡号/姓名/拼音码，本店收敛+脱敏）、建档（卡号自动生成+资产账户）、等级升降级（本金余额判级+宽限期）、储值/重置密码/详情。 | R:- | A:等级仅按本金余额判级（赠送不参与）；升级即生效可跨级，降级记 level_below_since 连续 grace_days 才降；建档 V5 连锁门店→卡号由总部生成（防撞号）本地落镜像行；手机号脱敏仅 balance.adjust 可见完整 | S:会员主档归总部（hq_store_id）消费按交易店记账；连锁门店建档总部不可达明确报错不静默；查询按本店数据范围收敛。
+pos.module.ts[EB9M]: F:收银台接口：全量价目表下发（条码/名称/售价/会员价/多单位/启停，版本=MD5 写快照）、新鲜度硬闸、挂单/取单、库存实时查询、促销预览、商品详情（含批次溯源）。 | R:- | A:价目表随下发合成改价/折扣红线价=max(最低卖价线,标准进价 L1)且不暴露进价；门店覆盖价重写红线；秤码解析元数据随价目表下发断网本地解析；缓存正确性三原则（常备全量/不缓存库存会员资产/哈希增量） | S:应急模式须价目表新鲜（freshness≤72h）否则禁入；库存/会员资产刻意走实时接口非缓存；价目表剔除 OPENKEY 占位与进价中间量。
+products.module.ts[DB9M]: F:商品建档与条码库：建档输码自动带出名称/规格/预估价（本店库→mxnzp→OpenFoodFacts→必应爬虫互补），xlsx/CSV 批量导入，拼音码自动生成，门店覆盖价隔离。 | R:- | A:条码大数据「预填不锁定」——查到字段仅填空位可改；人工确认数据压过一切在线源并回写越用越准；必应爬虫限速码间≥3s 每日上限标 unverified；名称清洗去营销词/站点尾巴/条码数字；在线超时走 EXTERNAL_API_TIMEOUT_MS/FAST（Q-07） | S:保质期为各源均无权威数据留人工必填；在线源/爬虫命中失败静默跳过不阻断建档；门店价经 store-price.service 按门店隔离。
+sales.module.ts[DB9L]: F:收银结账核心：checkout 按聚合拆四切片服务（pricing/persist/payments/assets，Q-01 行为不变）；服务端计价（改价需授权留痕）、FIFO 扣批次防超卖、多支付组合、会员权益同步。 | R:- | A:金额按分整数计算（RV-01）；整单/单品折扣与赠品须店长现场授权票据（120s，scope=price）；应急收银受价目表新鲜度 72h 硬闸；交接班归属校验；连锁门店非负库存服务端拦截 | S:会员权益口径 B 拆分本金/赠送；分红/积分抵扣不计入有效消费（双门槛）；clientRef 幂等防离线重发；最低售价红线=max(最低卖价线,进价 L1)不得破。
 basic.module.ts[CB7S]: F:基础数据下拉接口：门店列表（含经纬度/营业时间供 H5 就近分配）、在职员工列表（按角色筛选供盘点指派）、品类列表（含层级路径）。 | R:- | A:门店输出经纬度与营业时间由客户端 haversine 算就近；员工按 role 名过滤在职；品类按 path 排序含 parent_id/level；单店版返回本店。 | S:只读下拉无写操作；多门店扩展预留；品类仅 status=1 在售。
-chain.module.ts[DB9M]: F:V5 连锁门店管理（批次2）：总部门店增删改查/启停/闭店（hq.store.*）、新建门店自动克隆内置角色（店长/收银/库管/财务，剔除 hq.* 权限点）、门店首个店长一键创建、列表按 data_scope 过滤。 | R:- | A:新店自动初始化内置角色从模板门店克隆（剔除 hq.* 防御性强制 store/self）；门店编码 S+3位顺延；生成节点码/节点密钥落库（批次4 同步鉴权用）；首个店长账号一键创建闭环；角色模板无总部行时回落 store_id=1；门店列表按 storeFilter 数据范围过滤。 | S:单店零回归：无 org_type='hq' 行时门店列表/编辑照常可用（本节点门店即唯一可见行）；新店只新增 store+role 行不影响现有；超管只属总部；门店角色永不含 hq.* 权限。
-coupons.module.ts[DB9M]: F:优惠券引擎：券模板/发券/领取/核销/过期；满减/折扣/兑换/次卡四型；多券叠加裁决（single/manual/auto）；收银核销在促销层之后调用。 | R:- | A:记账口径 应收=goods−promo−coupon−member_discount+round；券在促销之后算、门槛按货值(goods_amount)；couponAmountOf 纯函数不读状态；validateMc 事务内 FOR UPDATE 防并发重核销；mode=single 取最优一张/manual 收银多选互斥/auto 系统自动组合求最大；次卡计次不抵扣。 | S:券抵扣非本金+现金不计入活跃窗口；券vs促销叠加开关可关；模板停用/过期/无商品匹配均不可用；核销只返回真正使用券实例 id 供留痕。
-promotions.module.ts[DB9M]: F:促销引擎：分层商品级（特价/第二件半价/定时打折）→范围级（满件折扣/捆绑销售）→整单级（满减/满折）；同层取一（默认更优）、跨层叠加可关（行级优先）；规则 JSONB 校验；消费后奖励（发券/赠品）。 | R:- | A:rules 按类型校验（满减 tiers/折扣 rate/定时打折时段/捆绑 items+bundlePrice/满件 minQty/消费后奖励 threshold+rewardType）；scope productIds/categoryIds 过滤；会员专享 memberOnly 一处过滤全部层；整单级优惠按行小比分摊到 line_amount（尾差进最后行供退货原路退）；临期自动折扣层与门店促销互斥（促销优先临期兜底）；take_best/stack_layers 开关。 | S:会员价与促销价冲突默认取更优；活动级数量约束 totalLimit/perMemberLimit 可选；赠品为真实出库（FIFO扣批+成本入账）；退货按行原路退。
-purchase.module.ts[DB9M]: F:采购与供应商：供应商/费用类型字典/费用协议/供应商变更单（调进价售价主供应商即时生效留痕）、入库审核到批次、退货自动归属、对账结算；必签校验（scenes 可配）。 | R:- | A:变更单落单即生效：逐行调新进价/售价/主供应商切换/独立供应（清除其他关联）全程留痕；费用协议周期/一次性+auto_generate 补漏记期次；seqLock 取号 GYSBG- 防撞；必签场景未签字拒绝过审；结算价=COST_REF(L1) 仅连锁模式触发对账引擎。 | S:供应商/费用类型建档同名复用不重复；明细上限200行；门店价经 store-price.service 隔离；进价 L1 兜底防红线失守。
-refund.module.ts[DB9L]: F:销售退款闭环：按原单明细行原路退（qty≤原行−已退）；整单级优惠（促销/券/抹零）按行小比分摊回冲；超免审限额进待审核；执行=批次回加+支付原路退+积分扣回+活跃窗口冲减。 | R:- | A:RV-01 按分整数：金额全程整数分尾差进最后一行；执行前重校验叠加在途/已退单不超原单数量与实付；批次按原销售批次逐批回加（sale_item_batches 反向+batches.remain_qty+stock_flows return_sale）；支付原路退余额按本金/赠送比例拆分、分红/积分冲回；有效消费窗口扣减堵退款保活跃漏洞；V5 连锁节点会员资产回补走总部（R3/R4）。 | S:状态机 创建中/待审核/已退款/已驳回 严格；限额之上审核通过才执行驳回不执行；连锁门店本地不重复记账（权威账本在总部）；错误码 50070~50075。
-reports.module.ts[KU8M]: F:报表中心：首页看板(今日销售/会员/分红/库存预警/临期)、日销售汇总(按天+支付构成+目标达成率)、商品ABC分析、分红期间汇总、赠品记录、券库存看板；均为只读聚合。 | R:- | A:口径统一以「已完成」订单为准；ABC 按销售额累计占比80/15/5分层；赠品识别=line_remark前缀「赠品」(手工/消费后奖励两类均真实出库)；券库存=入库−已发−已核销−已过期−作废+核销率+让利；V5 全部端点加 storeId + resolveReportStores 强制范围（self/region/all，单店零回归）。 | S:登录即可访问(report.view.all)；门店账号强制本店、区域限本区域、总部可切；低库存/临期阈值依赖 settings 配置；数据隔离与连锁一致。
-settings.module.ts[CU9M]: F:系统设置与门店级覆盖：九大分组设置读写、secret 脱敏与加密落库、全量留痕；V5 门店级覆盖值读取（store_settings 覆盖 system_settings）。 | R:- | A:门店级键优先 store_settings 覆盖回落 system_settings.value；secret 加密落库、留痕审计只记脱敏值、掩码回显视作不修改；分红核心参数改需 sys.settings+member.dividend.adjust 双权限；连锁 hq 级键门店不可改；SSRF 收口 URL/Host 校验（预测服务本机限）；低频缓存 cachedVal 5min TTL。 | S:secret 明文/密文不出服务端；门店账号（非总部视角）改的是本店覆盖值不动总部默认；单店部署无总部行时结果与改造前一致（无覆盖）。
-shift.module.ts[DB9M]: F:交接班：开班（单收银员仅一个进行中班+备用金登记+钱箱流水）、当前班次实时汇总、关班（应答=备用金+现金收入±存取，实点vs应答差异留痕超容差填原因）、钱箱过程管理（存入/取出必选原因）、班次报表。 | R:- | A:同一收银员同时仅一个进行中班（否则50065）；汇总按 channel 聚合+退款冲减现金+钱箱存取应答口径；关班差异超 pos.shift.diff_tolerance 强制填原因（0=不容差）；班次汇总按 sales_orders.shift_id 聚合归属=支付完成时间；V5 交班经 outbox 上行。 | S:只能关本人班次；开班备用金落钱箱流水为口径起点；钱箱取现/换零等过程必选原因留痕；收银可携 shiftId 使汇总按此聚合。
-sync.module.ts[OZ9L]: F:V5 同步层总部端：节点鉴权（Node 头+token+时间戳防重放）、门店批量上行（≤500/批幂等）、增量下拉、心跳、新店全量引导；JWT 后台端节点看板/重放/实时对数。 | R:- | A:Authorization: Node code:token + X-Sync-Ts(±300s) 与 stores.node_secret timingSafeEqual 比对；上行 payload 自包含业务快照不做 id 翻译、逐条幂等(rejected带原因)、跨店单号撞车首个先得后来拒绝整单重试；销售单 goods_no 优先条码兜底解析失败整单拒；P2-2 逐批出库明细落 sync_sale_batches 对账快照；批次5 会员总部账本累加(积分/有效消费/活跃窗口)权威在总部门店只镜像。 | S:单店零回归：单店库 sync_nodes 仅 is_self 的 hq 行，push/pull 永远401、对账 job 空跑；节点密钥明文比对 P2 可升 bcrypt；商品未同步整单留门店重试不丢数据；members 同步属批次5 本版不收。
+chain.module.ts[DB9M]: F:V5 连锁门店管理：总部门店增删改查/启停/闭店（hq.store.*）、新建门店自动克隆内置角色（剔除 hq.* 权限点）、门店首个店长一键创建、列表按 data_scope 过滤。 | R:- | A:新店自动初始化内置角色从模板门店克隆（剔除 hq.* 防御性强制 store/self）；门店编码 S+3 位顺延；生成节点码/节点密钥落库（同步鉴权用）；角色模板无总部行时回落 store_id=1 | S:单店零回归：无 org_type='hq' 行时门店列表/编辑照常可用；新店只新增 store+role 行；超管只属总部；门店角色永不含 hq.* 权限。
+coupons.module.ts[DB9M]: F:优惠券引擎：券模板/发券/领取/核销/过期；满减/折扣/兑换/次卡四型；多券叠加裁决；收银核销在促销层之后调用。 | R:- | A:记账口径 应收=goods−promo−coupon−member_discount+round；券在促销之后算、门槛按货值；裁决纯函数抽至 coupons.pure；validateMc 事务内 FOR UPDATE 防并发重核销；mode=single 取最优/manual 互斥/auto 组合择优；次卡计次不抵扣 | S:券抵扣非本金+现金不计入活跃窗口；券 vs 促销叠加开关可关；模板停用/过期/无商品匹配均不可用；核销只返回真正使用券实例 id 供留痕。
+promotions.module.ts[DB9M]: F:促销引擎：分层商品级（特价/第二件半价/定时打折）→范围级（满件折扣/捆绑销售）→整单级（满减/满折）；同层取一、跨层叠加可关；规则 JSONB 校验；消费后奖励（发券/赠品）。 | R:- | A:rules 按类型校验；scope productIds/categoryIds 过滤；会员专享 memberOnly 一处过滤全部层；整单级优惠按行小比分摊（尾差进最后行供退货原路退）；临期自动折扣层与门店促销互斥（促销优先临期兑底）；take_best/stack_layers 开关 | S:会员价与促销价冲突默认取更优；活动级数量约束可选；赠品为真实出库（FIFO 扣批+成本入账）；退货按行原路退。
+purchase.module.ts[DB9M]: F:采购与供应商：供应商/费用类型字典/费用协议/供应商变更单（调进价售价主供应商即时生效留痕）、入库审核到批次、退货自动归属、对账结算；必签校验委托 common/sign-guard（Q-03 统一）。 | R:- | A:变更单落单即生效：逐行调新进价/售价/主供应商切换/独立供应全程留痕；费用协议周期/一次性+auto_generate 补漏记期次；seqLock 取号 GYSBG- 防撞；结算价=COST_REF(L1) 仅连锁模式触发对账引擎 | S:供应商/费用类型建档同名复用不重复；明细上限 200 行；门店价经 store-price.service 隔离；进价 L1 兑底防红线失守。
+refund.module.ts[DB9L]: F:销售退款闭环：按原单明细行原路退（qty≤原行−已退）；整单级优惠按行小比分摊回冲；超免审限额进待审核；执行=批次回加+支付原路退+积分扣回+活跃窗口冲减。 | R:- | A:RV-01 按分整数：金额全程整数分尾差进最后一行（分摊纯函数抽至 refund.pure）；执行前重校验叠加在途/已退单不超原单数量与实付；批次按原销售批次逐批回加；支付原路退余额按本金/赠送比例拆分、分红/积分冲回；有效消费窗口扣减堵退款保活跃漏洞；V5 连锁会员资产回补走总部 | S:状态机 创建中/待审核/已退款/已驳回 严格；限额之上审核通过才执行驳回不执行；连锁门店本地不重复记账；错误码 50070~50075。
+reports.module.ts[KU8M]: F:报表中心：首页看板（今日销售/会员/分红/库存预警/临期）、日销售汇总（按天+支付构成+目标达成率）、商品 ABC 分析、分红期间汇总、赠品记录、券库存看板、库存/门店日/区域汇总；均为只读聚合。 | R:- | A:口径统一以「已完成」订单为准；ABC 按销售额累计占比 80/15/5 分层；V5 全部端点加 storeId+resolveReportStores 强制范围；库存/门店日/区域三端点合计行金额字段分整数 reduce（Q-04 B1）；dashboard trend GROUP BY 下 JOIN 列须 SUM 聚合（修复过直接引用的 SQL 回归） | S:登录即可访问（report.view.all）；门店账号强制本店、区域限本区域、总部可切；低库存/临期阈值依赖 settings；store-rank/store-compare 无 total 字段属设计。
+settings.module.ts[CU9M]: F:系统设置与门店级覆盖：九大分组设置读写、secret 脱敏与加密落库、全量留痕；V5 门店级覆盖值读取（store_settings 覆盖 system_settings）。 | R:- | A:门店级键优先覆盖回落 system_settings.value；secret 加密落库、留痕审计只记脱敏值、掩码回显视作不修改；分红核心参数改需双权限；连锁 hq 级键门店不可改；SSRF 收口；低频缓存 5min TTL | S:secret 明文/密文不出服务端；门店账号改的是本店覆盖值不动总部默认；单店部署无总部行时结果与改造前一致。
+shift.module.ts[DB9M]: F:交接班：开班（单收银员仅一个进行中班+备用金登记+钱箱流水）、当前班次实时汇总、关班（应答=备用金+现金收入±存取，实点 vs 应答差异留痕超容差填原因）、钱箱过程管理、班次报表。 | R:- | A:同一收银员同时仅一个进行中班（否则 50065）；汇总按 channel 聚合+退款冲减现金+钱箱存取应答口径；关班差异超 pos.shift.diff_tolerance 强制填原因（0=不容差）；班次汇总按 sales_orders.shift_id 聚合归属=支付完成时间；V5 交班经 outbox 上行 | S:只能关本人班次；开班备用金落钱箱流水为口径起点；钱箱取现/换零等过程必选原因留痕；收银可携 shiftId 使汇总按此聚合。
+sync.module.ts[OZ9L]: F:V5 同步层总部端：节点鉴权（Node 头+token+时间戳防重放）、门店批量上行（≤500/批幂等）、增量下拉、心跳、新店全量引导；JWT 后台端节点看板/重放/实时对数。 | R:- | A:Authorization: Node code:token + X-Sync-Ts（±300s）与 stores.node_secret timingSafeEqual 比对；上行 payload 自包含业务快照不做 id 翻译、逐条幂等；跨店单号撞车首个先得后来拒绝整单重试；P2-2 逐批出库明细落 sync_sale_batches 对账快照；会员总部账本累加权威在总部门店只镜像 | S:单店零回归：单店库 sync_nodes 仅 is_self 的 hq 行，push/pull 永远 401、对账 job 空跑；商品未同步整单留门店重试不丢数据。
 pay.adapters.ts[DB9M]: F:V4.13.3 真通道适配器: WechatPayAdapter(V3 RSA 签名+平台证书验签)、AlipayAdapter(RSA2); 失败返回 failCode 不抛异常; 配置缺失 40904。 | R:- | A:任何失败返回 {success:false,failCode} 不抛异常由网关落 FAIL; 应答强制验签拒信任伪造「支付成功」; 平台证书 TOFU 后按 serial 验签。 | S:APIv3 密钥/商户私钥经 secret.ts 加密落库; 真实通道未启用回落 mock(历史流水兜底); 防中间人。
-pay.gateway.ts[DB9M]: F:V4.13.2 支付适配层: detectChannel 识渠道、micropay 被扫扣款(out_trade_no 幂等, 金额逐分校验)、refundInTx 原路退; mode=mock/off/real, allow_mock 门禁。 | R:- | A:mock=模拟通道默认, off=记账式(PWA 回退二次确认), real 按渠道分派; P0-2 allow_mock=0 拒假扣款; USERPAYING 落 PENDING 轮询查单; 错码 40900/40903/40905。 | S:商户资质下来切真适配器不动业务层; 通道级防线防店员谎报; 退款匹配不到回落记账式留痕。
+pay.gateway.ts[DB9M]: F:支付适配层：detectChannel 识渠道、micropay 被扫扣款（out_trade_no 幂等，金额逐分校验）、refundInTx 原路退；mode=mock/off/real，allow_mock 门禁。 | R:- | A:mock=模拟通道默认，off=记账式（PWA 回退二次确认），real 按渠道分派；allow_mock=0 拒假扣款；USERPAYING 落 PENDING 轮询查单；错码 40900/40903/40905 | S:商户资质下来切真适配器不动业务层；通道级防线防店员谎报；退款匹配不到回落记账式留痕。
 print.render.ts[CB7S]: F:9.9 打印中心渲染引擎: renderTestPage、center/kv/line/wrap 中文全角=2 折行、列宽 58/80/A5/A4/标签; 标签两类样例。 | R:- | A:中文字符按2半角宽度折行; 测试页含走纸自检+字符覆盖; 标签两类(价签/秤贴)样例。 | S:仅文本近似渲染供预览; 实际打印走 hiprint/标签打印模块; 与 print.hiprint/print.label 协同。
 archive.job.ts[CB7S]: F:流水/日志归档(V4.28.5): 每日03:40迁移stock_flows/ai_recognition_logs→_archive; 批次事务原子; 单表夜上限100万行; 月数可配(0=不归档)。 | R:- | A:归档表id不变防重复(同id只迁一次); 主表删了不再选中幂等; 批次锁窗口=批大小; 不影响收银。 | S:审计日志归档在d3.care; 同口径; 超时仅落console不抛业务异常。
-bigcustomer.module.ts[DB9M]: F:大客户与团购(5.10/M9): 客户档案(应收聚合/账龄)、专属价目、团购下单; 计价兜底专价→批发价→零售价; 连锁专属价权归总部(门店走价申请)。 | R:- | A:建档shareScope store/all/部分门店; 应收=应付−现收−回款; 团购单随单上行总部对账(P3-1); 赊账额度管控。 | S:额度与编辑权仍归建档店; 门店价经store-price隔离; 连锁门店提货仍在本地。
-device.module.ts[CB7S]: F:收银外设管理: 设备建档(主机/扫码枪/秤/小票机/副屏/钱箱/人脸)与状态绑定; 小票机系统驱动RAW直发(rawprint.ps1); 串口WebSerial直驱; 打印模板字段池与渲染分发。 | R:- | A:USB/网口/蓝牙/串口四连接; 小票ESC/POS·标签TSPL/ZPL两类; 跨店设备经assertStoreAllowed校验; 价签按门店覆盖价。 | S:仅管理面+打印字节生成; 真实打印走OS驱动/浏览器; 门店价经store-price隔离。
+bigcustomer.module.ts[DB9M]: F:大客户与团购：客户档案（应收聚合/账龄）、专属价目、团购下单；计价兑底专价→批发价→零售价；连锁专属价权归总部（门店走价申请）。 | R:- | A:建档 shareScope store/all/部分门店；应收=应付−现收−回款；团购单随单上行总部对账；赊账额度管控 | S:额度与编辑权仍归建档店；门店价经 store-price 隔离；连锁门店提货仍在本地。
+device.module.ts[CB7S]: F:收银外设管理：设备建档（主机/扫码枪/秤/小票机/副屏/钱箱/人脸）与状态绑定；小票机系统驱动 RAW 直发（rawprint.ps1）；串口 WebSerial 直驱；打印模板字段池与渲染分发。 | R:- | A:USB/网口/蓝牙/串口四连接；小票 ESC/POS·标签 TSPL/ZPL 两类；跨店设备经 assertStoreAllowed 校验；价签按门店覆盖价；socket 探测超时走 DEVICE_PROBE_TIMEOUT_MS（Q-07） | S:仅管理面+打印字节生成；真实打印走 OS 驱动/浏览器；门店价经 store-price 隔离。
 display.module.ts[CB7S]: F:顾客副屏(客显)通道: 主屏POST /display/push推状态、副屏SSE订阅、/display/cfg店招欢迎语、/display/gbk串口GBK编码; 快照按店驻留内存。 | R:- | A:副屏@Public(局域网边界)只推脱敏展示字段; SSE 25s心跳防代理断流; 进程重启副屏自动收最新一帧; 删token防误传凭据。 | S:不落库不承载敏感数据; 局域网可达; 主屏断连角标提示。
-dividend.module.ts[KU8M]: F:分红引擎(5.1): 池=昨日净利×ratio(净利=毛利−硬消耗日摊); 资格=有效消费窗口; 权重=有效本金×等级系数; 封顶≤净充值×R; 预警/失效回冲。 | R:- | A:硬消耗store.cost.*门店覆盖→总部下发; 单店优先daily_settlement快照防补单, 连锁实时汇总全店; recon.fee_to_dividend并池; 参数全可调。 | S:口径B连续(赠送不参与加权); 计提后expire_days未消费失效平账(夜间M2); 盈利红线防净亏分红。
-finance.recon.ts[CB7S]: F:支付账单导入对账(V4.13): 微信/支付宝CSV解析→自动对齐→出对账单; 差异清单(平台有本地无/反/疑似重复); 单行忽略; 开关finance.billrecon.enabled。 | R:- | A:对齐规则①平台单号精确命中external_no ②金额相等+时间±window(默认300s); 只收收入行、退款/关闭行不对账; 导入/忽略sys.settings。 | S:查看登录可见; 解析宽松兼容双平台; 防误导入靠忽略标记。
+dividend.module.ts[KU8M]: F:分红引擎：池=昨日净利×ratio（净利=毛利−硬消耗日摊）；资格=有效消费窗口；权重=有效本金×等级系数；封顶≤净充值×R；预警/失效回冲。 | R:- | A:硬消耗 store.cost.* 门店覆盖→总部下发；单店优先 daily_settlement 快照防补单，连锁实时汇总全店；recon.fee_to_dividend 并池；参数全可调 | S:口径 B 连续（赠送不参与加权）；计提后 expire_days 未消费失效平账（夜间 M2）；盈利红线防净亏分红。
+finance.recon.ts[CB7S]: F:支付账单导入对账：微信/支付宝 CSV 解析→自动对齐→出对账单；差异清单（平台有本地无/反/疑似重复）；单行忽略；开关 finance.billrecon.enabled。 | R:- | A:对齐规则①平台单号精确命中 external_no ②金额相等+时间±window（默认 300s）；只收收入行、退款/关闭行不对账；导入/忽略 sys.settings | S:查看登录可见；解析宽松兼容双平台；防误导入靠忽略标记。
 marketing.module.ts[CB7S]: F:智能营销引擎(P2-1): 生日/临期/分红到期/沉睡/低余额/客转/应收7规则; 进程内每分钟到run_time执行; 触达留痕同规则当日去重; 手动run。 | R:- | A:零依赖setInterval不引node-cron, 时段后启动补跑当天; 权限marketing.manage/查看report.view.all; 门店价经store-price。 | S:渠道站内信/短信(配置); 失败告警不阻断; 临期折扣与促销层互斥由促销引擎兜底。
-member-app.module.ts[CU9M]: F:会员H5/小程序自助(5.12): 全@Public绕过员工Guard由MemberGuard校验member JWT; 注册/登录/找回/门户门控(member.h5.*死键已接线); 老会员凭手机号+身份证后6首设密。 | R:- | A:密码bcryptjs与员工一致; 连错5次锁30分; 门户总闸+自助注册开关服务端消费防绕过; 建档资产走member-chain总部。 | S:与员工端完全隔离两套JWT; 总部不可达明确报错不阻断收银; 密保答案bcrypt不落明文。
-member-chain.module.ts[OZ9L]: F:V5连锁会员(批次5): 权威账本在总部(门店仅镜像); 门店助手isChainStoreNode/hqMemberPost转发总部(NodeGuard); 总部端点register/debit/credit/points/lookup。 | R:- | A:资产变动一律在线调总部, 镜像由member_mirror下行覆盖(sync-store应用); 总部不可达→报错不阻断收银; 跨店流水默认不给门店。 | S:单店零回归: isChainStoreNode仅门店节点且配总部为true, 其余走本地; 余额/分红/积分权威在总部。
+member-app.module.ts[CU9M]: F:会员 H5/小程序自助（/m 前缀）：全 @Public 绕过员工 Guard 由 MemberGuard 校验 member JWT；注册/登录/找回/门户门控；老会员凭手机号+身份证后 6 首设密。 | R:- | A:密码 bcryptjs 与员工一致；连错 5 次锁 30 分；门户总闸+自助注册开关服务端消费防绕过；/m/me 资产 giftBalance 直读 member_accounts.gift_balance 台账列（Q-04 B3，弃 balance−principal_total 推导）；建档资产走 member-chain 总部 | S:与员工端完全隔离两套 JWT；总部不可达明确报错不阻断收银；密保答案 bcrypt 不落明文。
+member-chain.module.ts[OZ9L]: F:V5 连锁会员：权威账本在总部（门店仅镜像）；门店助手 isChainStoreNode/hqMemberPost 转发总部（NodeGuard）；总部端点 register/debit/credit/points/lookup；总部 HTTP 超时走 HQ_HTTP_TIMEOUT_MS（Q-07）。 | R:- | A:资产变动一律在线调总部，镜像由 member_mirror 下行覆盖（sync-store 应用）；总部不可达→报错不阻断收银；跨店流水默认不给门店 | S:单店零回归：isChainStoreNode 仅门店节点且配总部为 true，其余走本地；余额/分红/积分权威在总部。
 profile.module.ts[CB7S]: F:会员智能画像(M4b): refresh全量重算(生命周期/贡献度三分位/偏好品类TOP3)、列表/详情; 落member_profiles; 集合SQL+清空重写。 | R:- | A:贡献度percentile_cont(0.67/0.33)三分位; 偏好近180天按分类金额; lifecycle按末次消费天数; fav前3。 | S:建议每日夜间跑; 纯只读聚合不改动业务; 数据量增长后可改增量。
-return-chain.module.ts[OZ9L]: F:V5跨店退货/门店往来/进价差异单/供应商退货收口(批次4B): 查原单(在线总部)、申请跨店退货(总部权威单R6/R9)、差异单补差pickup/冲差writeoff按L1结算。 | R:- | A:跨店必须在线, 同店走本店退货报错; 逐行重算金额服务端权威; seqLock取TK-号; 供应商退货只补列+两收口端点原流程不动。 | S:单店零回归: 跨店数据不存在→空/报错不影响既有; 差异单/往来仅chainEnabled且总部视野触发。
-sales.jobs.ts[DB9M]: F:销售侧定时任务(V4.14.2): ①关单补偿(待付款超时取消回冲) ②日结快照(00:05固化昨日落daily_settlement,settle_date唯一幂等) ③D3治理; 启动补偿。 | R:- | A:关单超时sales.close_order_minutes(默认5,0=关); 日结防事后补单影响历史报表+校准inventory_current; 零依赖setInterval每分钟; 失败notifyStaff。 | S:settle_date唯一重跑不重复; 启动即补昨日; 绝不阻塞收银。
+return-chain.module.ts[OZ9L]: F:V5 跨店退货/门店往来/进价差异单/供应商退货收口：查原单（在线总部）、申请跨店退货（总部权威单 R6/R9）、差异单补差 pickup/冲差 writeoff 按 L1 结算。 | R:- | A:跨店必须在线，同店走本店退货报错；逐行重算金额服务端权威；seqLock 取 TK- 号；供应商退货只补列+两收口端点原流程不动 | S:单店零回归：跨店数据不存在→空/报错不影响既有；差异单/往来仅 chainEnabled 且总部视野触发。
+sales.jobs.ts[DB9M]: F:销售侧定时任务：①关单补偿（待付款超时取消回冲）②日结快照（00:05 固化昨日落 daily_settlement，settle_date 唯一幂等）③D3 治理；启动补偿。 | R:- | A:关单超时 sales.close_order_minutes（默认 5，0=关）；日结防事后补单影响历史报表+校准 inventory_current；零依赖 setInterval 每分钟；失败 notifyStaff | S:settle_date 唯一重跑不重复；启动即补昨日；绝不阻塞收银。
 scale-transmission.module.ts[CB7S]: F:电子秤传秤(V4.26.5): 可传秤商品列表(PRODUCT_VISIBLE连锁可见性)、字段批量更新、配置、中文名GBK编码、网口TCP字节下发; 传秤售价用门店价。 | R:- | A:iconv-lite中文→GBK/GB2312; 网口TCP前端组帧后端透传; 可售可见性V5连锁; 传错价=收银事故故必用门店价。 | S:称重商品过滤; 配置键scale.tx.*; 与store-price协同保证传秤价正确。
-store-price.service.ts[DB9M]: F:门店覆盖价服务(V4.26.5): product_store_prices只存与基线不同门店; 读价COALESCE兜底; loadMap/overlay/upsert; 唯一读价入口。 | R:- | A:三条铁律: 无覆盖=基线价(单店零回归)/就地改内存对象不改既有SQL/只在取行后覆盖; 整体调价改基线+清覆盖, 本地调价只upsert目标店。 | S:避免30+读价点逐改回归; 迁移103未跑静默降级全基线; 一店一价经覆盖表。
-sync-store.service.ts[OZ9L]: F:V5门店侧同步引擎(批次4): pushOnce(≤500 POST /sync/push)、pullOnce(GET /sync/pull→applyChange幂等)、60s定时+事件kick、退避死信(5s→6h)、熔断。 | R:- | A:上行幂等outbox.idem_key+总部二次去重; 下行幂等sync_inbox idem_key已应用跳过; 列取payload∩实表(免疫列增删); store_settings特判重写本店。 | S:单店零回归: role=hq/null时定时器不启动不IO; 只本节点门店生效; 与HQ对账靠版本单调。
+store-price.service.ts[DB9M]: F:门店覆盖价服务：product_store_prices 只存与基线不同门店；读价 COALESCE 兑底；loadMap/overlay/upsert；唯一读价入口。 | R:- | A:三条铁律：无覆盖=基线价（单店零回归）/就地改内存对象不改既有 SQL/只在取行后覆盖；整体调价改基线+清覆盖，本地调价只 upsert 目标店 | S:避免 30+ 读价点逐改回归；迁移 103 未跑静默降级全基线；一店一价经覆盖表。
+sync-store.service.ts[OZ9L]: F:V5 门店侧同步引擎：pushOnce（≤500 POST /sync/push）、pullOnce（GET /sync/pull→applyChange 幂等）、60s 定时+事件 kick、退避死信（5s→6h）、熔断。 | R:- | A:上行幂等 outbox.idem_key+总部二次去重；下行幂等 sync_inbox idem_key 已应用跳过；列取 payload∩实表（免疫列增删）；store_settings 特判重写本店 | S:单店零回归：role=hq/null 时定时器不启动不 IO；只本节点门店生效；与 HQ 对账靠版本单调。
 tables.module.ts[DB9M]: F:堂食台位档案: 编号/区域/座位/状态(空闲/使用中/预留/停用)/绑设备; 建档改档删(店长)、占用释放(登录即可); 落单自动占用走checkout事务。 | R:- | A:编号店内唯一; 删除历史订单保留table_id文本痕迹(无外键); 状态枚举校验; 设备绑定校验存在。 | S:轻量门店内共享; 占用/释放不要求特殊权限; 与餐饮落单协同。
-tts.module.ts[CB7S]: F:服务端离线神经语音(piper,V4.24.1): /tts合成(中文女声,完全离线); 缓存命中回WAV上限300MB LRU; 引擎目录须纯ASCII(POS_TTS_DIR→backend/tts)。 | R:- | A:文本走stdin避免转义; windowsHide消黑窗; 缺引擎health=false前端回落本机音色; 合成失败50202。 | S:tts/随包分发约80MB; 收银台/浏览器/手机端统一服务端播报; 非ASCII路径崩0xC0000409实测。
-upload.module.ts[CB7S]: F:移动端图片上传(8.5 PWA): base64 dataURL→落盘(UPLOADS_DIR外置+按月)→返静态路径; 供退货凭证/报损照片; 仅PNG/JPEG/WebP≤8MB。 | R:- | A:校验dataURL格式与大小; 落盘经saveUploadImage防穿越; audit留痕; 返回相对路径供后续引用。 | S:仅上传通道; 引用在purchase/inventory模块; 与/uploads鉴权协同。
-weather.service.ts[CB7S]: F:天气服务(V4.16.1): Open-Meteo免Key主源,填qweather_key切和风; 缓存weather_cache日行+1h刷新; 静默降级读旧值; WMO→中文+经营因子(客流/品类/回归校准)。 | R:- | A:外网失败绝不抛错阻塞(宁缺毋滥); 城市名→经纬内存缓存; ≥30天本地回归替换固定系数; 雨天/雪天/高温/降温因子。 | S:供备货建议与问答共用; 降级stale标记; 数据源可配。
-admin.reset.ts[KU8M]: F:系统初始化(V4.12/4.27.9勾选式): 开业前/调试后一键清库从头开始; /admin/reset/preview计数+可保留组, /execute单事务TRUNCATE CASCADE。 | R:- | A:四重防护: 表名服务端白名单/永不清骨架表(stores/employees/roles/permissions/settings/ai_models)/需confirm='初始化'+keep白名单/仅ADMIN或sys.data.backup+audit; KEEP_GROUPS商品/供应商/会员大客户/AI训练数据可勾选保留。 | S:高危操作; 执行后补写audit; 建档数据按勾选保留不误清。
+tts.module.ts[CB7S]: F:服务端离线神经语音（piper）：/tts 合成（中文女声，完全离线）；缓存命中回 WAV 上限 300MB LRU；引擎目录须纯 ASCII（POS_TTS_DIR→backend/tts）；TTS 预热延迟走 TTS_PREHEAT_DELAY_MS（Q-07）。 | R:- | A:文本走 stdin 避免转义；windowsHide 消黑窗；缺引擎 health=false 前端回落本机音色；合成失败 50202 | S:tts/随包分发约 80MB；收银台/浏览器/手机端统一服务端播报；非 ASCII 路径崩 0xC0000409 实测。
+upload.module.ts[CB7S]: F:移动端图片上传：base64 dataURL→落盘（UPLOADS_DIR 外置+按月）→返静态路径；供退货凭证/报损照片；仅 PNG/JPEG/WebP≤8MB。 | R:- | A:校验 dataURL 格式与大小；落盘经 saveUploadImage 防穿越；audit 留痕；返回相对路径供后续引用 | S:仅上传通道；引用在 purchase/inventory 模块；与 /uploads 鉴权协同。
+weather.service.ts[CB7S]: F:天气服务：Open-Meteo 免 Key 主源，填 qweather_key 切和风；缓存 weather_cache 日行+1h 刷新；静默降级读旧值；WMO→中文+经营因子（客流/品类/回归校准）。 | R:- | A:外网失败绝不抛错阻塞（宁缺毋滥）；城市名→经纬内存缓存；≥30 天本地回归替换固定系数；雨天/雪天/高温/降温因子；外网超时走 EXTERNAL_API_TIMEOUT_MS（Q-07） | S:供备货建议与问答共用；降级 stale 标记；数据源可配。
+admin.reset.ts[KU8M]: F:系统初始化（勾选式）：开业前/调试后一键清库从头开始；/admin/reset/preview 计数+可保留组，/execute 单事务 TRUNCATE CASCADE。 | R:- | A:四重防护：表名服务端白名单/永不清骨架表（stores/employees/roles/permissions/settings/ai_models）/需 confirm='初始化'+keep 白名单/仅 ADMIN 或 sys.data.backup+audit；KEEP_GROUPS 商品/供应商/会员大客户/AI 训练数据可勾选保留 | S:高危操作；执行后补写 audit；建档数据按勾选保留不误清。
 ai.market.ts[CB7S]: F:M4c个性化营销(画像驱动): POST /ai/marketing/generate按画像生成定向方案(沉睡唤醒/高价值回馈/偏好品类满减)、/execute写marketing_touches(站内信)、/effects回测。 | R:- | A:规则引擎零依赖(方案=建议,执行权ai.decision); 内容限长(标题≤60/正文≤500/跳转≤2KB)防注入; 按lifecycle/tier/fav分群。 | S:与marketing.module自动营销相互独立; 触达权在人; 纯只读聚合+写触达。
-ai.module.ts[CB7S]: F:AI子系统聚合模块(ai.*家族): 注册aibrain决策中心/forecast销售预测/pricing定价/pricing-v2/housekeeping识别帧清理/market个性化营销; 进程内定时驱动(refresh/dailyReport/frameCleanup)。 | R:- | A:各ai.*为兄弟模块共享common/db/weather; 决策引擎纯SQL零依赖+Ollama可选底座; 建议一律辅助决策(执行权在人); 9项应用去重每日一批。 | S:AI能力总入口; 具体引擎见aibrain.engine/ai.market; 数据不出店默认。
-aibrain.engine.ts[CB7S]: F:智能决策中心引擎(9.8五步): 轻量规则引擎(纯SQL统计零依赖+Ollama可选); 9项应用(补货/会员推送/销售预测/定价促销/损耗临期/购物篮/问答/防损/AI日报); 建议辅助决策(否决=训练信号)。 | R:- | A:isOn布尔设置解析; 当日同域只一批待处理(hasPending去重); suggest写ai_suggestions; executeSuggestion改售价/生成采购单+rollback_json回滚; maturity采纳率解锁全自动。 | S:数据不出店默认; 定价/补货执行权在人; reject_reason留痕作训练信号。
+ai.module.ts[CB7S]: F:AI 子系统聚合模块（ai.* 家族）：注册 aibrain 决策中心/forecast 销售预测/pricing 定价/housekeeping 识别帧清理/market 个性化营销；进程内定时驱动（refresh/dailyReport/frameCleanup）。 | R:- | A:各 ai.* 为兄弟模块共享 common/db/weather；决策引擎纯 SQL 零依赖+Ollama 可选底座；建议一律辅助决策（执行权在人）；9 项应用去重每日一批 | S:AI 能力总入口；具体引擎见 aibrain.engine/ai.market；数据不出店默认。
+aibrain.engine.ts[CB7S]: F:智能决策中心引擎（五步）：轻量规则引擎（纯 SQL 统计零依赖+Ollama 可选）；9 项应用（补货/会员推送/销售预测/定价促销/损耗临期/购物篮/问答/防损/AI 日报）；建议辅助决策（否决=训练信号）。 | R:- | A:isOn 布尔设置解析；当日同域只一批待处理（hasPending 去重）；suggest 写 ai_suggestions；executeSuggestion 改售价/生成采购单+rollback_json 回滚；maturity 采纳率解锁全自动 | S:数据不出店默认；定价/补货执行权在人；reject_reason 留痕作训练信号。
 aibrain.module.ts[CB7S]: F:智能决策中心HTTP层+服务(V9.8五步闭环): /brain学习资产看板/建议闭环(执行·否决·效果回收)/9项手动运行/问答/知识库; 定时每分钟检查到restock.time(06:00)/daily_report.time(23:59)。 | R:- | A:8项应用每日去重刷新(ai.last_refresh标记); AI日报按标题幂等; 补货建议→生成采购单(source=补货建议); 权限ai.decision; 失败notifyStaff。 | S:仅编排/路由; 引擎逻辑在aibrain.engine; 问答/看板登录可见。
-d3.care.ts[CB7S]: F:死键治理承载(VQA-D3): ①cleanupAuditLogs保留期到期→audit_logs_archive后删(只归档不蒸发) ②runOpeningNotice开业日全员广播(batch_key幂等)。 | R:- | A:保留期0/非法=关闭清理; 审计合规资产只归档; 开业公告服务启动也补跑一次(错过00点窗口也能当天到); 广播经notices。 | S:销售jobs每日00:10调cleanupAuditLogs; 与archive.job同口径; 死键变活键。
+d3.care.ts[CB7S]: F:死键治理承载：①cleanupAuditLogs 保留期到期→audit_logs_archive 后删（只归档不蒸发）②runOpeningNotice 开业日全员广播（batch_key 幂等）。 | R:- | A:保留期 0/非法=关闭清理；审计合规资产只归档；开业公告服务启动也补跑一次（错过 00 点窗口也能当天到）；广播经 notices | S:销售 jobs 每日 00:10 调 cleanupAuditLogs；与 archive.job 同口径。
 print.hiprint.ts[CB7S]: F:hiprint 模板JSON→v2排版元素转换(V4.15.9): hiprint pt坐标→mm; text/field/barcode/qrcode/table/divider/rect 映射; 与前端layout-editor同逻辑(后端供标签渲染/预览)。 | R:- | A:version3(hiprint)→v2 elements归一化; v2原样; image/vline/html热敏不支持忽略; 坐标pt2mm四舍五入。 | S:仅转换内核; 实际打印字节由print.label/device生成; 前端PWA设计器同源。
-print.label.ts[CB7S]: F:标签打印指令内核(V4.15.7): TSPL(汉印/佳博/TSC,GBK+TSS24)/ZPL(斑马,UTF-8); 40x30/50x30/60x40mm; 价签(品名/价/促销划线/条码)与秤贴(重量/金额)两类。 | R:- | A:brandToLang斑马走ZPL其余TSPL; safe去双引号防指令定界; 输出走device /printers/:id/labels网口或WebSerial串口。 | S:仅字节生成; 模板字段配置fields控制显隐; 与device协同。
+print.label.ts[CB7S]: F:标签打印指令内核：TSPL（汉印/佳博/TSC，GBK+TSS24）/ZPL（斑马，UTF-8）；40x30/50x30/60x40mm；价签（品名/价/促销划线/条码）与秤贴（重量/金额）两类。 | R:- | A:brandToLang 斑马走 ZPL 其余 TSPL；safe 去双引号防指令定界；输出走 device /printers/:id/labels 网口或 WebSerial 串口 | S:仅字节生成；模板字段配置 fields 控制显隐；与 device 协同。
 remote.sign.ts[CB7S]: F:远程电子签名(V4.15.3): 手机充当手写板; POST /sign-remote电脑发起→手机端待签→手写提交回传→电脑轮询取图, 走既有signatures/attach证据链。 | R:- | A:6位取件码人工核对; 30分钟未签自动置过期(expireStale); 提交后待签收+后台预览合格签收/退回重签(1~3张); 跨店收敛P2-M5。 | S:替代本地手写板; 异步不阻塞; 与sign.ts自动关联模板互补。
-sign.ts[CB7S]: F:移动签名自动关联(M3b): 入库/退货/报损/盘点单据自动匹配供应商业务员模板(signature_templates)→signature_records(单据哈希证据链); 无模板返回null走现场。 | R:- | A:大额(≥auth.sign_threshold默认5000)按auth.sign_large_mode: 现场补签(needsLive)或短信确认(生成确认码); 模板优先供应商专属再通用; doc_hash防篡改。 | S:模板缺失不阻塞业务; 大额治理防滥用5.6.8③; 与remote.sign互补。
-fraud.module.ts[CB7S]: F:智能防损看板(M4a): 异常折扣(改价/折扣率>floor,按收银员维度+样本数防误报)、近30日退货率+供应商退货TOP、收银差异(已交班|diff|>阈值)、近7日趋势与告警; 阈值全可配; 全report.view.all只读聚合。 | R:- | A:阈值走settings(a.fraud.discount_floor/disc_n/return_floor/cash_gap默认0.3/3/0.1/10); 下钻disc/refund/return-orders按天/供应商; 仅聚合不改业务; 维度经curStore数据范围收敛。 | S:登录report.view.all可见; 预警阈值依赖settings; 防损为事后分析非实时拦截; 与sign/refund/shift协同取数。
-ai.antileak.ts[CB7S]: F:漏扫检测(V4.13): AI识别件数vs结算件数(非称重,宽松≥2才拦)、称重理论重vs实秤重(容差)双校验; 自助收银差异告警+复核留痕。 | R:- | A:决策权在人(verify不拦单); force=true强推必落antileak_alerts待复核; 阈值count.strict/weight.tolerance可配; 件数仅非称重件。 | S:member-app自助收银内联校验; 告警老板端可见; 差异仅提示不阻断结账。
+sign.ts[CB7S]: F:移动签名自动关联：入库/退货/报损/盘点单据自动匹配供应商业务员模板（signature_templates）→signature_records（单据哈希证据链）；无模板返回 null 走现场。 | R:- | A:大额（≥auth.sign_threshold 默认 5000）按 auth.sign_large_mode：现场补签（needsLive）或短信确认（生成确认码）；模板优先供应商专属再通用；doc_hash 防篡改；事务内查询统一委托 common/db cx（Q-03） | S:模板缺失不阻塞业务；大额治理防滥用；与 remote.sign 互补。
+fraud.module.ts[CB7S]: F:智能防损看板：异常折扣（改价/折扣率>floor，按收银员维度+样本数防误报）、近 30 日退货率+供应商退货 TOP、收银差异（已交班|diff|>阈值）、近 7 日趋势与告警；阈值全可配；全 report.view.all 只读聚合。 | R:- | A:阈值走 settings（a.fraud.discount_floor/disc_n/return_floor/cash_gap 默认 0.3/3/0.1/10）；下钻 disc/refund/return-orders 按天/供应商；仅聚合不改业务；维度经 curStore 数据范围收敛 | S:登录 report.view.all 可见；预警阈值依赖 settings；防损为事后分析非实时拦截；与 sign/refund/shift 协同取数。
+ai.antileak.ts[CB7S]: F:漏扫检测：AI 识别件数 vs 结算件数（非称重，宽松≥2 才拦）、称重理论重 vs 实秤重（容差）双校验；自助收银差异告警+复核留痕。 | R:- | A:决策权在人（verify 不拦单）；force=true 强推必落 antileak_alerts 待复核；阈值 count.strict/weight.tolerance 可配；件数仅非称重件 | S:member-app 自助收银内联校验；告警老板端可见；差异仅提示不阻断结账。
 ai.autotrain.ts[CB7S]: F:AI自动训练调度(V4.27.6): 按设置周几/时点自动打包样本→GPU训练→导入模型库(版本+1); 默认不启用不自动激活。 | R:- | A:同时仅一个任务; 低样本量跳过; 训练台确认再激活(可设自动); 依赖服务器Python+ultralytics; 异常不阻断收银。 | S:进程内运行状态重启清零; 设置ai.autotrain.*; 日志留尾部。
 ai.clip.ts[CB7S]: F:CLIP视觉向量引擎(M2): 实时识别主路径第一层; ViT-B/32量化ONNX CPU推理→512维向量→样本库余弦Top-K; 单帧<500ms。 | R:- | A:纯本地图片不出店; 条码→CLIP→VL兜底→dHash管线分工; 模型backend/models/clip; 加载失败缓存错误。 | S:与ai.clipcn/ai.emb协同; 样本索引由ai.emb建; 仅取image_embeds。
-ai.clipcn.ts[CB7S]: F:Chinese-CLIP图文编码引擎(V4.11): 替换ViT-B/32+中文文本编码; 图像塔贴合中文商品+文本塔读瓶身品牌字供rerank第二信号。 | R:- | A:纯本地图文不出店; WordPiece分词; 与ai.clip同预处理; 模型backend/models/clipcn; 换模型可识别重建索引。 | S:为ai.emb rerank提供文本相似度; 易混SKU区分度增强。
+ai.clipcn.ts[CB7S]: F:Chinese-CLIP 图文编码引擎：替换 ViT-B/32+中文文本编码；图像塔贴合中文商品+文本塔读瓶身品牌字供 rerank 第二信号。 | R:- | A:纯本地图文不出店；WordPiece 分词；与 ai.clip 同预处理；模型 backend/models/clipcn；换模型可识别重建索引 | S:为 ai.emb rerank 提供文本相似度；易混 SKU 区分度增强。
 ai.detect.ts[CB7S]: F:AI真机推理引擎: jimp解码+letterbox 640+onnxruntime CPU推理; classify(argmax)/detect(NMS,YOLOv8)双模式; 按file_path缓存session。 | R:- | A:零GPU依赖; 类别映射ai_models.metrics.classes; 主模型低conf(ai.fallback_conf)触发VL兜底; 输出解析兼容双轴序。 | S:被ai.seg.yolo/ai.emb复用; 模型元信息来自ai_models。
-ai.emb.ts[CB7S]: F:向量索引与检索(V4.11): 审核样本Chinese-CLIP 512维(JSONB+应用层余弦,无pgvector); 图像检索+中文名rerank融合三门槛; 多件分割逐件。 | R:- | A:阈值ai.emb.{min_conf,topk,margin,strict_conf,multi}可配; rerank文本权重默认0.1; 命中帧10s节流落盘; 仅审核/入库样本参与。 | S:与ai.clipcn/ai.seg/ai.seg.yolo协同; 候选卡片人工确认。
+ai.emb.ts[CB7S]: F:向量索引与检索：审核样本 512 维（JSONB+应用层余弦，无 pgvector）；图像检索+中文名 rerank 融合三门槛；多件分割逐件；支持按 emb_model 标签多特征模型并存。 | R:- | A:阈值 ai.emb.{min_conf,topk,margin,strict_conf,multi} 可配；rerank 文本权重默认 0.1；命中帧 10s 节流落盘；仅审核/入库样本参与 | S:与 ai.clipcn/ai.ppshitu/ai.seg 协同；候选卡片人工确认。
 ai.housekeeping.ts[CB7S]: F:识别帧保留期清理(V4.15.5): 按ai.frames.retention_days(默认30,0关)滚动删frame_*.jpg; 保护被ai_samples引用帧; 启动90s首跑每6h。 | R:- | A:只删frame_前缀且mtime超期且未被样本引用; 递归兼容月子目录; 删除失败逐文件跳过; 释放MB日志。 | S:样本图(correct_/sample_)永久保留; 识别帧为过程数据日志不依赖原图; 不阻断。
-ai.models.ts[CB7S]: F:AI模型管理(M1): 运行时状态/手动扫描(base地址或路径)/设主模型/自动探测Ollama; 模型清单与当前主模型。 | R:- | A:探测GET /api/tags; 手动路径解析manifests(≤6层); select用upsert防重启回退; 经netguard SSRF收口; 失败不覆盖manual。 | S:本地大模型为主; 与ai.ocr/ai.vl共享base; 权限ai.decision。
-ai.ocr.ts[CB7S]: F:票据OCR与签名识别(M3a): 供应商票据→结构化明细→商品匹配→低价保护→入库草稿; 本地VL(Ollama)OCR或文本直解; 手写签名姓名识别。 | R:- | A:低价保护block/warn(ai.ocr.low_price); 未匹配可autoCreate建档; 真机OCR需ai.llm.enabled; 失败回落人工; 签名不可达返空名。 | S:仅生成草稿不自动入库; 与purchase协同; 图片不出店本地推理。
-ai.pricing.ts[CB7S]: F:动态定价建议(M5a): 临期(保质期档折价)/滞销(无售+在库)合并调价建议含成本底线; 生成草稿待审核。 | R:- | A:临期折扣档读promo.expiry_auto_discount与收银共用; 成本底线min_margin默认5%; 临期可设below_cost去化优先; 执行权在人pos.price.manual。 | S:建议仅草稿不生效; 同一商品不重复进滞销; 阈值全可配。
+ai.models.ts[CB7S]: F:AI 模型管理：运行时状态/手动扫描（base 地址或路径）/设主模型/自动探测 Ollama；模型清单与当前主模型。 | R:- | A:探测 GET /api/tags；手动路径解析 manifests（≤6层）；select 用 upsert 防重启回退；经 netguard SSRF 收口；失败不覆盖 manual | S:本地大模型为主；与 ai.ocr/ai.vl 共享 base；权限 ai.decision。
+ai.ocr.ts[CB7S]: F:票据 OCR 与签名识别：供应商票据→结构化明细→商品匹配→低价保护→入库草稿；本地 VL（Ollama）OCR 或文本直解；手写签名姓名识别。 | R:- | A:低价保护 block/warn（ai.ocr.low_price）；未匹配可 autoCreate 建档；真机 OCR 需 ai.llm.enabled；失败回落人工；签名不可达返空名 | S:仅生成草稿不自动入库；与 purchase 协同；图片不出店本地推理。
+ai.pricing.ts[CB7S]: F:动态定价建议：临期（保质期档折价）/滞销（无售+在库）合并调价建议含成本底线；生成草稿待审核。 | R:- | A:临期折扣档读 promo.expiry_auto_discount 与收银共用；成本底线 min_margin 默认 5%；临期可设 below_cost 去化优先；执行权在人 pos.price.manual | S:建议仅草稿不生效；同一商品不重复进滞销；阈值全可配。
 ai.sample-match.ts[CB7S]: F:样本dHash/aHash真实识别: 解码→8x8灰度→感知哈希→与样本库汉明距离匹配; 双哈希或门降低漏匹配; 绝不编造候选。 | R:- | A:无任何匹配返回空由调用方提示未识别; hash按文件路径缓存; 识别帧每次现算<20ms; 阈值dHash≤20/aHash≤10。 | S:作为CLIP/VL兜底的再兜底; 样本凡已上传即可参与。
-ai.seg.ts[CB7S]: F:零训练轮廓分割(V4.11.2): jimp灰度→背景亮度估计→前景二值化→膨胀→连通域→外接框; 多件定位; ≤12框。 | R:- | A:仅0~1框回落单件管线; 框上限12防噪声拖垮; 面积/宽高过滤+小框合并; 浅色秤盘/台面假设。 | S:被ai.seg.yolo优先,失败回落本模块; 零新增依赖。
+ai.seg.ts[CB7S]: F:零训练轮廓分割：jimp 灰度→背景亮度估计→前景二值化→膨胀→连通域→外接框；多件定位；≤12 框。 | R:- | A:仅 0~1 框回落单件管线；框上限 12 防噪声拖垮；面积/宽高过滤+小框合并；浅色秤盘/台面假设 | S:被 ai.seg.yolo 优先，失败回落本模块；零新增依赖。
 ai.seg.yolo.ts[CB7S]: F:YOLO检测式定位(V4.27.0): 复用ai.detect推理; 单类商品detect模型框出每件(任意背景/堆叠); 失败/未配置回落ai.seg.ts。 | R:- | A:定位模型ai.seg.model_id(detect); 0/缺失/失败→null回落轮廓分割; 复用letterbox+NMS; MAX_BOXES=12一致。 | S:逐件crop质量提升CLIP检索; 链路永不阻断; nc须与classes匹配。
 ai.track.ts[CB7S]: F:多帧跟踪平滑(V4.27.0): 连续帧同品+IoU匹配→稳定标记, EMA置信平滑; 消除边界抖动; 内存态按store:device隔离TTL5s。 | R:- | A:只做增量标注不改三门槛命中; stable仅注释+免重复播报; 重启清零可接受; 单设备轨迹≤50。 | S:帧间短程状态; 不用于放行低分; 1.6s/帧连续识别场景。
-ai.vl.ts[CB7S]: F:视觉语言兜底引擎(M2b): 本地Qwen2.5 VL少样本视觉定位; 实时帧+门店已审核样本参考图→判已知商品/数量/置信; 失败降级dHash。 | R:- | A:知识库每商品1张参考图(样本越多轮廓越清); MAX_REFS=12/最长边640/ctx16384; 解析JSON丢低分; Ollama不可达→回落样本匹配。 | S:图片不出店; 复用ai.ocr Ollama协议; 真模型非哈希匹配。
+ai.vl.ts[CB7S]: F:视觉语言兑底引擎：本地 Qwen2.5 VL 少样本视觉定位；实时帧+门店已审核样本参考图→判已知商品/数量/置信；失败降级 dHash。 | R:- | A:知识库每商品 1 张参考图；MAX_REFS=12/最长边 640/ctx16384；解析 JSON 丢低分；Ollama 不可达→回落样本匹配 | S:图片不出店；复用 ai.ocr Ollama 协议；真模型非哈希匹配。
+ai.ppshitu.ts[KA7T]: F:PP-ShiTuV2 通用识别特征编码器（V5.0.13）：general_PPLCNetV2_base ONNX（onnxruntime-node 纯本地 CPU）embedImage→L2 向量；细粒度 SKU 区分数量级优于 CLIP（跨商品余弦 ≤0.09 vs CLIP 0.95+）。 | R:- | A:无文本塔（rerank 文本信号自动失效）；预处理 Resize224+ImageNet Normalize+CHW；emb_model 标签 ppshituv2-general-v1 存样本表，换模型按 tag 重建索引 | S:-
+coupons.pure.ts[DB7T]: F:优惠券纯函数（Q-02 特征测试基座首个抽离件）：chooseCoupons 多券裁决（single/manual/auto）+ sumChosenCoupons 叠加封顶求和（累计抵扣永不超过货值−促销）。 | R:- | A:本文件零 import（不引 Nest/DB/带模块级副作用的模块），单测毫秒级 import；本地 r2 与 common/db r2 同义，改口径须同步 | S:-
+member-growth.service.ts[DB8S]: F:会员成长值引擎（V5.0.17 等级重设计核心）：成长值=累计充值本金×充值倍率+直接买单实付×消费倍率；普通→银卡→金卡；保级滚动考核+30 天保护缓冲；退货按退款比例扣回。 | R:- | A:不计成长：储值余额消费/分红抵扣/积分抵扣/券抵扣部分/赠送余额/排除商品分类/特价活动商品；升级立即生效，缓冲期内保留全部权益，到期仍不达标才下调 | S:-
+refund.pure.ts[DB7T]: F:退款分摊纯函数（Q-02 第三抽离件）：apportionRefundCents 按行分摊（权重=退货数量×成交单价）+ apportionRefundByChannel 按渠道分摊；尾差均进最后一行/渠道。 | R:- | A:零 import 纪律（与 coupons.pure/sales.pure 同）；逐行 round+min 钳制，合计恒等于 amountCents 且 ≥0 | S:-
+reset.history.ts[DH8T]: F:高危操作独立留痕（V5.0.19e 事故加固）：清库/恢复写 data_reset_history（迁移 195 建表，禁止 UPDATE/DELETE，不在任何清空清单）。 | R:- | A:独立文件防 admin.reset↔admin.backup 循环依赖；写入失败只告警不中断，但清库场景由调用方在清库前校验写入成功 | S:audit_logs 会被清库自身清掉故不能承载高危留痕——改用独立不可删表。
+sales.checkout.assets.ts[DB8S]: F:结账资产域（Q-01 第四切片，从 sales.module checkout 原样搬移行为不变）：会员权益+消费后奖励+结账审计+负库存标记+上行入队；积分等级倍率计提/有效消费活跃窗口双门槛/成长值/等级同步。 | R:- | A:分红/积分抵扣不计入有效消费（双门槛）；V5.0.17 成长值接入 | S:-
+sales.checkout.payments.ts[DB8S]: F:结账支付域（Q-01 第二切片）：多支付组合——扫码购 auto 付清/通道成功应答校验/余额本赠拆分（口径 B）/分红积分扣减+幂等；金额逐分校验。 | R:- | A:clientRef 幂等防离线重发；支付原路退回扣联动 | S:-
+sales.checkout.persist.ts[DB8S]: F:结账落单域（Q-01 第三切片）：台位归属校验→seqLock 发号→sales_orders 24 列主单→券实例核销（次卡/一次性券留痕）→明细/批次/库存落账。 | R:- | A:seqLock 发号防撞；开放键临时行不建档案不碰库存 | S:-
+sales.checkout.pricing.ts[DB8S]: F:结账定价域（Q-01 第一切片）：逐行计价+FIFO 批次分配——开放键临时行/门店覆盖价/单位换算/手输商品/改价授权/折扣红线。 | R:- | A:金额按分整数（RV-01）；改价须授权票据留痕；最低售价红线不得破 | S:-
+sales.fifo.ts[DB7T]: F:销售批次消耗落账（V5.0.6 收敛）：销售单与大客户团购两路径共用的三条 SQL（FIFO 成本+批次余量+库存流水）。 | R:- | A:两落单路径收敛单实现，防一处改一处漏导致 FIFO 成本与批次余量失真 | S:-
+sales.pure.ts[DB7S]: F:收银计价纯函数核（Q-02 第二抽离件）：计价组合纯函数（零 import 纪律，单测毫秒级 import）；本地 r2/r3/toCents 与 common/db 同义。 | R:- | A:改口径须与 common/db/sales.module 同名函数同步 | S:-
+supplier-qualification.module.ts[DB6T]: F:供应商资质证照管理：资质上传/有效期台账+识别（经 ai.ocr recognizeDocument）+到期预警；与供应商档案屏有效期预警配套（迁移 157）。 | R:code:backend/src/modules/ai.ocr.ts | A:- | S:-
+text-normalize.ts[KA6T]: F:中文播报文本前端 TN（V5.0.16）：送 TTS 前归一化——横杠/点分隔日期、时间、百分比、手机号首位幺、序数、单位→自然中文读法；引擎无关（piper/CosyVoice 共用）。 | R:- | A:与声学模型解耦，换模型不用重写；点分隔日期此前漏读成「二千零二十六」已修 | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/frontend-desktop/renderer/===
-pos.js[EU9M]: F:收银台渲染逻辑：原型收银台布局、双屏全量同步、AI 预包装识别（免扫码）、全流程结账；分类与商品宫格、购物车、登录、语音播报拟人化。 | R:- | A:API 走 localStorage pos_api（默认 localhost:3100）；call 带 8s 超时与网络异常统一错误（绝不静默）；speak 多音色/语速/音调（auto 拟真人在线音色回落本地）；登录即拉语音配置；秤台差重累计；preload 桥 window.cashier 缺失时浏览器演示降级。 | S:登录页加载即探测 /health 提前暴露服务不可达；地址须 http(s)://；外设仅 Electron 内可用；商品播报开关后台统一配置。
+pos.js[EU9M]: F:收银台渲染逻辑：原型收银台布局、双屏全量同步、AI 预包装识别（免扫码）、全流程结账；分类与商品宫格、购物车、登录、语音播报拟人化。 | R:- | A:API 走 localStorage pos_api（默认 localhost:3100）；call 带 8s 超时与网络异常统一错误（绝不静默）；speak 多音色/语速/音调；秤台差重累计；preload 桥 window.cashier 缺失时浏览器演示降级；chgQty 数量上界 99999（F-08） | S:登录页加载即探测 /health 提前暴露服务不可达；地址须 http(s)://；外设仅 Electron 内可用；商品播报开关后台统一配置。
 index.html[EU7S]: F:Electron收银端主窗口页面: 加载PWA收银台/全屏壳容器。 | R:- | A:- | S:-
 neterr.html[RR5T]: F:断连错误页(原因可见/重试不白屏,V4.22.1)。 | R:- | A:- | S:-
 pos.css[CU5M]: F:Electron收银端渲染层样式(290行)。 | R:- | A:- | S:-
@@ -122,34 +146,35 @@ second.html[EU5S]: F:Electron副屏(客显)窗口页面(方案9.9双屏)。 | R:
 setup.html[EU5T]: F:Electron首次启动配置向导页(V4.22.1): 服务器地址配置/测试连接/保存并启动。 | R:- | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/frontend-desktop/src/===
-main.js[ER9M]: F:收银桌面端 Electron 主进程：kiosk 全屏收银窗（登录前卡片窗/登录后全屏不置顶）、双屏客显、外设适配（扫码/秤/小票机）、静默打印、首启配置向导、断连错误页、单实例锁。 | R:- | A:单实例 requestSingleInstanceLock 防多开；probeServer 3s 探活再进收银台；白屏根治：首次无配置弹向导、已配置探活失败落本地错误页；kiosk 单开关去 alwaysOnTop（Alt+Tab 可切）；双屏经 IPC pos:sync 推购物车至副屏；外设降级模拟。 | S:POS_KIOSK=0 开发窗口模式；POS_LEGACY_GPU=1 回退 no-sandbox；autoplay 免手势播报；渲染层经 preload 桥 window.cashier 通信。
-preload.js[CM7T]: F:Electron预加载桥(contextIsolation安全暴露): 渲染层只见window.cashier API。 | R:- | A:- | S:-
+main.js[ER9M]: F:收银桌面端 Electron 主进程：kiosk 全屏收银窗、双屏客显、外设适配（扫码/秤/小票机）、静默打印、首启配置向导、断连错误页、单实例锁。 | R:- | A:单实例 requestSingleInstanceLock 防多开；probeServer 3s 探活再进收银台；F-06 加固：webRequest 源锁定（只放行配置 server origin+ws/file/data/blob/chrome）、print-html 加 CSP+512KB 上限+失败日志、pos:scanner-event 加 isDestroyed 守卫；双屏经 IPC pos:sync 推购物车至副屏；外设降级模拟 | S:POS_KIOSK=0 开发窗口模式；POS_LEGACY_GPU=1 回退 no-sandbox；autoplay 免手势播报；渲染层经 preload 桥 window.cashier 通信。
+preload.js[CM7T]: F:Electron 预加载桥（contextIsolation 安全暴露）：渲染层只见 window.cashier API（扫码枪事件/打印/双屏同步/设备信息）。 | R:- | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/frontend-h5/===
-index.html[EU7T]: F:会员中心 H5 外壳：登录前（登录/注册/首次设密三态）与登录后（首页/商城/订单/我的 底部导航）两态；条码扫码购物与余额支付（自动抵扣分红）。 | R:- | A:注册即会员（储值余额享每日分红，消费权益非投资）；老会员手机+身份证后6位核对后设密；连续错误 5 次锁 30 分；底部导航切换视图；扫码购支持扫码枪/手输条码/名称搜索。 | S:强调分红不可提现/转赠、有封顶时效（个保合规）；隐私政策勾选同意（个保法）；余额支付自动抵扣分红。
-app.js[EU7L]: F:H5会员端应用(727行,对端后端/m/*会员自助端点): 登录/余额/消费/券等自助功能,h5_token本地存储。 | R:- | A:- | S:-
+index.html[EU7T]: F:会员中心 H5 外壳（早期源版）：登录前（登录/注册/首次设密三态）与登录后（首页/商城/订单/我的）两态；条码扫码购物与余额支付。 | R:- | A:注册即会员（储值余额享每日分红，消费权益非投资）；连续错误 5 次锁 30 分；meta CSP（script-src self+inline，F-08） | S:强调分红不可提现/转赠、有封顶时效（个保合规）；隐私政策勾选同意；实际部署版为 backend/public/member/index.html 单文件。
+app.js[EU7L]: F:H5 会员端应用（早期源版，对端后端 /m/* 会员自助端点）：登录/余额/消费/券等自助功能，h5_token 本地存储。 | R:- | A:esc 含单引号转义（F-08）；商城购物车数量上界 9999（F-08） | S:实际部署版为 backend/public/member/index.html 单文件（本目录为早期源）。
 package.json[FV3T]: F:H5会员端npm清单。 | R:- | A:- | S:-
 server.mjs[OV4T]: F:H5会员端独立静态服务。 | R:- | A:- | S:-
 styles.css[CU5M]: F:H5会员端样式(338行)。 | R:- | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/frontend-web/===
-api.js[MN8S]: F:Web 后台统一请求层：API 封装（base/token/user）、ensureBase 启动探活自动回退、call/get/post 封装、unwrap/unwrapList 解包、money/imgUrl/esc/dt/toast 展示工具。 | R:- | A:base 兜底优先级 显式设置→注入地址→同源；ensureBase 依次探测 当前base→注入→同源 取首个 /health 200；imgUrl 为 /uploads 自动拼 ?token=；dt 对 DATE 列不二次时区偏移；解包兼容 {code,msg,data} 与裸数组。 | S:401 自动 logout；后端 WrapInterceptor 统一包 {code,msg,data} 与 http.ts 呼应；图片地址随后端 base 补全。
-app.js[EU8M]: F:Web 后台 SPA 引导与路由：三级菜单树(MENU)与各业务屏(screens/*)装配、叶子索引 LEAF、多标签页导航、登录/注册/首管创建视图、总部与门店菜单裁剪(isHqUser/menuVisible)。 | R:- | A:菜单按 hqOnly 裁剪（前端体验层，真正安全闸在服务端 data_scope）；登录视图三态 login/reg/pending 显式切换；V5.0.0 连锁总部分组(hq/stores,costs,trade,members,reports)经动态 import 懒加载；服务地址回显上次成功值。 | S:同源免配置（服务端注入 __API_BASE__）；前端裁剪仅体验层，越权以服务端为准；登录失败不泄露后端细节。
-index.html[EU7T]: F:Web 管理后台 SPA 外壳：挂载 app/side/main/tabbar/view，引入 styles.css 与 Hiprint 打印依赖（jquery/JsBarcode/vue-plugin-hiprint），以 script module 加载 app.js 启动。 | R:- | A:服务端静态托管于 /admin（同源免 CORS）；页面带 ?v= 版本戳防缓存；日期/外设脚本先于 app.js 加载。 | S:纯静态壳无业务逻辑（逻辑在 app.js 与各 screens）；登录态由 app.js 接管。
+api.js[MN8S]: F:Web 后台统一请求层：API 封装（base/token/user）、ensureBase 启动探活自动回退、call/get/post 封装、unwrap/unwrapList 解包、money/imgUrl/esc/dt/toast 展示工具。 | R:- | A:base 兑底优先级 显式设置→注入地址→同源；F-05 图片短票据：/uploads、/signatures 拼 60s img 票据（缓存 50s+45s 定时刷新+setAuth 预取/登出清）；请求带 8s 超时（F-03）；dt 对 DATE 列不二次时区偏移 | S:401 自动 logout；后端 WrapInterceptor 统一包 {code,msg,data} 与 http.ts 呼应。
+app.js[EU8M]: F:Web 后台 SPA 引导与路由：三级菜单树（MENU）与各业务屏装配、叶子索引 LEAF、多标签页导航、登录/注册/首管创建视图、总部与门店菜单裁剪。 | R:- | A:菜单按 hqOnly 裁剪（前端体验层，真正安全闸在服务端 data_scope）；登录视图三态显式切换；连锁总部分组经动态 import 懒加载；服务地址回显上次成功值 | S:同源免配置（服务端注入 __API_BASE__）；前端裁剪仅体验层，越权以服务端为准；登录失败不泄露后端细节。
+index.html[EU7T]: F:Web 管理后台 SPA 外壳：挂载 app/side/main/tabbar/view，引入 styles.css 与 Hiprint 打印依赖，script module 加载 app.js。 | R:- | A:服务端静态托管于 /admin（同源免 CORS）；meta CSP（script-src self+inline，F-08，阻断外联脚本注入）；页面带 ?v= 版本戳防缓存 | S:纯静态壳无业务逻辑；API.base 用户可配跨源故 CSP 不设 default-src。
 README.md[SU4T]: F:Web管理后台源码目录说明(零构建链原生ESM); 本目录为源码,backend/public/admin为后端托管部署副本(字节镜像)。 | R:code:backend/public/admin/api.js | A:- | S:-
-col-resize.js[CU5S]: F:表格列宽可调(V4.26.2): 全局自动挂载,拖表头调宽/双击自适应,与backend/public/admin字节镜像。 | R:code:backend/public/admin/col-resize.js | A:- | S:-
-common-ui.js[LU7S]: F:通用UI组件: 详情弹窗/CSV·Excel导出/本地分页; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/common-ui.js | A:- | S:-
-date-range.js[LU5M]: F:日历范围选择器(V5.0); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/date-range.js | A:- | S:-
-docprint.js[AU7M]: F:A5业务单据统一打印(V4.15.7 P3,七类单据); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/docprint.js | A:- | S:-
-layout-editor.js[AU7L]: F:可视化模版排版编辑器(V4.15.9,hiprint内核); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/layout-editor.js | A:- | S:-
+col-resize.js[CU5S]: F:表格列宽可调（V4.26.2）：全局自动挂载，拖表头调宽/双击自适应；与 backend/public/admin 字节镜像。 | R:code:backend/public/admin/col-resize.js | A:- | S:-
+common-ui.js[LU7S]: F:通用 UI 组件：详情弹窗/CSV·Excel 导出/本地分页/docTable 铺满表格；与 backend/public/admin 字节镜像。 | R:code:backend/public/admin/common-ui.js | A:- | S:-
+date-range.js[LU5M]: F:日历范围选择器（V5.0）：成对日期输入自动升级为日历范围控件；与 backend/public/admin 字节镜像。 | R:code:backend/public/admin/date-range.js | A:MutationObserver 自动覆盖动态节点，原 input 隐藏保留 id 与 value | S:-
+docprint.js[AU7M]: F:A5 业务单据统一打印（七类单据）；与 backend/public/admin 字节镜像。 | R:code:backend/public/admin/docprint.js | A:- | S:-
+layout-editor.js[AU7L]: F:可视化模版排版编辑器（hiprint 内核）；与 backend/public/admin 字节镜像。 | R:code:backend/public/admin/layout-editor.js | A:- | S:-
 package.json[FV4T]: F:Web管理后台npm清单(零依赖,仅server.mjs启动用)。 | R:- | A:- | S:-
-pick-panel.js[LU6S]: F:全局自绘下拉增强器(V4.9.14); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/pick-panel.js | A:- | S:-
-product-search.js[LU7T]: F:商品模糊搜索组件(V4.8.20共享); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/product-search.js | A:- | S:-
-serialprint.js[IH7T]: F:WebSerial串口直发(标签/小票机); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/serialprint.js | A:- | S:-
-server.mjs[OV4T]: F:Web管理后台独立静态服务(node server.mjs,默认8088)。 | R:- | A:- | S:-
-styles.css[CU5L]: F:管理后台全站皮肤; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/styles.css | A:- | S:-
-ui-polish.js[LU6S]: F:UI精修层(锚点/玻璃/分段); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/ui-polish.js | A:- | S:-
-ui.js[LU6S]: F:全局UI组件(弹窗/确认/放大/匹配); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/ui.js | A:- | S:-
+pick-panel.js[LU6S]: F:全局自绘下拉增强器（V4.9.14）：select→只读框+芯片面板，.value 与 change 全兼容；纯本地 DOM 无网络请求；与 backend/public/admin 字节镜像。 | R:code:backend/public/admin/pick-panel.js | A:- | S:-
+product-search.js[LU7T]: F:商品模糊搜索组件：拼音/关键字模糊建议下拉定位；qSeq 序号守卫（F-08，慢响应晚到不覆盖新关键词结果）；与 backend/public/admin 字节镜像。 | R:code:backend/public/admin/product-search.js | A:- | S:-
+serialprint.js[IH7T]: F:WebSerial 串口直发（标签/小票机）。 | R:code:backend/public/admin/serialprint.js | A:requestPort 须在用户手势内调用 | S:-
+server.mjs[OV4T]: F:Web 管理后台独立静态服务（node server.mjs，默认 8088；dev 场景，robocopy 同步时排除）。 | R:- | A:- | S:-
+styles.css[CU5L]: F:管理后台全站皮肤（暖纸底/墨绿主色/橙色强调）。 | R:code:backend/public/admin/styles.css | A:- | S:-
+ui-polish.js[LU6S]: F:UI 精修层（锚点/玻璃开关/分段控件）。 | R:code:backend/public/admin/ui-polish.js | A:- | S:-
+ui.js[LU6S]: F:全局 UI 组件（弹窗/确认/放大/匹配）。 | R:code:backend/public/admin/ui.js | A:- | S:-
+col-align.js[LU6S]: F:全站表格「按列语义」数据对齐（V5.0.8）：读表头文案判列语义（单号/状态/日期居中，金额/数量/单价居右）；内联 text-align 优先不破坏刻意排版。 | R:- | A:不用 MutationObserver 全量重扫（会抢 dblclick 事件），仅在特定时机扫描 | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/db/===
 001_init.sql[DB9M]: F:数据库基线(v1.1,PG15+): 全局枚举+六分部(基础组织/商品库存/采购/会员销售/AI/种子); 金额NUMERIC(12,2)数量(12,3)单价(12,4)软删; pgvector降级TEXT。 | R:- | A:执行顺序即文件序; 每表注释对应设计方案章节; store_id预留多店(单店默认1); ai_kb_chunks.embedding扩展不可用降级TEXT。 | S:init-db.ts顺序执行; 与common/db.ts一一对应; 种子含角色权限点。
@@ -294,27 +319,87 @@ ui.js[LU6S]: F:全局UI组件(弹窗/确认/放大/匹配); 源码目录版本,�
 137_v4287_unify_expiry_tiers.sql[DB9M]: F:V4.28.7 临期档位统一: 删除重复键ai.pricing.expiry_tiers(功能重复); 增promo.expiry_auto.enabled(收银自动折扣开关,默认关,促销优先临期兜底); 档位键promo.expiry_auto_discount双源共用。 | R:- | A:幂等DELETE+ON CONFLICT+UPDATE; 禁改001。 | S:与136/138/临期协同; 单一数据源。
 138_v4287_tier_wording.sql[DB9M]: F:V4.28.7 临期档位备注改为区间归属表述(行为不变仅文案校准): promo.expiry_auto_discount备注改写(剩余天数≤days取最深档,超出不折扣)。 | R:- | A:幂等UPDATE备注; 防误读; 禁改001。 | S:与137协同; 文案校准。
 139_v4289_orphan_cleanup.sql[DB9M]: F:V4.28.9 设置审计落地: 删真孤儿/重复键(points.redeem_rate/store.info.address/contact/phone零消费); 备注校准(store.info.name小票抬头/打印三键分工防混淆)。 | R:- | A:幂等DELETE+UPDATE; 248键四端扫描; 禁改001。 | S:与123/128设置治理协同; 孤儿清理。
+140_v500_points_doc_fix.sql[PC5T]: F:V5.0.1积分抵现设置口径纠偏：仅改 pos.points.rate/max_pct 文案对齐代码语义（每1元所需积分），行为与存量值零变更。 | R:code:backend/src/modules/pos.module.ts | A:- | S:-
+141_v502_bc_promo_settings.sql[PB6S]: F:V5.0.2组合迁移：sales_orders.customer_name 大客户名快照；big_customer_payments.kind 区分 recharge/collect（存量按 remark 回填）；promotions.is_stackable 叠加开关；设置组「营销」并入「营销与线上」。 | R:code:backend/src/modules/bigcustomer.module.ts,code:backend/src/modules/promotions.module.ts | A:- | S:-
+142_v503_mobile_photo_requests.sql[PB6S]: F:V5.0.3 建 mobile_photo_requests 表：PC 发起拍摄指令（token+biz_type），同账号店员 PWA 拍摄回传 file_path，PC 轮询取回。 | R:- | A:- | S:-
+143_v503_loss_allow_zero.sql[PB6T]: F:V5.0.3 零库存报损开关：loss_items.batch_id 放开非空；新增设置 stock.loss_allow_zero（无批次记账、成本取进价、审核跳过批次校验、库存可扣负）。 | R:code:backend/src/modules/inventory.module.ts | A:- | S:-
+144_v503_merge_goods_inventory.sql[PC3T]: F:V5.0.3 设置组归并：group_name「商品与库存」并入「商品管理」，消除重复顶层页签（幂等）。 | R:- | A:- | S:-
+145_v504_printer_default_for.sql[PB6S]: F:V5.0.4 打印机默认用途：printers.default_for（receipt/pricetag/scale/a5 每业务一台默认机），存量 is_default 按设备类型回填。 | R:code:backend/src/modules/print.label.ts | A:- | S:-
+146_v504_pricetag_promo_fields.sql[PB4T]: F:V5.0.4 标准价签 v2 模板 jsonb 追加「特价角标+有效期」元素（合规要求），幂等仅作用于未加过元素的模板。 | R:- | A:- | S:-
+147_v505_price_tag_presets.sql[PB4M]: F:V5.0.5 预置 5 款常用价签模板（物价局监制/特价/醒目/大规格，黑框模拟彩色），不强制设默认避免覆盖用户模板。 | R:- | A:- | S:-
+148_v506_supplier_disable.sql[PB5T]: F:V5.0.6 供应商停用：suppliers.disabled_at 列 + status 语义 1启用/2停用/0软删，停用满 90 天方可删除。 | R:code:backend/src/modules/suppliers.module.ts | A:- | S:-
+149_v511_device_auth_v2.sql[PI9M]: F:V5.0.11 设备授权加固：设备绑定员工/角色配额/门店总量上限/单账号单设备在线（token_version 吊销）/超管不豁免改恢复码兜底/客户端不可导出密钥对签名登录挑战。 | R:code:backend/src/modules/auth.module.ts,code:backend/src/modules/device.module.ts | A:- | S:-
+150_v5112_device_pairing.sql[PI9M]: F:V5.0.11b 配对码替代人工审批+设备与账号解绑：pos_devices 加 pair_code/pair_expires_at/pair_max_uses/paired_at 与 last_emp 审计列；新增 pos.device.store.cap 等设置。 | R:code:backend/src/modules/auth.module.ts,code:backend/src/modules/device.module.ts | A:- | S:配对码字母表必须 genPairCode 与 auth.module 同源（外部工具复制版极易漂移）
+151_v5113_loopback_bypass.sql[PI8T]: F:V5.0.11c 回环豁免防引导死锁：设置 pos.device.auth.loopback.bypass=true，本机登录跳过设备校验并自动转已授权（已停用不动）。 | R:code:backend/src/modules/auth.module.ts | A:- | S:-
+152_v5114_device_name_backfill.sql[PI5T]: F:V5.0.11d 历史设备回填：device_name 按 UA 补全、device_type 按 UA 纠偏（原前端硬编码 pc），UA 空保持原值。 | R:code:backend/src/common/device-name.ts | A:- | S:-
+153_v5115_sensitive_settings.sql[PI9T]: F:V5.0.11e P0：漏标 secret 的敏感设置补 value_type=secret（恢复码提示/第三方Key），GET /settings 按调用者权限过滤。 | R:code:backend/src/modules/settings.module.ts | A:- | S:敏感键判定必须用结构特征[._-]key$，列举前缀的正则会漏（qweather_key教训）
+154_v5115b_qweather_secret.sql[PI8T]: F:V5.0.11e P0补漏：ai.weather.qweather_key 单独补 secret（153 正则未命中），代码侧 SENSITIVE_KEY_RE 同步加 [._-]key$。 | R:code:backend/src/modules/settings.module.ts | A:- | S:-
+155_v5114_cashier_stock_perms.sql[PI6T]: F:V5.0.11l 收银员补门店作业权限：stock.inbound.audit/stock.return.audit/stock.loss.create（真机反馈收货/退货/报损全 403）。 | R:code:backend/src/modules/auth.module.ts | A:- | S:-
+156_v5014_dividend_zero_grant_expire.sql[PB7S]: F:V5.0.14 分红零发放次日失效：dividend_records.member_id 放开可空；枚举加「失效」；零发放计提写失效记录+expire_at。 | R:code:backend/src/modules/dividend.module.ts | A:- | S:-
+157_supplier_qualifications.sql[PB6S]: F:V5.0.15 建 supplier_qualifications 供应商资质/合同/证照表（连锁总部统一议价依据+食安证照有效期预警）。 | R:code:backend/src/modules/supplier-qualification.module.ts | A:- | S:-
+158_ai_ocr_engine.sql[PC5T]: F:V5.0.15 OCR 引擎设置：ai.ocr.engine_url（专用OCR主力，留空回退Ollama VLM）+ ai.ocr.vl_model；修复 jsonb 空串非法写法。 | R:code:backend/src/modules/ai.ocr.ts | A:- | S:-
+159_t5_guest_phone.sql[PB5T]: F:V5.0.15 散客手机号：sales_orders.guest_phone（区别于收货人 receiver_phone），散客按手机号聚合、频次达标转会员。 | R:code:backend/src/modules/pos.module.ts | A:- | S:-
+160_v5015_partial_unique_indexes.sql[PB6S]: F:V5.0.15 部分唯一索引：会员手机号/卡号、商品货号的唯一约束改为仅对未删除记录生效，软删不再占用键值（修复注销后无法重新注册/建档）。 | R:- | A:- | S:-
+161_v5015_refund_cost_reversal.sql[PB7S]: F:V5.0.15 QA-P0 退货成本回冲：退回冲减 sales_orders.cost_amount 与 sale_items.line_cost，修复退货后毛利虚高、分红基数失真。 | R:code:backend/src/modules/refund.module.ts | A:- | S:-
+162_v5015_refund_window_by_category.sql[PB6S]: F:V5.0.15 退货时限按商品分类分别配置（原整单统一 7 天），数据存 json 键 refund.window_by_category。 | R:code:backend/src/modules/refund.module.ts | A:- | S:-
+163_v5015_floor_guard_rate.sql[PC5T]: F:V5.0.15 最低售价兜底比率改为可配置（原硬编码 6 折形同虚设），默认 0.8 保留 20% 毛利。 | R:- | A:- | S:-
+164_v5016_stock_weigh_exclusive.sql[PB5T]: F:V5.0.16 商品「记库存」与「称重」互斥二选一，冲突历史档案按业务优先保留记库存、置称重=false。 | R:code:backend/src/modules/products.module.ts | A:- | S:-
+165_v5016_dividend_enum_values.sql[PB8T]: F:V5.0.16 分红台账枚举 dividend_record_t 补值「冲回」「冲减」，修复退款/连锁回补写枚举时抛 invalid input value。 | R:code:backend/src/modules/dividend.module.ts | A:- | S:新增 record_type 写入前必须核对枚举已含该值，缺迁移会致退款/回补直接报错
+166_v5016_refund_window_setting_key.sql[PC5T]: F:V5.0.16 按分类退货时限键归位：refund.window_by_category → sales.refund 前缀（原键不在设置屏过滤范围内，入口不可见）。 | R:- | A:- | S:-
+167_v5016_backfill_gain_batches.sql[PB7S]: F:V5.0.16 回填历史无批次盘盈：stock_flows 中 batch_id IS NULL 的盘盈/调整补建批次（FIX- 前缀）并回填，修复账面有货卖不出的长期漂移。 | R:code:backend/src/modules/inventory.module.ts | A:- | S:-
+168_v5017_member_growth.sql[PB9M]: F:V5.0.17 会员等级重设计为成长值体系：member_growth_records 台账 + members.growth_total 冗余 + member_levels 升级/保级门槛，成长值=累计实付充值×倍率+直接消费×倍率（排除商品/分类/特价/赠品）。 | R:code:backend/src/modules/member-growth.service.ts | A:- | S:-
+169_v5017_growth_backfill.sql[PB7S]: F:V5.0.17 成长值历史回填：充值按已入账本金×倍率、消费按现金/微信/支付宝实付×倍率，为等级立即重算提供数据基础。 | R:code:backend/src/modules/member-growth.service.ts | A:- | S:-
+170_v5017_refund_window_group_fix.sql[PC4T]: F:V5.0.17 修正按分类退货时限键的页签归属（166 误设为「收银台」→「通用设置」）。 | R:- | A:- | S:-
+171_v5017_dedup_level_grace_setting.sql[PC4T]: F:V5.0.17 消除等级宽限期重复设置项：删除误插的点号版 member.level.grace_days，权威键为下划线版 member.level_grace_days。 | R:- | A:- | S:等级宽限引擎统一读 member.level_grace_days，勿再插点号版同义键
+172_v5017_ocr_setting_regroup.sql[PC4T]: F:V5.0.17 OCR/入库低价保护设置归位：ai.ocr.* 归 AI 识别域，入库低价保护（ai.ocr.low_price*）归商品管理。 | R:- | A:- | S:-
+173_v5017_level_grace_regroup.sql[PC4T]: F:V5.0.17 等级保护缓冲期设置归位「会员管理」并正名（原挂财务管理属历史遗留）。 | R:- | A:- | S:-
+174_v5017_cleanup_dead_settings.sql[PC4T]: F:V5.0.17 清理已废弃设置项（audit-settings.mjs 核查前后端零引用者，如 ai.vlm_fallback）。 | R:- | A:- | S:-
+175_v5017_settings_cleanup_final.sql[PC5S]: F:V5.0.17b 设置清理收尾（老板逐项拍板）：删 5 项僵尸、ai.engine 枚举收敛、OCR 引擎地址默认与 remark 澄清、修正核查工具误报。 | R:- | A:- | S:-
+176_v5017_ai_settings_rename.sql[PC5S]: F:V5.0.17b AI 识别设置正名：识别层 layer 值 clip*→emb*（新键+旧值兼容）、ai.feature.engine 补注册、阈值/兜底备注按 PP-ShiTuV2 现实修正。 | R:code:backend/src/modules/ai.emb.ts | A:- | S:-
+177_v5018_ops_integrity.sql[PB8M]: F:V5.0.18 运营完整性批：销售单 status 随退款同步（存量回填）、会员资产对账 CHECK 约束、分红自动计提时间可配置、备份三级循环清理。 | R:code:backend/src/modules/refund.module.ts,code:backend/src/modules/admin.backup.ts | A:- | S:迁移文件禁用 PL/pgSQL DO 块——执行器按分号拆句会致 syntax error at DECLARE
+178_v5018_ghost_keys.sql[PC6S]: F:V5.0.18 补注册隐形配置：PP-ShiTu 引擎阈值组（ai.emb.pp.*）与连锁防造币日限额 hq.member.cross_daily_limit——代码在用但设置页无入口。 | R:- | A:- | S:-
+179_v5018_mv_paid_date.sql[PB7S]: F:V5.0.18 mv_hq_sales_daily 归属口径统一为支付完成时间 COALESCE(pay_paid_at, created_at)；MV 不支持 CREATE OR REPLACE，重建后须 REFRESH 并重建两个索引。 | R:code:backend/src/modules/sales.jobs.ts | A:- | S:-
+180_v5018_settings_regroup.sql[PC5M]: F:V5.0.18d 系统设置归类：14 个旧一级分组归并为 9 大菜单（268 条 UPDATE，仅动 group_name/display_name/remark，值与类型不动），前端 SECTIONS 同步重写。 | R:code:frontend-web/screens/settings.js | A:- | S:-
+181_v5018_restore_settings_remark.sql[PC4M]: F:V5.0.18e 恢复设置项 remark 为用户表原始说明全文（180 曾误用提炼版摘要覆盖），group_name/display_name 保持新归类。 | R:- | A:- | S:-
+182_v5018g_cand_min_conf.sql[PC5T]: F:V5.0.18g AI 候选卡片展示阈值（ai.emb.cand_min_conf）：纯展示过滤，不影响自动命中判定三门槛。 | R:code:backend/src/modules/ai.module.ts | A:- | S:-
+183_v5018g_hotkey_push.sql[PC4T]: F:V5.0.18g 快捷键下发式重置与 AI 设置项归组清理（候选阈值并入 AI 管理组、清理失效的频率权重项）。 | R:- | A:- | S:-
+184_v5018g_emp_perm_overrides.sql[PI8S]: F:V5.0.18g 员工级权限覆盖表：在角色权限基础上按人 allow/deny 增减，空表=完全随角色。 | R:code:backend/src/modules/auth.module.ts | A:- | S:-
+185_v5018g_emp_delete_grace.sql[PI7S]: F:V5.0.18g 员工删除冷静期：停用满 90 天方可删；无业务记录物理删、有记录则注销归档（快照入 employee_delete_archive 并作废敏感字段）。 | R:code:backend/src/modules/auth.module.ts | A:- | S:-
+186_v5018g_sales_delivered_at.sql[PB5T]: F:V5.0.18g 本店配送依赖：补 sales_orders.delivered_at 列与 order_status_t 枚举「已撤销」「配送中」。 | R:- | A:- | S:-
+187_v5018g_bc_payment_term.sql[PB5T]: F:V5.0.18g 大客户账期：账款按月滚动结算，0=现结。 | R:code:backend/src/modules/bigcustomer.module.ts | A:- | S:-
+188_v5018g_inbound_list_index.sql[PP4T]: F:V5.0.18g 入库单列表分页索引（状态筛选+时间倒序高频组合）。 | R:- | A:- | S:-
+189_v5018g_list_indexes.sql[PP4S]: F:V5.0.18g 列表服务端分页配套索引：各业务单据表按「门店+id 倒序」排序路径。 | R:- | A:- | S:-
+190_v5018g_report_indexes.sql[PP4S]: F:V5.0.18g 报表查询索引：已完成订单+区间聚合及商品/收银员/会员维度分组。 | R:- | A:- | S:-
+191_v5019_doc_seq.sql[PG8S]: F:V5.0.19 原子发号计数器表 doc_seq：替代 seqLock 的全局事务级锁+LIKE count(*)+1，首次按表内匹配行数初始化后纯 O(1) 自增。 | R:code:backend/src/common/db.ts | A:- | S:新增取号一律走 seqLock/doc_seq 计数器，禁止裸 count(*)+1（高并发撞号+慢前缀扫描）
+192_v5019b_hot_indexes.sql[PP8T]: F:V5.0.19b 五类热查询补索引：审计按 target/价目表按 product/收货审核按 po/退款上限按 refund/券核销按 coupon（此前全表扫描）。 | R:- | A:- | S:-
+193_v5019c_credit_enabled.sql[PB7T]: F:V5.0.19c 挂账落欠款：赊账通道停用后改收银端显式挂账 dto.creditAmount，开关 pos.credit.enabled+指定会员，Σ(支付+挂账)=应收，挂账落 member_credits 且 pay_paid_at=NULL。 | R:code:backend/src/modules/sales.module.ts | A:- | S:-
+194_v5019d_ticket_used.sql[PS8T]: F:V5.0.19d 店长授权票据一次性消费登记：120s JWT 带 jti，结账消费 INSERT ON CONFLICT 抢占防窗口内重放二次改价。 | R:code:backend/src/modules/auth.module.ts | A:- | S:-
+195_v5019e_reset_guard.sql[PS9S]: F:V5.0.19e 高危操作留痕与审计防篡改：data_reset_history 表（禁改禁删）、清库前强制备份、留痕先行写不进即拒绝、自动备份按本地日去重。 | R:code:backend/src/modules/admin.reset.ts | A:- | S:data_reset_history 禁 UPDATE/DELETE；清库/恢复前强制自动备份并先写留痕
+196_v5019f_danger_perms.sql[PS9S]: F:V5.0.19f 高危数据操作独立权限点：sys.data.reset/sys.data.restore（risk_level=3）从 sys.data.backup 拆出，仅授予超级管理员，接口加登录密码复核+影响行数二次确认。 | R:code:backend/src/modules/admin.reset.ts | A:- | S:sys.data.reset/restore 仅授超级管理员，绝不可并入 sys.data.backup（有备份权即能清全库的历史缺陷）
+197_v5019g_revoke_app_truncate.sql[PS8T]: F:V5.0.19g 剥夺应用账号 pos_app 的 TRUNCATE（最小权限再收紧）：清库改走超户专用连接 RESTORE_DATABASE_URL。 | R:code:backend/src/modules/admin.reset.ts,code:backend/src/scripts/server-up.mjs | A:- | S:改 pos_app 权限必须同步 server-up.mjs 的 GRANT，否则重启即授回
+198_v5019h_p08_indexes.sql[PP6T]: F:V5.0.19h P-08 五类热查询补齐剩余两条：product_barcodes(product_id)、sale_refund_items(refund_id)。 | R:- | A:- | S:-
+migrations.manifest.json[PC9M]: F:迁移清单：文件名→sha256 全量登记，init-db 仅执行清单内迁移（防清单外 SQL 注入执行）。 | R:code:backend/src/scripts/init-db.ts | A:- | S:新迁移必须登记本清单（含 sha256），否则 init-db 视为清单外跳过不执行
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/src/scripts/===
-chain-init.ts[OZ9L]: F:V5总部行初始化(§7.4步骤2~3): 建org_type='hq'总部行(连锁模式开关)、现有门店补store_no(S001…)/parent_id=总部/node_code、超管role置scope_type='hq'/data_scope='all'; 幂等。 | R:- | A:存在总部行→连锁约束激活, 否则单店(整体休眠); 门店编码按id顺序S+3位; node_code随机生成; 不搬业务数据(商品升格属批次3)。 | S:可被门店管理接口复用; 与upgrade-v5同批; 单店零回归(无总部行=单店)。
-init-db.ts[DB9M]: F:数据库初始化(执行T1): 跑db/*.sql全量基线(74表+26枚举+种子)→schema_migrations记账(sha256校验和+应用时间); 管理员检测只读不写死。 | R:- | A:splitStatements跳过引号/dollar-quote/注释正确切分; 已记账迁移→跳过(非重跑,防001非幂等种子撞键); 迁移漂移(已应用被改)→直接失败(禁改纪律); 幂等IF NOT EXISTS/ON CONFLICT。 | S:安装版首测实证修复; 迁移治理工具化; 与upgrade-v5衔接。
-recon-report.ts[CB7S]: F:V5迁移对数报告(批次7 §7.1.4): 只读采集销售/库存/会员/商品/同步五类基线数字→Markdown; 升级前基线+升级后对数, diff即《迁移对数报告》。 | R:- | A:口径已完成订单; 库存金额=即时库存×售价(含门店覆盖价); 近30天逐日销售; --out写文件 --label标题; 纯只读不写库。 | S:与upgrade-v5闭环; 数字diff验证迁移一致; 不改动业务。
-upgrade-v5.ts[OZ9L]: F:V5单店→连锁升级总控(批次7 §7.1.2十步): 步骤2/3/7总部行+门店升格+角色(chain-init)、4商品升格总部主档、5会员升格、6/8同步配置、9对数报告; --dry-run预演。 | R:- | A:停业窗口执行+先备份; 幂等可重复(已完成步骤跳过); 商品升格时原店保留下发台账(store_products)收银价目不受影响; 步骤与商品总部化(批次3)同批上线防查不到商品。 | S:只做业务迁移不搬骨架; 与recon-report对数闭环; 连锁模式开关=总部行存在。
+chain-init.ts[OZ9L]: F:V5 总部行初始化：建 org_type='hq' 总部行（连锁模式开关）、现有门店补 store_no（S001…）/parent_id=总部/node_code、超管 role 置 scope_type='hq'/data_scope='all'；幂等。 | R:- | A:存在总部行→连锁约束激活，否则单店（整体休眠）；门店编码按 id 顺序 S+3 位；node_code 随机生成；不搬业务数据（商品升格属批次 3） | S:可被门店管理接口复用；与 upgrade-v5 同批；单店零回归（无总部行=单店）。
+init-db.ts[DB9M]: F:数据库初始化：跑 db/*.sql 全量基线（74表+26枚举+种子+迁移001~198）→schema_migrations 记账（sha256 校验和+应用时间）；管理员检测只读不写死。 | R:- | A:splitStatements 跳过引号/dollar-quote/注释正确切分；已记账迁移→跳过；迁移漂移（已应用被改）→直接失败（禁改纪律）；幂等 IF NOT EXISTS/ON CONFLICT | S:安装版首测实证修复；迁移治理工具化；与 upgrade-v5 衔接。
+recon-report.ts[CB7S]: F:V5 迁移对数报告：只读采集销售/库存/会员/商品/同步五类基线数字→Markdown；升级前基线+升级后对数，diff 即《迁移对数报告》。 | R:- | A:口径已完成订单；库存金额=即时库存×售价（含门店覆盖价）；近 30 天逐日销售；--out 写文件 --label 标题；纯只读不写库 | S:与 upgrade-v5 闭环；数字 diff 验证迁移一致；不改动业务。
+upgrade-v5.ts[OZ9L]: F:V5 单店→连锁升级总控（十步）：总部行+门店升格+角色（chain-init）、商品升格总部主档、会员升格、同步配置、对数报告；--dry-run 预演。 | R:- | A:停业窗口执行+先备份；幂等可重复（已完成步骤跳过）；商品升格时原店保留下发台账（store_products）收银价目不受影响 | S:只做业务迁移不搬骨架；与 recon-report 对数闭环；连锁模式开关=总部行存在。
 
 ===D:/Software/POS_system/超市收银系统-初版代码/deploy/===
-build-all.ps1[CB7S]: F:一键构建总控(PowerShell): 清理→编译服务端(TS→dist)→装配server/(dist·db·scripts·node_modules·public·内嵌PG)→打包收银台Win11/Win7双轨EXE→冒烟(探/health+/admin+/pwa+引导建管理员); 产物落release/。 | R:- | A:robocopy/MIR处理超长路径; 内嵌PG首释纯ASCII路径; 冒烟杀软拦截自动重试; .env/运行期不随包; version.txt注入; 参数SkipExe/SkipSmoke/Win7/SkipNodeModules。 | S:只动构建/部署产物不改业务; 自备份build-all到release; 与deploy/installer Inno Setup衔接出安装包。
-README-SERVER.md[SV7M]: F:服务端部署说明: 独立可运行包(内置便携PG,装Node后双击start-server.bat); 运行环境Node20 LTS/权限/目录。 | R:code:deploy/start-server.bat | A:- | S:-
+build-all.ps1[CB7S]: F:一键构建总控：清理→编译服务端（TS→dist）→装配 server/（dist·db·scripts·node_modules·public·内嵌 PG）→打包收银台 Win11/Win7 双轨 EXE→冒烟；产物落 release/。 | R:- | A:robocopy/MIR 处理超长路径；内嵌 PG 首释纯 ASCII 路径；冒烟杀软拦截自动重试；.env/运行期不随包；version.txt 注入；参数 SkipExe/SkipSmoke/Win7/SkipNodeModules | S:只动构建/部署产物不改业务；自备份 build-all 到 release；与 deploy/installer Inno Setup 衔接出安装包。
+README-SERVER.md[SV7M]: F:服务端部署说明：独立可运行包（内置便携 PG，装 Node 后双击 start-server.bat）；运行环境 Node20 LTS/权限/目录。 | R:code:deploy/start-server.bat | A:- | S:-
 README_DEPLOY.md[SV7M]: F:部署总说明: release/产物构成与四端解耦部署(服务端先起,其余三端连之); 安装/升级/目录结构。 | R:code:deploy/README-SERVER.md | A:- | S:-
-env.example[FC6T]: F:服务端配置样例: PORT/HTTPS_PORT/PG_MODE(embedded/external)/PG_PORT/PG_PASSWORD/DATABASE_URL等; start-server.bat自动复制为.env。 | R:- | A:- | S:-
+env.example[FC6T]: F:服务端配置样例：PORT/HTTPS_PORT/PG_MODE（embedded/external）/PG_PORT/PG_PASSWORD/DATABASE_URL 等；start-server.bat 自动复制为 .env。 | R:- | A:- | S:-
 start-server.bat[OV7T]: F:服务端启动器: 校验Node→复制.env→node scripts/server-up.mjs up; HTTPS证书随启动自动签发。 | R:code:backend/scripts/server-up.mjs | A:- | S:-
 stop-server.bat[OV5T]: F:服务端停止器: node scripts/server-up.mjs stop。 | R:code:backend/scripts/server-up.mjs | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/deploy/installer/===
-cashier-setup.iss[CB7S]: F:部署与安装资产集(deploy/): Inno Setup脚本(cashier-setup.iss/server-setup.iss)生成服务端安装包(默认目录D:\Program Files\POS-Server)、WinSW服务化、启停bat、env.example; 由build-all装配引用。 | R:- | A:安装包与server/产物衔接; WinSW把node服务注册Windows服务; 备份支持本地/远程; 图标/预览在assets/。 | S:安装包产物落V5.0/installers; 服务化便于开机自启; 与内嵌PG协同。
+cashier-setup.iss[CB7S]: F:收银台安装包 Inno Setup 脚本：桌面双轨 EXE 静默安装；与 server-setup 同属 deploy/installer 资产集，由 build-all 装配引用。 | R:- | A:安装包与 server/ 产物衔接；图标/预览在 assets/ | S:-
 open-admin.vbs[OV5T]: F:打开后台管理端(动态端口): 读backend/.env的PORT开http://localhost:<端口>/admin/,改端口后仍指向正确地址。 | R:- | A:- | S:-
 pos-server-service.xml[OV7T]: F:服务端Windows服务定义(WinSW): id=pos-server开机自启/崩溃5秒重启/无窗口/日志滚{app}\logs,包装node server-up.mjs up。 | R:code:backend/scripts/server-up.mjs | A:- | S:-
-server-setup.iss[OV7M]: F:服务端安装包(Inno Setup6 V2): 后端以WinSW服务运行+托盘管理器+内置Node+嵌入PG+AI模型+TTS; 默认装D:\Program Files\POS-Server。 | R:code:deploy/installer/pos-server-service.xml,code:deploy/installer/server-tray.ps1 | A:- | S:-
-server-tray.ps1[OV6M]: F:服务端管理器托盘(V2): 实时状态/快捷开后台·PWA·老板端·会员H5·客显/网络端口设置与防火墙放行/启停重启提权/单实例锁。 | R:- | A:- | S:-
+server-setup.iss[OV7M]: F:服务端安装包（Inno Setup6 V2）：后端以 WinSW 服务运行+托盘管理器+内置 Node+嵌入 PG+AI 模型+TTS；默认装 D:\Program Files\POS-Server。 | R:code:deploy/installer/pos-server-service.xml,code:deploy/installer/server-tray.ps1 | A:- | S:-
+server-tray.ps1[OV6M]: F:服务端管理器托盘（V2）：实时状态/快捷开后台·PWA·老板端·会员 H5·客显/网络端口设置与防火墙放行/启停重启提权/单实例锁。 | R:- | A:- | S:-
 server-tray.vbs[OV3T]: F:无窗口启动托盘管理器: powershell Hidden运行server-tray.ps1,避免黑窗。 | R:- | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/docs/打包部署/===
@@ -322,18 +407,19 @@ server-tray.vbs[OV3T]: F:无窗口启动托盘管理器: powershell Hidden运行
 项目独立打包方案.md[SV5S]: F:项目独立打包方案文档: release产物结构与打包流程设计。 | R:code:deploy/build-all.ps1 | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/frontend-desktop/===
-package.json[CB7S]: F:前端三端: ①desktop=Electron v5.0.0双轨(modern=Electron44/x64,win7冻结=Electron22/ia32) ②web=cashier-web-admin零构建链(原生ESM,node server.mjs) ③h5=会员自助静态站(MemberGuard JWT)。 | R:- | A:desktop本地优先离线收银+扫码枪/钱箱/小票机直连; web无打包直静态服务,权限路由前端隐藏非安全(后端仍权威); h5走member-app端点与员工端隔离。 | S:纯前端运行时全走backend API; desktop经HTTPS自签供PWA/手机; 双轨兼容Win7老机。
+package.json[CB7S]: F:前端三端：①desktop=Electron 双轨（modern=新 Electron/x64，win7 冻结=Electron22/ia32）②web=cashier-web-admin 零构建链（原生 ESM，node server.mjs）③h5=会员自助静态站（MemberGuard JWT）。 | R:- | A:desktop 本地优先离线收银+扫码枪/钱箱/小票机直连；web 无打包直静态服务，权限路由前端隐藏非安全（后端仍权威）；h5 走 member-app 端点与员工端隔离 | S:纯前端运行时全走 backend API；desktop 经 HTTPS 自签供 PWA/手机；双轨兼容 Win7 老机。
 README.md[SU5T]: F:Electron收银端说明(T16初版壳): 对应方案9.9双屏/V4.6.4打印/V4.6.2外设任务卡。 | R:- | A:- | S:-
-electron-builder.modern.json[FV5T]: F:Electron打包配置(Win11/modern轨)。 | R:- | A:- | S:-
-electron-builder.win7.json[FV5T]: F:Electron打包配置(Win7 ia32轨,定稿后启用)。 | R:- | A:- | S:-
+electron-builder.modern.json[FV5T]: F:Electron 打包配置（Win11/modern 轨）；产物由 build-all 复制到 release/pos-desktop。 | R:- | A:- | S:-
+electron-builder.win7.json[FV5T]: F:Electron 打包配置（Win7 ia32 轨，定稿后启用）。 | R:- | A:- | S:-
 package-lock.json[FV2L]: F:Electron端npm依赖锁定文件(自动生成)。 | R:code:frontend-desktop/package.json | A:- | S:-
+gen-icon.ps1[XP5T]: F:生成收银台 256x256 应用图标（圆角底+白色「收」+¥ 角标）→build/icon.png。 | R:- | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/===
-.env.example[FC6T]: F:后端环境变量样例: DATABASE_URL/JWT_SECRET(≥32位随机串,缺省首启自动生成0600,弱示例值启动校验忽略)/PORT=3000。 | R:- | A:- | S:-
+.env.example[FC6T]: F:后端环境变量样例：DATABASE_URL(必配)/RESTORE_DATABASE_URL(恢复超户串)/JWT_SECRET(≥32位自动生成)/PORT/BIND_HOST/ENABLE_HSTS/LEGACY_DEFAULT_PW/AI训练解释器白名单/迁移严格模式。 | R:- | A:- | S:生产必须显式配强口令DATABASE_URL，缺省时后端拒绝以示例弱口令启动
 .gitignore[FG3T]: F:后端Git忽略规则(5行)。 | R:- | A:- | S:-
 README.md[SG6T]: F:后端真库集成测试说明: npm test启动e2e.mjs(内嵌真实PG→建基线→起服务→85断言: 鉴权/设置留痕/批次/FIFO/储值/分红/退货T7/对账T8)。 | R:code:backend/tests/e2e.mjs | A:- | S:-
-package-lock.json[FV2L]: F:npm依赖锁定文件(3211行,npm install自动生成)。 | R:code:backend/package.json | A:- | S:-
-package.json[FV7T]: F:后端npm清单(cashier-backend v5.0.0): scripts=build(tsc)/start/start:dev/init:db(init-db.js)/test(e2e.mjs); 依赖NestJS12+PostgreSQL。 | R:code:backend/package-lock.json,code:backend/src/scripts/init-db.ts | A:- | S:-
+package-lock.json[FV2L]: F:npm依赖锁定文件(npm install自动生成)，含 NestJS/PG/xlsx/node-forge/embedded-postgres 等全部锁定版本。 | R:code:backend/package.json | A:- | S:-
+package.json[FV7T]: F:后端npm清单(cashier-backend)：scripts=build(tsc)/start/start:dev/test(e2e.mjs)/test:unit(node --test)；依赖 NestJS+pg+xlsx+node-forge+embedded-postgres(版本钉死)。 | R:code:backend/package-lock.json,code:backend/src/scripts/init-db.ts | A:- | S:-
 tsconfig.json[FV5T]: F:后端TS编译配置: ES2022/commonjs/outDir=dist/rootDir=src/strict=false。 | R:- | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/ai-forecast-svc/===
@@ -349,20 +435,21 @@ train_detect.py[KA7T]: F:训练2/3·GPU训练单类商品检测模型→导出ON
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/public/admin/===
 README.md[SU4T]: F:Web管理后台说明: 零构建链原生HTML/CSS+ESM免npm install; 独立启动node server.mjs:8088,或拷入backend/public由后端同源托管/admin。 | R:code:backend/public/admin/api.js | A:- | S:-
-api.js[IU8S]: F:管理后台API封装(对接后端NestJS): base兜底链=localStorage.api_base→window.__API_BASE__注入→同源origin; 同源托管/admin免CORS免配置; 导出get/post/setAuth/toast等公共件。 | R:code:backend/public/admin/app.js | A:防呆: 服务端已注入__API_BASE__时注入地址优先,防静态端口(8088)被写进api_base致全接口403 | S:-
-app.js[EU8L]: F:管理后台应用入口: 汇集screens/*全模块(home/dashboard/report/products/stock/ops/members/sales/salesitems/shifts/counter/promotions等)装配路由与界面。 | R:code:backend/public/admin/api.js | A:- | S:-
-col-resize.js[CU5S]: F:表格列宽可调(V4.26.2): 全局自动挂载,拖表头右边界调宽/双击分隔线按内容自适应,任何后台表格零改造可用。 | R:- | A:- | S:-
-common-ui.js[LU7S]: F:通用UI组件: openDetailModal详情弹窗/exportRows(CSV·Excel导出)/paginate本地分页(每页10条),全系统复用。 | R:code:backend/public/admin/api.js | A:- | S:-
-date-range.js[LU5M]: F:日历范围选择器(V5.0): 成对开始/结束日期输入自动升级为日历范围控件; 原input隐藏保留id与value,既有查询函数零改动。 | R:- | A:MutationObserver自动覆盖动态渲染屏幕,无需逐屏改造 | S:-
-docprint.js[AU7M]: F:A5业务单据统一打印(V4.15.7 P3): 七类(入库/退货/订货/报损/盘点/调拨/对账)一单一页CSS@page; 三入口(详情打印/勾选批量/审核后自动)。 | R:code:backend/db/068_v4157_print_p2p3.sql | A:权限docs.print.a5按钮显隐+端点双重约束; 份数1~3; 打印成功POST /print-jobs/a5落print_jobs,重打加重打标识 | S:-
-index.html[EU8T]: F:管理后台HTML入口: 引styles.css与vendor/hiprint(print-lock/stubs/jquery)及各ES模块; Web管理后台页面骨架。 | R:code:backend/public/admin/app.js | A:- | S:-
-layout-editor.js[AU7L]: F:可视化模版排版编辑器(V4.15.9,hiprint 0.0.61-beta5内核): 拖拽画布+业务字段池; 纸张标签40x30至A5/A4/A3; 明细表列随单据类型预置,激光喷墨自动分页。 | R:code:backend/db/070_v4159_layout_editor.sql | A:撤销重做/复制粘贴/删除均为hiprint内建快捷键(Ctrl+Z/Ctrl+Shift+Z/Ctrl+C/V/Delete); 网格/缩放/旋转纸张 | S:-
-pick-panel.js[LU6S]: F:全局自绘下拉增强器(V4.9.14): select→只读框+芯片面板(真实select保留display:none,.value与change全兼容); input[list]摘除list属性惰性读datalist。 | R:- | A:幂等(dataset.pickEnhanced防重); app.js MutationObserver对动态节点自动调用 | S:-
-product-search.js[LU7T]: F:商品模糊搜索组件(V4.8.20共享): 条码全码/后六位/名称/拼音码/货号定位(后端/products?keyword=); 供调价/入库/退货等单据复用。 | R:- | A:扫码枪回车即选; ↑↓高亮/Enter确认/Esc关闭; attachProductSearch(inputEl,{onPick}) | S:-
-serialprint.js[IH7T]: F:浏览器WebSerial串口直发(P2/P3共用): 标签机/小票机串口连接时由桌面Chrome/Edge写出base64指令字节。 | R:- | A:requestPort必须在用户点击手势内调用; 授权记忆由浏览器管理,同设备二次免弹窗 | S:-
-styles.css[CU5L]: F:管理后台全站皮肤(V4.8.12对齐界面原型): 暖纸底/墨绿主色/橙色强调/虚线分隔/mono数字/pill圆角。 | R:- | A:- | S:-
-ui-polish.js[LU6S]: F:UI精修层(V4.26.3纯增强零业务耦合): 返回顶部/长页面锚点导航/液态玻璃开关(ui.glass.enabled)/状态筛选分段控件/步骤导航。 | R:- | A:- | S:-
-ui.js[LU6S]: F:全局UI组件(V4.9.7): decorateModals窗口按钮(app.js MutationObserver调用)/confirmBox确认弹窗/zoomImg图片放大/supMatcher供应商datalist匹配。 | R:- | A:- | S:-
+api.js[IU8S]: F:管理后台API封装：base兑底链+统一call(15s超时+401自动登出)；图片/签名URL拼60s短票据(/auth/img-ticket，45s自动刷新，F-05)；导出 get/post/setAuth/unwrap/imgUrl 等公共件。 | R:code:backend/public/admin/app.js | A:防呆: 服务端注入的__API_BASE__优先，防静态端口写进api_base致全接口403；票据未就绪时imgUrl返回无token URL(图片401触发重登) | S:-
+app.js[EU8L]: F:管理后台应用入口：汇集 screens/* 全模块(含 delivery/label-print 等新增屏)装配路由与界面；登录/设备配对/全站装饰。 | R:code:backend/public/admin/api.js | A:- | S:-
+col-resize.js[CU5S]: F:表格列宽可调：拖表头右边界调宽/双击分隔线按内容自适应，全站表格零改造可用。 | R:- | A:- | S:-
+common-ui.js[LU7S]: F:通用UI组件：openDetailModal(内部esc标题防XSS)/exportRows(CSV·Excel导出)/paginate本地分页，全系统复用。 | R:code:backend/public/admin/api.js | A:- | S:-
+date-range.js[LU5M]: F:日历范围选择器：成对开始/结束日期输入自动升级为日历范围控件，原input隐藏保留id与value，既有查询零改动。 | R:- | A:MutationObserver自动覆盖动态渲染屏 | S:-
+docprint.js[AU7M]: F:A5业务单据统一打印：七类(入库/退货/订货/报损/盘点/调拨/对账)一单一页；三入口(详情/勾选批量/审核后自动)；window.open 带 noopener。 | R:code:backend/db/068_v4157_print_p2p3.sql | A:权限docs.print.a5双重约束；打印成功POST /print-jobs/a5落print_jobs | S:-
+index.html[EU8T]: F:管理后台HTML入口：引styles.css与vendor/hiprint及各ES模块；meta CSP(script-src self+unsafe-inline阻断外联注入)；服务器另发 X-Frame-Options:SAMEORIGIN。 | R:code:backend/public/admin/app.js | A:- | S:改入口后须 bump 资源 ?v= 版本号，否则浏览器按旧URL命中缓存(3100对/admin JS发no-store不受影响，仅 ?v= 影响入口自身)
+layout-editor.js[AU7L]: F:可视化模版排版编辑器(hiprint内核)：拖拽画布+业务字段池；纸张40x30至A5/A4/A3；撤销重做/复制粘贴为hiprint内建快捷键。 | R:code:backend/db/070_v4159_layout_editor.sql | A:- | S:-
+pick-panel.js[LU6S]: F:全局自绘下拉增强器：select→只读框+芯片面板(.value与change全兼容)；input[list]摘除list属性惰性读datalist；纯本地DOM无网络请求。 | R:- | A:幂等(dataset.pickEnhanced防重)；app.js MutationObserver自动增强动态节点 | S:-
+product-search.js[LU7T]: F:商品模糊搜索组件：条码全码/后六位/名称/拼音码/货号定位，供调价/入库/退货等单据复用。 | R:- | A:扫码枪回车即选；↑↓高亮/Enter确认/Esc关闭；竞态守卫qSeq序号——慢响应晚到不覆盖新关键词结果(F-08) | S:-
+serialprint.js[IH7T]: F:浏览器 WebSerial 串口直发（P2/P3 共用）：标签机/小票机串口连接时由桌面 Chrome/Edge 写出 base64 指令字节。 | R:- | A:requestPort 必须在用户点击手势内调用；授权记忆由浏览器管理，同设备二次免弹窗 | S:-
+styles.css[CU5L]: F:管理后台全站皮肤：暖纸底/墨绿主色/橙色强调/虚线分隔/mono数字/pill圆角。 | R:- | A:- | S:-
+ui-polish.js[LU6S]: F:UI精修层（纯增强零业务耦合）：返回顶部/长页面锚点导航/液态玻璃开关（ui.glass.enabled）/状态筛选分段控件/步骤导航。 | R:- | A:- | S:-
+ui.js[LU6S]: F:全局UI组件：decorateModals窗口按钮（app.js MutationObserver 调用）/confirmBox确认弹窗/zoomImg图片放大/supMatcher供应商datalist匹配。 | R:- | A:- | S:-
+col-align.js[LU5S]: F:全站表格按列语义数据对齐(V5.0.8)：读 th 表头文案判定语义，数值列居右/单号状态日期列居中；仅初始扫一次+只扫新增节点，处理过打标记绝不重扫。 | R:- | A:尊重内联text-align不覆盖；避免全站盲扫抢占 dblclick(V5.0.8a修复) | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/public/admin/scale-protocols/===
 cas.js[IH5T]: F:凯士CAS条码秤PLU下发协议(简化版): 适用CL-3000/CL-5000; 帧STX C{PLU5}{商品码7}{单价5}{名称16}{单位1}ETX LRC。 | R:- | A:名称定长16字节,中文GBK每字2字节不足补空格超长按字边界裁剪 | S:-
@@ -373,95 +460,97 @@ index.js[LH6T]: F:传秤协议注册表: 聚合dahua/topping/digi/mettler/cas/ge
 mettler.js[IH5T]: F:托利多Mettler-Toledo条码秤PLU下发协议(简化文本): 适用bPro/bCom; 帧<PLU{PLU6};NAME=;PRICE=;BARCODE=;UNIT=KG;>。 | R:- | A:- | S:-
 serial.js[IH7T]: F:Web Serial API封装(前端条码秤直发): ScaleSerial类串口收发通道。 | R:- | A:requestPort必须用户手势触发; 必须安全上下文(HTTPS/localhost)+Chrome/Edge | S:-
 topping.js[IH5T]: F:顶尖Topping条码秤PLU下发协议(简化版): 适用LS2/LS3/LS6及兼容机型; 帧!1W{PLU4}A{代码7}B{单价分/kg}C{单位}D{效期3}E{皮重}F{信息}G{品名}。 | R:- | A:- | S:-
-transmit.js[AH7S]: F:传秤下发核心(V4.26.5单一数据源): 中文化秤名(GBK/GB2312)→组帧→串口Web Serial/网口TCP下发→写下发日志→进度回调; 生鲜管理与调价一键传秤复用。 | R:code:backend/public/admin/scale-protocols/index.js,code:backend/public/admin/scale-protocols/serial.js | A:- | S:-
-utils.js[LH6S]: F:传秤协议工具函数: 数字字段一律ASCII,名称字段统一走nameField(),pad左补零等。 | R:- | A:V4.26.1起支持中文化秤名: charset=gbk/gb2312时后端iconv-lite编码GBK经opts.nameBytes注入帧内,按双字节边界裁剪防截断汉字 | S:-
+transmit.js[AH7S]: F:传秤下发核心：中文化秤名(GBK)→组帧→串口Web Serial/网口TCP下发→写日志→进度回调；生鲜管理与调价一键传秤复用。 | R:code:backend/public/admin/scale-protocols/index.js,code:backend/public/admin/scale-protocols/serial.js | A:- | S:-
+utils.js[LH6S]: F:传秤协议工具函数：数字字段一律ASCII，名称字段统一走nameField()，中文化经iconv-lite编码GBK按双字节边界裁剪防截断汉字。 | R:- | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/public/admin/screens/===
-ai.js[AA8L]: F:AI训练台屏(9.4): 任务工单(AICJ/AIXL/AIPG)→工单详情→预检合格/回退→审核通过→模型版本→单活部署。 | R:code:backend/public/admin/api.js | A:统一状态色规则: 绿=通过/完成·红=待审核/待执行·黄=回退/临期·蓝=进行中/预检待终审·灰=停用 | S:-
-bigcustomer.js[AB8L]: F:大客户与团购销售屏(方案5.10/M9): 三Tab客户档案/专属价目/应收台账(账龄/赊账/回款); 团购下单专属价→防双重折扣→FIFO扣库存→赊账或现结。 | R:code:backend/public/admin/api.js | A:- | S:-
-brain.js[AA8L]: F:智能决策中心屏(9.8): 9项智能应用+建议闭环+AI日报+知识库+自然语言问答。 | R:code:backend/public/admin/api.js | A:需ai.decision权限点(perms校验) | S:-
-bundles.js[AB6M]: F:组合拆分屏(V4.8.17): 组合档案(BOM)+组装ZZ-/拆分CF-开单(录入即生效)+单据浏览。 | R:- | A:- | S:-
-consign.js[AB6M]: F:联营对账屏(5.7/P2-3a): 看板→预览(销售汇总+扣点保底)→生成LC对账单→确认(现场+电子签字)→结算; 供应商判别联营后由recon.js调用。 | R:code:backend/public/admin/screens/recon.js | A:电子签字(5.6.8/P2-3b): 预采集模板+现场手写补签base64落证据链 | S:-
-counter.js[AB6S]: F:挂单/取单屏(V4.15.4): 单据号/刷新/查询/时间筛选/复选框批量取消/详情弹窗/10秒自动刷新+价目表新鲜度。 | R:- | A:- | S:-
-coupons.js[AB6S]: F:优惠券屏: POST/GET /coupons、发放issue、过期扫描expire-scan、状态变更。 | R:- | A:- | S:-
-dashboard.js[AO6S]: F:经营看板屏: GET /reports/dashboard按日/周/月/季周期切换。 | R:- | A:- | S:-
-dividend.js[AB8S]: F:分红引擎屏: 预览/期间执行run/期间列表/分红记录,本地分页。 | R:code:backend/public/admin/common-ui.js | A:- | S:-
-docentry.js[LU7M]: F:单据录入表格通用组件(V4.9.5): 采购订单/入库/退货共用; 行首加减行,条码列扫码枪/手输/拼音模糊建议下拉定位。 | R:code:backend/public/admin/product-search.js | A:- | S:-
-fraud.js[AS7M]: F:智能防损看板屏(M4a): 总览KPI(异常折扣行/异常让利/退款单)+明细可点击下钻单据列表→订单详情; 采购退货/收银差异同样下钻。 | R:code:backend/public/admin/common-ui.js | A:- | S:-
-home.js[AU6M]: F:后台首页屏+全局搜索索引: 搜索直达功能模块(零后端纯前端关键字映射),待办/预警/快捷入口。 | R:- | A:- | S:-
-hq-costs.js[AB8L]: F:总部进价管理屏(V5.0批次3/M3-11/R8乙模型): 四子页标准进价L1(价格红线唯一依据+渠道比价)/进价渠道榜(谈判原料)/待处置/历史。 | R:- | A:- | S:-
-hq-members.js[AB6S]: F:会员跨店屏(V5.0批次5/M5-1~3): 总部视角跨店资产流水(余额/分红/积分扣款与回补)+汇总KPI; 凭证号=门店sale_payments.external_no可对账追溯。 | R:- | A:status≠done(pending_order)=有扣款无订单待处理,黄色告警 | S:-
-hq-reports.js[AO7M]: F:门店报表屏(V5.0批次6/M6-3): 总部聚合视图(日报/排行/对比/库存/调拨在途/退货双维度R9+流向矩阵/门店往来/进价偏离/会员跨店/同步健康)。 | R:- | A:权限hq.report.allstore服务端校验; 红涨绿跌 | S:-
-hq-stores.js[AB8L]: F:门店管理屏(V5.0批次2/M2-4,总部专属): 列表(编码/组织/区域/节点/同步)+新建(服务端自动初始化内置角色)/编辑/启停闭店/一键建店长/重建内置角色/查看员工。 | R:- | A:- | S:-
-hq-sync.js[AM6M]: F:数据同步屏(V5.0批次4A/M4-9): 双形态按节点角色切换——总部节点水位看板(拉取进度/心跳/落后版本)+批次日志sync_runs+一键重推(版本区间重放)。 | R:- | A:- | S:-
-hq-trade.js[AB7M]: F:总部退货与往来屏(V5.0批次4B): 三子页跨店退货(总部审核→下行受理店收货,现金代付记往来)/门店往来台账(资金/货值,人工结清确认)。 | R:- | A:- | S:-
+ai.js[AA8L]: F:AI训练台屏：任务工单(AICJ/AIXL/AIPG)→详情→预检→审核→模型版本→单活部署。 | R:code:backend/public/admin/api.js | A:状态色规则：绿=通过/完成·红=待审核/待执行·黄=回退/临期·蓝=进行中·灰=停用 | S:-
+bigcustomer.js[AB8L]: F:大客户与团购销售屏：三Tab客户档案/专属价目/应收台账(账龄/赊账/回款)；团购专属价→防双重折扣→FIFO扣库存→赊账或现结。 | R:code:backend/public/admin/api.js | A:- | S:-
+brain.js[AA8L]: F:智能决策中心屏：智能应用+建议闭环+AI日报+知识库+自然语言问答。 | R:code:backend/public/admin/api.js | A:需ai.decision权限点 | S:-
+bundles.js[AB6M]: F:组合拆分屏：组合档案(BOM)+组装ZZ-/拆分CF-开单+单据浏览。 | R:- | A:- | S:-
+consign.js[AB6M]: F:联营对账屏：看板→预览(销售汇总+扣点保底)→生成LC对账单→确认(签字)→结算。 | R:code:backend/public/admin/screens/recon.js | A:电子签字：预采集模板+现场手写补签base64落证据链 | S:-
+counter.js[AB6S]: F:挂单/取单屏：单据号/刷新/查询/时间筛选/复选框批量取消/详情弹窗/10秒自动刷新+价目表新鲜度。 | R:- | A:- | S:-
+coupons.js[AB6M]: F:优惠券屏：POST/GET /coupons、发放issue、过期扫描expire-scan、状态变更。 | R:- | A:- | S:-
+dashboard.js[AO6S]: F:经营看板屏：GET /reports/dashboard 按日/周/月/季周期切换。 | R:- | A:- | S:-
+dividend.js[AB8S]: F:分红引擎屏：预览/期间执行run/期间列表/分红记录，本地分页。 | R:code:backend/public/admin/common-ui.js | A:- | S:-
+docentry.js[LU7M]: F:单据录入表格通用组件：采购订单/入库/退货共用；行首加减行，条码列扫码枪/手输/拼音模糊建议下拉定位。 | R:code:backend/public/admin/product-search.js | A:- | S:-
+fraud.js[AS7M]: F:智能防损看板屏：总览KPI（异常折扣行/异常让利/退款单）+明细可点击下钻单据列表→订单详情；采购退货/收银差异同样下钻。 | R:code:backend/public/admin/common-ui.js | A:- | S:-
+home.js[AU6L]: F:后台首页屏+全局搜索索引：搜索直达功能模块（零后端纯前端关键字映射），待办/预警/快捷入口。 | R:- | A:外链 window.open 带 noopener 防 tabnabbing | S:-
+hq-costs.js[AB8L]: F:总部进价管理屏（R8乙模型）：四子页标准进价L1（价格红线唯一依据+渠道比价）/进价渠道榜（谈判原料）/待处置/历史。 | R:- | A:- | S:-
+hq-members.js[AB6S]: F:会员跨店屏：总部视角跨店资产流水（余额/分红/积分扣款与回补）+汇总KPI；凭证号=门店 sale_payments.external_no 可对账追溯。 | R:- | A:status≠done(pending_order)=有扣款无订单待处理，黄色告警 | S:-
+hq-reports.js[AO7L]: F:门店报表屏：总部聚合视图（日报/排行/对比/库存/调拨在途/退货双维度R9+流向矩阵/门店往来/进价偏离/会员跨店/同步健康）。 | R:- | A:权限hq.report.allstore服务端校验；红涨绿跌 | S:-
+hq-stores.js[AB8M]: F:门店管理屏（总部专属）：列表（编码/组织/区域/节点/同步）+新建（服务端自动初始化内置角色）/编辑/启停闭店/一键建店长/重建内置角色/查看员工。 | R:- | A:- | S:-
+hq-sync.js[AM6M]: F:数据同步屏：双形态按节点角色切换——总部节点水位看板（拉取进度/心跳/落后版本）+批次日志sync_runs+一键重推（版本区间重放）。 | R:- | A:- | S:-
+hq-trade.js[AB7M]: F:总部退货与往来屏：三子页跨店退货（总部审核→下行受理店收货，现金代付记往来）/门店往来台账（资金/货值，人工结清确认）。 | R:- | A:- | S:-
 inventory-mgr.js[AB6T]: F:库存管理合并入口屏: 库存批次+库存作业两个子模块(.seg分段切换)。 | R:code:backend/public/admin/screens/stock.js,code:backend/public/admin/screens/ops.js | A:- | S:-
-marketing.js[AB6M]: F:营销规则屏: 规则类型元数据(生日/临期等图标徽章配置项)+规则增改; V4.14.0 MK补齐四条规则中文人话配置。 | R:- | A:- | S:-
-members.js[AB8L]: F:会员管理屏(V4.14.0 M): 建档(手机号/生日+隐私协议全文可查看更新)/充值档位/消费/积分/等级,锚点导航+统一状态筛选+导出。 | R:code:backend/public/admin/ui-polish.js | A:- | S:-
-models.js[AA6S]: F:AI模型管理屏(M1): 本地大模型为主规则为辅; 运行时状态自动探测/手动扫描(服务地址或安装路径)/设为主模型(qa/日报/识别兜底生效)。 | R:code:backend/public/admin/api.js | A:- | S:-
-ops.js[AB7L]: F:库存作业屏: 报损/盘点/调拨等作业单据全流程(录入→审核签字→A5打印),长页面锚点导航+分页。 | R:code:backend/public/admin/screens/signpad.js,code:backend/public/admin/docprint.js | A:- | S:-
-po.js[AB7L]: F:采购订单屏: 单据行编辑(复用docentry)+审核签字+A5打印+分页浏览。 | R:code:backend/public/admin/screens/docentry.js | A:- | S:-
-prices.js[AB7L]: F:商品调价单屏(V4.8.20重构): 进价/售价同行修改+待审核→审核生效→作废审核流; 支持一键传秤下发。 | R:code:backend/public/admin/scale-protocols/transmit.js | A:- | S:-
-pricing.js[AA6T]: F:AI动态定价屏(M5a): 临期/滞销调价建议(含成本底线),应用后生成待审核调价草稿。 | R:- | A:- | S:-
-print.js[AB7L]: F:打印中心屏(9.9): 打印机管理/设备健康看板/打印模板编辑器(字段显隐+排序+联次+预览试打+导入导出)。 | R:code:backend/public/admin/layout-editor.js,code:backend/public/admin/docprint.js | A:- | S:-
-product-detail.js[LU5S]: F:独立商品详情弹窗(V4.9.7): showProductDetail(pid),版式与商品档案详情一致,供库存批次等页面复用。 | R:- | A:- | S:-
-products.js[AB8L]: F:商品档案屏: 商品增删改查/分类/条码/标价/标签打印,统一状态筛选+搜索命中高亮+分段切换。 | R:code:backend/public/admin/serialprint.js | A:- | S:-
-profiles.js[AA6T]: F:会员智能画像屏(M4b): 生命周期/偏好品类/贡献度/频次标签(member_profiles)。 | R:- | A:- | S:-
-promotions.js[AB7L]: F:促销活动屏(V4.14.0 P改版): 促销模板卡片点使用→弹窗配置(名称/起止/规则)创建+活动列表管理。 | R:- | A:- | S:-
+marketing.js[AB6M]: F:营销规则屏：规则类型元数据（生日/临期等图标徽章配置项）+规则增改；四条规则中文人话配置。 | R:- | A:- | S:-
+members.js[AB8L]: F:会员管理屏：建档（手机号/生日+隐私协议全文可查看更新）/充值档位/消费/积分/等级/成长值，锚点导航+统一状态筛选+导出。 | R:code:backend/public/admin/ui-polish.js | A:- | S:-
+models.js[AA6S]: F:AI模型管理屏：本地大模型为主规则为辅；运行时状态自动探测/手动扫描（服务地址或安装路径）/设为主模型（qa/日报/识别兑底生效）。 | R:code:backend/public/admin/api.js | A:- | S:-
+ops.js[AB7L]: F:库存作业屏：报损/盘点/调拨等作业单据全流程（录入→审核签字→A5打印），长页面锚点导航+分页。 | R:code:backend/public/admin/screens/signpad.js,code:backend/public/admin/docprint.js | A:- | S:-
+po.js[AB7L]: F:采购订单屏：单据行编辑（复用docentry）+审核签字+A5打印+分页浏览。 | R:code:backend/public/admin/screens/docentry.js | A:- | S:-
+prices.js[AB7L]: F:商品调价单屏：进价/售价同行修改+待审核→审核生效→作废审核流；支持一键传秤下发。 | R:code:backend/public/admin/scale-protocols/transmit.js | A:- | S:-
+pricing.js[AA6T]: F:AI动态定价屏：临期/滞销调价建议（含成本底线），应用后生成待审核调价草稿。 | R:- | A:- | S:-
+print.js[AB7L]: F:打印中心屏：打印机管理/设备健康看板/打印模板编辑器（字段显隐+排序+联次+预览试打+导入导出）；价签现场打印并入本屏独立标签。 | R:code:backend/public/admin/layout-editor.js,code:backend/public/admin/docprint.js | A:- | S:-
+product-detail.js[LU5S]: F:独立商品详情弹窗：showProductDetail(pid)，版式与商品档案详情一致，供库存批次等页面复用。 | R:- | A:- | S:-
+products.js[AB8L]: F:商品档案屏：商品增删改查/分类/条码/标价/标签打印，统一状态筛选+搜索命中高亮+分段切换；导出 fireTags 供价签现场打印复用。 | R:code:backend/public/admin/serialprint.js | A:- | S:-
+profiles.js[AA6T]: F:会员智能画像屏：生命周期/偏好品类/贡献度/频次标签（member_profiles）。 | R:- | A:- | S:-
+promotions.js[AB7L]: F:促销活动屏：促销模板卡片点使用→弹窗配置（名称/起止/规则）创建+活动列表管理。 | R:- | A:- | S:-
 purchase-mgr.js[AB6T]: F:采购管理合并入口屏: 采购订单+采购入库+采购退货三个子模块(.seg分段切换)。 | R:code:backend/public/admin/screens/po.js,code:backend/public/admin/screens/purchase.js,code:backend/public/admin/screens/returns.js | A:- | S:-
-purchase.js[AB7L]: F:采购入库屏: 行编辑(docentry)+供应商商品带出+批次关联+审核签字+A5打印+分页。 | R:code:backend/public/admin/screens/docentry.js,code:backend/public/admin/screens/signpad.js | A:- | S:-
-recon.js[AB8L]: F:对账与结算屏: 供应商对账(购销/寄售),供应商判别联营后调用consign渲染联营对账; 锚点导航。 | R:code:backend/public/admin/screens/consign.js | A:- | S:-
-report.js[AO7M]: F:报表中心屏(P1-1): 商品销售明细/会员消费/员工业绩三Tab+CSV导出,统一分段控件。 | R:- | A:- | S:-
-returns.js[AB7L]: F:采购退货屏: 行编辑(docentry)+供应商商品/批次带出+审核签字+A5打印+分页。 | R:code:backend/public/admin/screens/docentry.js,code:backend/public/admin/screens/signpad.js | A:- | S:-
-sales.js[AB7M]: F:销售单据屏(V4.22.0更名): 销售流水+扫码购流水专页(渠道=扫码购,开关sales.scanpay_enabled); 核销抽检在收银台前台进行。 | R:- | A:- | S:-
-salesitems.js[AO6S]: F:销售明细屏(V4.22.0): 行级流水(行=单据×商品); 关键字/收银员/渠道/时间段查询,服务端分页每页15,合计(件数/金额/毛利)常驻,导出CSV/Excel。 | R:- | A:- | S:-
-scale-transmission.js[AH6M]: F:传秤小工具屏(V4.26.0): 商品选择+串口直发/一键传秤。 | R:code:backend/public/admin/scale-protocols/transmit.js,code:backend/public/admin/scale-protocols/serial.js | A:- | S:-
-settings.js[AC8L]: F:系统设置屏: 行内编辑(开关/下拉/结构化编辑器),变更全量留痕,锚点导航+液态玻璃开关。 | R:- | A:- | S:-
-shifts.js[AB7S]: F:交接班屏(V4.14.0 B): 开班仅两输入(POS编号+备用金); 交班现金应收=备用金+本班现金销售,与实盘比对得长短款。 | R:- | A:- | S:-
-signatures.js[AI7L]: F:授权管理屏(V4.25.1由签名管理扩展): 签字授权+设备授权统一入口,挂系统菜单; 含V4.14.8签字1~4授权流。 | R:- | A:- | S:-
-signpad.js[LU7M]: F:P1-P2电子签字通用组件: signCell签字徽标/signBtn/签名板openSignPad/mountSignActions; 桌面端入库/退货/报损/盘点共用。 | R:- | A:- | S:-
-staff.js[AI7M]: F:员工与权限屏(V4.8.21): 员工弹窗创建(工号留空自动SY/CN/DZ/EM前缀)+自定义角色权限点勾选矩阵。 | R:- | A:- | S:-
-stock.js[AB7L]: F:库存批次屏(V4.9.3): 批次库存查询/管理,商品详情弹窗复用。 | R:code:backend/public/admin/screens/product-detail.js | A:- | S:-
-suppliers.js[AB7L]: F:供应商档案屏: 供应商增删改查+联系人与结算信息+采集签字。 | R:- | A:- | S:-
+purchase.js[AB7L]: F:采购入库屏：行编辑（docentry）+供应商商品带出+批次关联+审核签字+A5打印+分页。 | R:code:backend/public/admin/screens/docentry.js,code:backend/public/admin/screens/signpad.js | A:- | S:-
+recon.js[AB8L]: F:对账与结算屏：供应商对账（购销/寄售），供应商判别联营后调用 consign 渲染联营对账；锚点导航。 | R:code:backend/public/admin/screens/consign.js | A:- | S:-
+report.js[AO7L]: F:报表中心屏：商品销售明细/会员消费/员工业绩三Tab+CSV导出，统一分段控件。 | R:- | A:- | S:-
+returns.js[AB7L]: F:采购退货屏：行编辑（docentry）+供应商商品/批次带出+审核签字+A5打印+分页。 | R:code:backend/public/admin/screens/docentry.js,code:backend/public/admin/screens/signpad.js | A:外链 window.open 带 noopener 防 tabnabbing | S:-
+sales.js[AB7M]: F:销售单据屏：销售流水+扫码购流水专页（渠道=扫码购，开关 sales.scanpay_enabled）；核销抽检在收银台前台进行。 | R:- | A:- | S:-
+salesitems.js[AO6S]: F:销售明细屏：行级流水（行=单据×商品）；关键字/收银员/渠道/时间段查询，服务端分页，合计（件数/金额/毛利）常驻，导出CSV/Excel。 | R:- | A:- | S:-
+scale-transmission.js[AH6M]: F:传秤小工具屏：商品选择+串口直发/一键传秤。 | R:code:backend/public/admin/scale-protocols/transmit.js,code:backend/public/admin/scale-protocols/serial.js | A:- | S:-
+settings.js[AC8L]: F:系统设置屏：行内编辑（开关/下拉/结构化编辑器），变更全量留痕；SECTIONS 按分类配置划分页签内卡片（V5.0.18d 9大菜单）。 | R:- | A:- | S:-
+shifts.js[AB7S]: F:交接班屏：开班仅两输入（POS编号+备用金）；交班现金应收=备用金+本班现金销售，与实盘比对得长短款。 | R:- | A:- | S:-
+signatures.js[AI7L]: F:授权管理屏：签字授权+设备授权统一入口，挂系统菜单；含签字1~4授权流与设备配对码生成。 | R:- | A:- | S:-
+signpad.js[LU7M]: F:P1-P2电子签字通用组件：signCell签字徽标/signBtn/签名板openSignPad/mountSignActions；桌面端入库/退货/报损/盘点共用。 | R:- | A:- | S:-
+staff.js[AI7L]: F:员工与权限屏：员工弹窗创建（工号留空自动 SY/CN/DZ/EM 前缀）+自定义角色权限点勾选矩阵+员工级权限覆盖。 | R:- | A:- | S:-
+stock.js[AB7M]: F:库存批次屏：批次库存查询/管理，商品详情弹窗复用。 | R:code:backend/public/admin/screens/product-detail.js | A:- | S:-
+suppliers.js[AB7L]: F:供应商档案屏：供应商增删改查+联系人与结算信息+采集签字+资质证照有效期预警（157 迁移配套）。 | R:- | A:- | S:-
+delivery.js[AU6T]: F:T6 本店配送调度屏：门店查看进行中的配送/外卖订单→出车（配送员出发）→送达核销（核验收货码）；订单由会员 H5 mall/orders 产生。 | R:- | A:- | S:-
+label-print.js[AL6S]: F:价签打印·现场专用（V5.0.7，已并入打印中心独立标签）：扫码/搜索/分类多选加入待打清单→一键打印自动走「价签」默认机免选机；清单统一 docTable 构建铺满不溢出。 | R:code:backend/public/admin/screens/products.js | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/public/boss/===
-app.js[EU8L]: F:老板移动端看板应用(8.3): 登录/概览/审批/报表/设置; 同源API(/auth /reports /purchase /inventory /ai /dividend),手机浏览器即开。 | R:- | A:- | S:-
-index.html[EU6M]: F:老板端HTML入口(/boss): 响应式移动端页面骨架+样式与脚本加载。 | R:code:backend/public/boss/app.js | A:- | S:-
+app.js[EU8L]: F:老板移动端看板：登录/概览/审批/报表/设置；同源 API（/auth /reports /purchase /inventory /ai /dividend），手机浏览器即开。 | R:- | A:登出已补清 boss_token（V-28）；外链 window.open 带 noopener | S:-
+index.html[EU6M]: F:老板端 HTML 入口（/boss）：响应式移动端页面骨架+样式与脚本加载。 | R:code:backend/public/boss/app.js | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/public/display/===
 index.html[EU5M]: F:顾客副屏(客显)页面(/display): 收银金额/商品行向副屏展示。 | R:- | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/public/===
 index.html[EU3T]: F:后端管理页(初版根页面,遗留单文件管理界面)。 | R:- | A:- | S:-
-tts.js[LU5M]: F:全站TTS共享脚本(/tts.js): 被PWA SW缓存壳引用,各端语音播报统一加载出口。 | R:code:backend/public/pwa/sw.js | A:- | S:-
+tts.js[LU5M]: F:全站 TTS 共享脚本（/tts.js）：被 PWA SW 缓存壳引用，各端语音播报统一加载出口。 | R:code:backend/public/pwa/sw.js | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/public/member/===
-index.html[EU7L]: F:会员H5端入口页(/member): 会员自助端页面骨架与逻辑载体。 | R:- | A:- | S:-
+index.html[EU7L]: F:会员 H5 端入口页（/member）：单文件自助端（登录/资产/商城/订单）。 | R:- | A:meta CSP（script-src self+inline，default-src none）；服务器对其发 X-Frame-Options:SAMEORIGIN | S:api_base 用户可配跨源，故 connect/img 不可限死——收窄 CSP 时只能动 script-src/style-src
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/public/pwa/===
-ai-batch-collect.js[AA6M]: F:多商品同拍采集(V4.27.5人工纠错版,共享组件): AI秤摆2~10商品→/ai/recognize(mode=multi)分层识别→人工纠错; 收银台AI采集弹窗与PWA作业页通用,多品同拍=核心训练数据来源。 | R:code:backend/public/pwa/cashier.js | A:- | S:-
-ai-scan.js[AA7L]: F:PWA共享AI多商品识别(M2): 相机自动连续识别1.6秒/帧→分层真实识别(条码→CLIP向量→VL/dHash兜底)→候选确认; 只认真实上传过样本的商品。 | R:- | A:数量策略: 新商品count=1; 同商品消失后重现防抖4秒自动加1 | S:-
+ai-batch-collect.js[AA6M]: F:多商品同拍采集（人工纠错版，共享组件）：AI秤摆 2~10 商品→/ai/recognize(mode=multi) 分层识别→人工纠错；收银台与 PWA 作业页通用，多品同拍=核心训练数据来源。 | R:code:backend/public/pwa/cashier.js | A:- | S:-
+ai-scan.js[AA7L]: F:PWA共享AI多商品识别：相机自动连续识别 1.6秒/帧→分层真实识别（条码→PP-ShiTuV2向量→VL/dHash兑底）→候选确认；只认真实上传过样本的商品。 | R:- | A:数量策略：新商品 count=1；同商品消失后重现防抖 4秒自动加 1 | S:-
 ai-train-env.html[EA5S]: F:AI训练环境页: 检测与一键安装(训练环境引导)。 | R:- | A:- | S:-
-app.js[EU8L]: F:员工移动端PWA核心: 登录/路由/底部Tab/我的/离线队列(pwa_token/pwa_api_base/pwa_queue),同源API。 | R:- | A:- | S:-
-barcode-decode.js[KH6S]: F:统一条码解码管线V2(ESM): 扫描级多趟解码,中央ROI裁剪+放大(V1全帧tryHarder对小码必败的修正)。 | R:- | A:- | S:-
-cashier.js[EU9L]: F:PWA一级收银台(V4.18.0 P14收银台专项): 登录直落全屏收银台(横屏双栏/手机单栏); 复用Pricebook离线价目/checkout组合支付+clientRef幂等/微收轮询/挂单/券/离线补传。 | R:code:backend/db/048_sales_pay_status.sql | A:含13.10负库存容错 | S:-
+app.js[EU8L]: F:员工移动端 PWA 核心：登录/路由/底部Tab/我的/离线队列（pwa_token/pwa_api_base/pwa_queue），同源 API。 | R:- | A:401 且有 TOKEN 自动回登录页（F-06）；登录页 API 基址可配（pwa_api_base） | S:pwa_api_base 权威存 localhost origin 的 localStorage（Capacitor 壳页），业务页同源读取
+barcode-decode.js[KH6S]: F:统一条码解码管线 V2（ESM）：扫描级多趟解码，中央 ROI 裁剪+放大（修正 V1 全帧 tryHarder 对小码必败）。 | R:- | A:- | S:-
+cashier.js[EU9L]: F:PWA 一级收银台：登录直落全屏收银台（横屏双栏/手机单栏）；复用 Pricebook 离线价目/checkout 组合支付+clientRef 幂等/微收轮询/挂单/券/离线补传/AI 采集。 | R:code:backend/db/048_sales_pay_status.sql | A:含 13.10 负库存容错；esc 含单引号转义 | S:-
 cdisp.js[IH6T]: F:串口客显适配器(V4.22.0 P16批3): WebSerial通道(点击手势内连接); 协议esc=ESC/POS双行LCD/cd522=VFD两行/txt=纯文本镜像。 | R:- | A:- | S:-
-checkout.js[AB8L]: F:移动收银(8.5.1应急收银): 价目表全量缓存IndexedDB(版本哈希增量,24h标黄/72h过期禁应急)→扫码/搜索→购物车→现金/扫码/余额结账; 断网离线暂存队列恢复后自动补传。 | R:- | A:- | S:-
-date-range.js[LU5M]: F:日历范围选择器(V5.0,PWA端,与管理端同源同实现): 成对开始/结束日期输入自动升级为日历范围控件。 | R:- | A:MutationObserver自动覆盖动态节点,原input隐藏保留id与value | S:-
-docs.js[AB7M]: F:单据/消息页(V4.9.10): 入库/退货/盘点/报损列表(全店/我的)+明细审通过/驳回(与后台同口径同留痕)+待办消息跳转。 | R:- | A:- | S:-
+checkout.js[AB8L]: F:移动收银（应急收银）：价目表全量缓存 IndexedDB（版本哈希增量，24h 标黄/72h 过期禁应急）→扫码/搜索→购物车→现金/扫码/余额结账；断网离线暂存队列恢复后自动补传。 | R:- | A:esc 含单引号转义 | S:-
+date-range.js[LU5M]: F:日历范围选择器（PWA端，与管理端同源同实现）：成对开始/结束日期输入自动升级为日历范围控件。 | R:- | A:MutationObserver 自动覆盖动态节点，原 input 隐藏保留 id 与 value | S:-
+docs.js[AB7M]: F:单据/消息页：入库/退货/盘点/报损列表（全店/我的）+明细审通过/驳回（与后台同口径同留痕）+待办消息跳转+手机拍摄指令回传。 | R:- | A:- | S:-
 icon.svg[ZU1T]: F:PWA应用图标SVG。 | R:- | A:- | S:-
-index.html[EU8L]: F:PWA收银端HTML入口: 应用外壳/样式与模块加载/manifest与SW注册。 | R:code:backend/public/pwa/sw.js | A:- | S:-
-label-review.html[EA6M]: F:AI标注审核台: 框叠加预览与拖拽修正(人工校正框优先采用)。 | R:code:backend/ai-train/export_dataset.py | A:- | S:-
+index.html[EU8L]: F:PWA 收银端 HTML 入口：应用外壳/样式与模块加载/manifest 与 SW 注册。 | R:code:backend/public/pwa/sw.js | A:- | S:-
+label-review.html[EA6M]: F:AI标注审核台：框叠加预览与拖拽修正（人工校正框优先采用）；CSP relaxed 形态（相机/上传需要）。 | R:code:backend/ai-train/export_dataset.py | A:图片 URL 用 60s img 票据（r.ticket，F-05） | S:-
 manifest.webmanifest[FU3T]: F:PWA清单: 应用名/图标/主题色/启动配置。 | R:- | A:- | S:-
-ops2.js[AB7L]: F:作业二期页: 订货申请/配货拣货/配送码核销/库存调拨(含签收照片上传)。 | R:- | A:- | S:-
-pick-panel.js[LU5T]: F:PWA自绘下拉增强器(管理端同款): select→只读框+芯片面板,.value与change全兼容。 | R:- | A:- | S:-
-printers.js[IH8L]: F:P1打印底座(V4.15.6): ESC/POS指令级直驱内核(挂window.PwaPrinters); 三级通道=串口WebSerial直驱→网口后端代理→浏览器iframe兜底; GBK反查表动态构建无外部依赖。 | R:- | A:默认打印机width_mm决定58/80版式; pos.print.auto与copies开关 | S:-
-receipt.js[IH6M]: F:小票打印+开钱箱钩子(V4.13.4,挂window.PwaReceipt): printReceipt落单后自动打58/80小票(隐藏iframe浏览器打印); kickDrawer现金收款后ESC/POS弹钱箱(WebSerial需connectDrawer授权)。 | R:- | A:- | S:-
+ops2.js[AB7L]: F:作业二期页：订货申请/配货拣货/配送码核销/库存调拨（含签收照片上传）。 | R:- | A:- | S:-
+pick-panel.js[LU5T]: F:PWA自绘下拉增强器（管理端同款）：select→只读框+芯片面板，.value 与 change 全兼容。 | R:- | A:- | S:-
+printers.js[IH8L]: F:P1打印底座：ESC/POS指令级直驱内核（挂 window.PwaPrinters）；三级通道=串口 WebSerial 直驱→网口后端代理→浏览器 iframe 兑底；GBK 反查表动态构建无外部依赖。 | R:- | A:默认打印机 width_mm 决定 58/80 版式；pos.print.auto 与 copies 开关 | S:-
+receipt.js[IH6M]: F:小票打印+开钱箱钩子（挂 window.PwaReceipt）：printReceipt 落单后自动打 58/80 小票（隐藏 iframe 浏览器打印）；kickDrawer 现金收款后 ESC/POS 弹钱箱（WebSerial 需 connectDrawer 授权）。 | R:- | A:- | S:-
 scale.js[IH7S]: F:串口电子秤读重(方案v3.2 M3,Web Serial): 9600,8N1自动解析大华/顶尖连续帧(ST稳定/US不稳定)与通用数字帧。 | R:- | A:- | S:-
 sign-pad.js[LU6M]: F:现场签名板: 手机手写→base64→/purchase/signatures/attach; openCollect签字样本连采3遍(横屏田字格按2字/3字姓名分格)。 | R:- | A:- | S:-
-sw.js[RR7T]: F:PWA Service Worker(8.5): 离线缓存应用外壳; network-first在线拉最新回写缓存,离线回退外壳; API直通网络离线由app.js离线队列兜底。 | R:code:backend/public/pwa/app.js | A:- | S:-
+sw.js[RR7T]: F:PWA Service Worker：离线缓存应用外壳；network-first 在线拉最新回写缓存，离线回退外壳；API 直通网络离线由 app.js 离线队列兑底。 | R:code:backend/public/pwa/app.js | A:- | S:-
 voice.js[LU6T]: F:语音查价单点(能力全景2.1 MVP): ASR→意图查价→报价TTS全链路本地零云端(Web Speech API+Pricebook归一化索引); 开关voice.price.enabled默认关。 | R:- | A:HTTPS或localhost才可用麦克风 | S:-
-work.js[AB8L]: F:作业页: 移动收货/采购退货/移动盘点/拍照报损; 共享商品查找(本机价格表缓存→条码→关键词)。 | R:- | A:- | S:-
+work.js[AB8L]: F:作业页：移动收货/采购退货/移动盘点/拍照报损；共享商品查找（本机价格表缓存→条码→关键词）。 | R:- | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/backend/scripts/===
 audit-settings.mjs[XQ6T]: F:设置项孤儿/重复审计工具(V4.28.9转正): 新增/修改system_settings后自查,库里存在但四端代码零引用的键即孤儿。 | R:code:backend/db/139_v4289_orphan_cleanup.sql | A:- | S:-
@@ -473,7 +562,7 @@ rawprint.ps1[IH6T]: F:USB小票机RAW直驱(V4.18.7b): winspool RAW经Windows驱
 run090.js[XV2T]: F:一次性应用090迁移(幂等,用完即删)。 | R:- | A:- | S:-
 run091.js[XV2T]: F:V4.21.2执行091迁移(设置分组合并+类型人性化),语句级逐条执行(init-db同口径)。 | R:- | A:- | S:-
 run092.js[XV2T]: F:V4.22.0执行092迁移(设置本机化备注)并回读验证。 | R:- | A:- | S:-
-server-up.mjs[EV8M]: F:服务端一体化启动器(随release/server发布): up=内嵌PG(可选)→幂等迁移→后端主进程前台; stop/status/migrate子命令。 | R:code:deploy/start-server.bat,code:deploy/installer/pos-server-service.xml | A:- | S:-
+server-up.mjs[EV8M]: F:服务端一体化启动器（随 release/server 发布）：up=内嵌 PG（可选）→幂等迁移→后端主进程前台；stop/status/migrate 子命令。 | R:code:deploy/start-server.bat,code:deploy/installer/pos-server-service.xml | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/deploy/installer/assets/===
 make-icon.cjs[XV4S]: F:快捷方式图标生成(jimp程序化绘制,扁平矢量): 绿底+遮阳棚+购物篮; 输出pos.ico四尺寸+preview-256。 | R:- | A:- | S:-
@@ -593,53 +682,191 @@ index.js[LH6T]: F:传秤协议注册表(六协议聚合); 源码目录版本,与
 mettler.js[IH5T]: F:托利多条码秤PLU下发协议; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/scale-protocols/mettler.js | A:- | S:-
 serial.js[IH7T]: F:Web Serial API封装(秤直发通道); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/scale-protocols/serial.js | A:- | S:-
 topping.js[IH5T]: F:顶尖条码秤PLU下发协议; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/scale-protocols/topping.js | A:- | S:-
-transmit.js[AH7S]: F:传秤下发核心(GBK组帧/串口网口下发/日志); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/scale-protocols/transmit.js | A:- | S:-
-utils.js[LH6S]: F:传秤协议工具函数(nameField/pad/GBK双字节); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/scale-protocols/utils.js | A:- | S:-
+transmit.js[AH7S]: F:传秤下发核心（GBK 组帧/串口网口下发/日志）；与 backend/public/admin 字节镜像。 | R:code:backend/public/admin/scale-protocols/transmit.js | A:- | S:-
+utils.js[LH6S]: F:传秤协议工具函数（nameField/pad/GBK 双字节）；与 backend/public/admin 字节镜像。 | R:code:backend/public/admin/scale-protocols/utils.js | A:- | S:-
 
 ===D:/Software/POS_system/超市收银系统-初版代码/frontend-web/screens/===
-ai.js[AA8L]: F:AI训练台屏(工单→预检→审核→模型版本→单活部署); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/ai.js | A:- | S:-
-bigcustomer.js[AB8L]: F:大客户与团购销售屏(档案/专属价/应收台账); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/bigcustomer.js | A:- | S:-
-brain.js[AA8L]: F:智能决策中心屏(9项智能/建议闭环/AI日报/知识库/问答); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/brain.js | A:- | S:-
-bundles.js[AB6M]: F:组合拆分屏(BOM+组装拆分开单); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/bundles.js | A:- | S:-
-consign.js[AB6M]: F:联营对账屏(看板→对账单→签字→结算); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/consign.js | A:- | S:-
-counter.js[AB6S]: F:挂单/取单屏(V4.15.4); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/counter.js | A:- | S:-
-coupons.js[AB6S]: F:优惠券屏: POST/GET /coupons、发放、过期扫描、状态变更; 源码目录版本(与admin副本存在差异,以本目录为源)。 | R:code:backend/public/admin/screens/coupons.js | A:- | S:-
-dashboard.js[AO6S]: F:经营看板屏(日/周/月/季); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/dashboard.js | A:- | S:-
-dividend.js[AB8S]: F:分红引擎屏(预览/执行/期间/记录); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/dividend.js | A:- | S:-
-docentry.js[LU7M]: F:单据录入表格通用组件(采购三单共用); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/docentry.js | A:- | S:-
-fraud.js[AS7M]: F:智能防损看板屏(M4a,KPI下钻); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/fraud.js | A:- | S:-
-home.js[AU6M]: F:后台首页屏+全局搜索索引; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/home.js | A:- | S:-
-hq-costs.js[AB8L]: F:总部进价管理屏(L1/渠道榜/待处置); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/hq-costs.js | A:- | S:-
-hq-members.js[AB6S]: F:会员跨店屏(资产流水+KPI); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/hq-members.js | A:- | S:-
-hq-reports.js[AO7M]: F:门店报表屏(总部聚合十视图); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/hq-reports.js | A:- | S:-
-hq-stores.js[AB8L]: F:门店管理屏(总部专属); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/hq-stores.js | A:- | S:-
-hq-sync.js[AM6M]: F:数据同步屏(节点水位/批次日志/重推); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/hq-sync.js | A:- | S:-
-hq-trade.js[AB7M]: F:总部退货与往来屏(三子页); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/hq-trade.js | A:- | S:-
+ai.js[AA8L]: F:AI 训练台屏（工单→预检→审核→模型版本→单活部署）；与 backend/public/admin 字节镜像。 | R:code:backend/public/admin/screens/ai.js | A:- | S:-
+bigcustomer.js[AB8L]: F:大客户与团购销售屏（档案/专属价/应收台账）。 | R:code:backend/public/admin/screens/bigcustomer.js | A:- | S:-
+brain.js[AA8L]: F:智能决策中心屏（9 项智能/建议闭环/AI 日报/知识库/问答）。 | R:code:backend/public/admin/screens/brain.js | A:- | S:-
+bundles.js[AB6M]: F:组合拆分屏（BOM+组装拆分开单）。 | R:code:backend/public/admin/screens/bundles.js | A:- | S:-
+consign.js[AB6M]: F:联营对账屏（看板→对账单→签字→结算）。 | R:code:backend/public/admin/screens/consign.js | A:- | S:-
+counter.js[AB6S]: F:挂单/取单屏。 | R:code:backend/public/admin/screens/counter.js | A:- | S:-
+coupons.js[AB6M]: F:优惠券屏（发放/过期扫描/状态变更）。 | R:code:backend/public/admin/screens/coupons.js | A:- | S:-
+dashboard.js[AO6S]: F:经营看板屏（日/周/月/季）。 | R:code:backend/public/admin/screens/dashboard.js | A:- | S:-
+dividend.js[AB8S]: F:分红引擎屏（预览/执行/期间/记录）。 | R:code:backend/public/admin/screens/dividend.js | A:- | S:-
+docentry.js[LU7M]: F:单据录入表格通用组件（采购三单共用，扫码/拼音模糊定位）。 | R:code:backend/public/admin/screens/docentry.js | A:- | S:-
+fraud.js[AS7M]: F:智能防损看板屏（KPI 下钻）。 | R:code:backend/public/admin/screens/fraud.js | A:- | S:-
+home.js[AU6L]: F:后台首页屏+全局搜索索引。 | R:code:backend/public/admin/screens/home.js | A:- | S:-
+hq-costs.js[AB8L]: F:总部进价管理屏（L1/渠道榜/待处置/历史）。 | R:code:backend/public/admin/screens/hq-costs.js | A:- | S:-
+hq-members.js[AB6S]: F:会员跨店屏（资产流水+KPI）。 | R:code:backend/public/admin/screens/hq-members.js | A:- | S:-
+hq-reports.js[AO7L]: F:门店报表屏（总部聚合十视图）。 | R:code:backend/public/admin/screens/hq-reports.js | A:- | S:-
+hq-stores.js[AB8M]: F:门店管理屏（总部专属）。 | R:code:backend/public/admin/screens/hq-stores.js | A:- | S:-
+hq-sync.js[AM6M]: F:数据同步屏（节点水位/批次日志/重推）。 | R:code:backend/public/admin/screens/hq-sync.js | A:- | S:-
+hq-trade.js[AB7M]: F:总部退货与往来屏（三子页）。 | R:code:backend/public/admin/screens/hq-trade.js | A:- | S:-
 inventory-mgr.js[AB6T]: F:库存管理合并入口屏; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/inventory-mgr.js | A:- | S:-
-marketing.js[AB6M]: F:营销规则屏; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/marketing.js | A:- | S:-
-members.js[AB8L]: F:会员管理屏; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/members.js | A:- | S:-
-models.js[AA6S]: F:AI模型管理屏; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/models.js | A:- | S:-
-ops.js[AB7L]: F:库存作业屏; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/ops.js | A:- | S:-
-po.js[AB7L]: F:采购订单屏; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/po.js | A:- | S:-
-prices.js[AB7L]: F:商品调价单屏(审核流+一键传秤); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/prices.js | A:- | S:-
-pricing.js[AA6T]: F:AI动态定价屏(M5a); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/pricing.js | A:- | S:-
-print.js[AB7L]: F:打印中心屏(打印机/健康/模板编辑器); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/print.js | A:- | S:-
-product-detail.js[LU5S]: F:商品详情弹窗组件; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/product-detail.js | A:- | S:-
-products.js[AB8L]: F:商品档案屏; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/products.js | A:- | S:-
-profiles.js[AA6T]: F:会员智能画像屏(M4b); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/profiles.js | A:- | S:-
-promotions.js[AB7L]: F:促销活动屏(模板+活动); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/promotions.js | A:- | S:-
+marketing.js[AB6M]: F:营销规则屏。 | R:code:backend/public/admin/screens/marketing.js | A:- | S:-
+members.js[AB8L]: F:会员管理屏（建档/充值/消费/等级/成长值）。 | R:code:backend/public/admin/screens/members.js | A:- | S:-
+models.js[AA6S]: F:AI 模型管理屏（探测/扫描/设主模型）。 | R:code:backend/public/admin/screens/models.js | A:- | S:-
+ops.js[AB7L]: F:库存作业屏（报损/盘点/调拨全流程）。 | R:code:backend/public/admin/screens/ops.js | A:- | S:-
+po.js[AB7L]: F:采购订单屏（docentry 行编辑+签字+A5 打印）。 | R:code:backend/public/admin/screens/po.js | A:- | S:-
+prices.js[AB7L]: F:商品调价单屏（审核流+一键传秤）。 | R:code:backend/public/admin/screens/prices.js | A:- | S:-
+pricing.js[AA6T]: F:AI 动态定价屏（临期/滞销建议）。 | R:code:backend/public/admin/screens/pricing.js | A:- | S:-
+print.js[AB7L]: F:打印中心屏（打印机/健康看板/模板编辑器；价签现场打印并入）。 | R:code:backend/public/admin/screens/print.js | A:- | S:-
+product-detail.js[LU5S]: F:独立商品详情弹窗组件（showProductDetail）。 | R:code:backend/public/admin/screens/product-detail.js | A:- | S:-
+products.js[AB8L]: F:商品档案屏（增删改查/标签打印，导出 fireTags）。 | R:code:backend/public/admin/screens/products.js | A:- | S:-
+profiles.js[AA6T]: F:会员智能画像屏（生命周期/偏好/贡献度标签）。 | R:code:backend/public/admin/screens/profiles.js | A:- | S:-
+promotions.js[AB7L]: F:促销活动屏（模板卡片+活动列表）。 | R:code:backend/public/admin/screens/promotions.js | A:- | S:-
 purchase-mgr.js[AB6T]: F:采购管理合并入口屏; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/purchase-mgr.js | A:- | S:-
-purchase.js[AB7L]: F:采购入库屏; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/purchase.js | A:- | S:-
-recon.js[AB8L]: F:对账与结算屏(联营分流); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/recon.js | A:- | S:-
-report.js[AO7M]: F:报表中心屏(三Tab+CSV导出); 源码目录版本(与admin副本存在差异,以本目录为源)。 | R:code:backend/public/admin/screens/report.js | A:- | S:-
-returns.js[AB7L]: F:采购退货屏; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/returns.js | A:- | S:-
-sales.js[AB7M]: F:销售单据屏(含扫码购流水); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/sales.js | A:- | S:-
-salesitems.js[AO6S]: F:销售明细屏(行级流水); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/salesitems.js | A:- | S:-
-scale-transmission.js[AH6M]: F:传秤小工具屏; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/scale-transmission.js | A:- | S:-
-settings.js[AC8L]: F:系统设置屏(行内编辑+全量留痕); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/settings.js | A:- | S:-
-shifts.js[AB7S]: F:交接班屏(备用金/长短款); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/shifts.js | A:- | S:-
-signatures.js[AI7L]: F:授权管理屏(签字+设备授权); 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/signatures.js | A:- | S:-
-signpad.js[LU7M]: F:电子签字通用组件; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/signpad.js | A:- | S:-
-staff.js[AI7M]: F:员工与权限屏; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/staff.js | A:- | S:-
-stock.js[AB7L]: F:库存批次屏; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/stock.js | A:- | S:-
-suppliers.js[AB7L]: F:供应商档案屏; 源码目录版本,与backend/public/admin字节镜像。 | R:code:backend/public/admin/screens/suppliers.js | A:- | S:-
+purchase.js[AB7L]: F:采购入库屏（批次关联+签字+A5）。 | R:code:backend/public/admin/screens/purchase.js | A:- | S:-
+recon.js[AB8L]: F:对账与结算屏（联营分流）。 | R:code:backend/public/admin/screens/recon.js | A:- | S:-
+report.js[AO7L]: F:报表中心屏（三 Tab+CSV 导出）。 | R:code:backend/public/admin/screens/report.js | A:- | S:-
+returns.js[AB7L]: F:采购退货屏（批次带出+签字+A5；外链 noopener）。 | R:code:backend/public/admin/screens/returns.js | A:- | S:-
+sales.js[AB7M]: F:销售单据屏（含扫码购流水专页）。 | R:code:backend/public/admin/screens/sales.js | A:- | S:-
+salesitems.js[AO6S]: F:销售明细屏（行级流水+合计常驻）。 | R:code:backend/public/admin/screens/salesitems.js | A:- | S:-
+scale-transmission.js[AH6M]: F:传秤小工具屏（串口直发/一键传秤）。 | R:code:backend/public/admin/screens/scale-transmission.js | A:- | S:-
+settings.js[AC8L]: F:系统设置屏（SECTIONS 分类页签+全量留痕）。 | R:code:backend/public/admin/screens/settings.js | A:- | S:-
+shifts.js[AB7S]: F:交接班屏（备用金/长短款）。 | R:code:backend/public/admin/screens/shifts.js | A:- | S:-
+signatures.js[AI7L]: F:授权管理屏（签字+设备授权统一入口）。 | R:code:backend/public/admin/screens/signatures.js | A:- | S:-
+signpad.js[LU7M]: F:电子签字通用组件（signCell/signBtn/openSignPad）。 | R:code:backend/public/admin/screens/signpad.js | A:- | S:-
+staff.js[AI7L]: F:员工与权限屏（角色矩阵+权限覆盖）。 | R:code:backend/public/admin/screens/staff.js | A:- | S:-
+stock.js[AB7M]: F:库存批次屏（批次查询/管理）。 | R:code:backend/public/admin/screens/stock.js | A:- | S:-
+suppliers.js[AB7L]: F:供应商档案屏（含资质证照与采集签字）。 | R:code:backend/public/admin/screens/suppliers.js | A:- | S:-
+delivery.js[AU6T]: F:T6 本店配送调度屏：查看进行中的配送/外卖订单→出车→送达核销（收货码）。 | R:code:backend/public/admin/screens/delivery.js | A:- | S:-
+label-print.js[AL6S]: F:价签打印·现场专用（V5.0.7，并入打印中心）：扫码/搜索/分类多选加入待打清单→一键打印走「价签」默认机。 | R:code:backend/public/admin/screens/label-print.js | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/backend/ai-train/dataset-loc/===
+data.yaml[FA3T]: F:YOLOv8定位训练数据集配置：根路径指向ai-train/dataset-loc，train=images/train、val=images/val，单类names: 0=商品（商品主体检测）。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/backend/ai-train/dataset-loc/labels/train/===
+i0.txt[FA3T]: F:YOLO定位数据集标注行（class_id cx cy w h 归一化坐标），对应同名训练帧。 | R:- | A:- | S:-
+i1.txt[FA3T]: F:YOLO定位数据集标注行（class_id cx cy w h 归一化坐标），对应同名训练帧。 | R:- | A:- | S:-
+i10.txt[FA3T]: F:YOLO定位数据集标注行（class_id cx cy w h 归一化坐标），对应同名训练帧。 | R:- | A:- | S:-
+i11.txt[FA3T]: F:YOLO定位数据集标注行（class_id cx cy w h 归一化坐标），对应同名训练帧。 | R:- | A:- | S:-
+i12.txt[FA3T]: F:YOLO定位数据集标注行（class_id cx cy w h 归一化坐标），对应同名训练帧。 | R:- | A:- | S:-
+i2.txt[FA3T]: F:YOLO定位数据集标注行（class_id cx cy w h 归一化坐标），对应同名训练帧。 | R:- | A:- | S:-
+i3.txt[FA3T]: F:YOLO定位数据集标注行（class_id cx cy w h 归一化坐标），对应同名训练帧。 | R:- | A:- | S:-
+i4.txt[FA3T]: F:YOLO定位数据集标注行（class_id cx cy w h 归一化坐标），对应同名训练帧。 | R:- | A:- | S:-
+i5.txt[FA3T]: F:YOLO定位数据集标注行（class_id cx cy w h 归一化坐标），对应同名训练帧。 | R:- | A:- | S:-
+i6.txt[FA3T]: F:YOLO定位数据集标注行（class_id cx cy w h 归一化坐标），对应同名训练帧。 | R:- | A:- | S:-
+i7.txt[FA3T]: F:YOLO定位数据集标注行（class_id cx cy w h 归一化坐标），对应同名训练帧。 | R:- | A:- | S:-
+i8.txt[FA3T]: F:YOLO定位数据集标注行（class_id cx cy w h 归一化坐标），对应同名训练帧。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/backend/ai-train/dataset-loc/labels/val/===
+i9.txt[FA3T]: F:YOLO定位数据集验证集标注行（class_id cx cy w h 归一化坐标），对应同名验证帧。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/backend/public/tts-ab/===
+index.html[LU5T]: F:播报 A/B 试听页（/tts-ab）：同句对照播放「片段拼接（零推理）vs piper 整句合成」6 组样音，供调优决策。 | R:code:backend/public/tts-frag/manifest.json | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/backend/public/tts-frag/===
+manifest.json[CC6T]: F:TTS 片段库清单：词→wav 文件映射（收款/找零/支付方式/促销话术 162 片段）+ 音首尾裁剪元数据；拼接播报按词查表零推理。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/backend/public/tts-tn/===
+index.html[LU5T]: F:播报文本前端（TN）试听页（/tts-tn）：归一化前后对照+试听（横杠/点分隔日期、时间、百分比、手机号首位幺、序数、单位）。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/docs/audit-reports/===
+代码审查报告-2026-10-09.html[SV7L]: F:代码审查报告（2026-10-09）：49 项发现分级 P0 6/P1 18/P2 20/P3 5 + 第八节已核验豁免口径；整改工作的事实源。 | R:- | A:- | S:-
+修复后验收测试清单-2026-10-09.html[TS7L]: F:修复后验收测试清单（HTML 版）：49 项发现的逐项验收用例与放行依据；PR 评审与灰度对照。 | R:- | A:- | S:-
+修复后验收测试清单-2026-10-09.md[TS7L]: F:修复后验收测试清单（Markdown 版）：关联《源码审查报告 2026-10-09》49 项（P0 6/P1 18/P2 20/P3 5），基线 v5.0.14；逐项修复的验收依据。 | R:code:docs/audit-reports/代码审查报告-2026-10-09.html | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/docs/===
+business-flow.html[SV6L]: F:业务流程图文档：单页面可视化全业务链路（采购→入库→销售→退款→会员→分红→连锁）。 | R:- | A:- | S:-
+上线前检查清单.md[SV7M]: F:上线前检查清单（Cutover）：配套极限测试 68 条用例；原则「资金零差错>单据不重不漏>业务可用>体验」，任一 P0 未过不得上线。 | R:- | A:- | S:-
+测试报告_上线前极限测试.html[TS7L]: F:上线前极限测试报告（HTML）：68 条用例执行结果汇总。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/android/===
+.gitignore[FV5T]: F:Android 工程构建忽略清单（Capacitor 生成）。 | R:- | A:- | S:-
+build.gradle[FV5T]: F:Android 根构建脚本（插件/仓库声明）。 | R:- | A:- | S:-
+capacitor.settings.gradle[FV5T]: F:Capacitor 生成的模块 include 声明。 | R:- | A:- | S:-
+gradle.properties[FV5T]: F:Gradle 全局配置（JVM 内存/AndroidX 开关）。 | R:- | A:- | S:-
+gradlew[FV5T]: F:Gradle Wrapper 启动脚本（Linux/macOS）。 | R:- | A:- | S:-
+gradlew.bat[FV5T]: F:Gradle Wrapper 启动脚本（Windows）。 | R:- | A:- | S:-
+settings.gradle[FV5T]: F:Gradle 设置（根项目+capacitor.settings 引入）。 | R:- | A:- | S:-
+variables.gradle[FV5T]: F:SDK/依赖版本集中变量（minSdk22/targetSdk34/AndroidX 版本）。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/android/app/===
+.gitignore[FV5T]: F:app 模块构建忽略清单。 | R:- | A:- | S:-
+build.gradle[FV6T]: F:Android app 模块构建脚本（Capacitor WebView 容器；签名/版本由 variables.gradle 注入）。 | R:code:mobile-apk/android/variables.gradle | A:- | S:-
+capacitor.build.gradle[FV5T]: F:Capacitor 框架生成构建片段（webDir/插件依赖引用）。 | R:- | A:- | S:-
+proguard-rules.pro[FV5T]: F:混淆规则（Capacitor 默认保留 WebView 桥与插件类）。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/android/app/src/androidTest/java/com/getcapacitor/myapp/===
+ExampleInstrumentedTest.java[TQ5T]: F:Capacitor 模板仪器化测试（占位）。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/android/app/src/main/===
+AndroidManifest.xml[FV6S]: F:APK 清单：Capacitor 入口 Activity+FileProvider（camera/save 权限）+ 权限组（V5.0.9 相机/网络/存储等）。 | R:code:mobile-apk/android/app/src/main/java/com/pos/cashier/MainActivity.java | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/android/app/src/main/java/com/pos/cashier/===
+DeviceIdentityPlugin.java[IH6S]: F:设备唯一标识 Capacitor 插件：读 Settings.Secure.ANDROID_ID 注入 WebView 供设备授权登录（40307 配对链路端侧信号）。 | R:code:backend/src/modules/auth.module.ts | A:- | S:-
+MainActivity.java[EH6T]: F:Capacitor BridgeActivity 入口：加载 www 外壳；处理 KeyEvent（扫码枪硬件按键转发 WebView）。 | R:code:mobile-apk/android/app/src/main/java/com/pos/cashier/NativeScannerPlugin.java | A:- | S:-
+NativeScannerPlugin.java[IH6S]: F:Capacitor 原生插件：条码图像解码（Bitmap/base64 帧→离线解码）+ Android Keystore 密钥操作。 | R:code:mobile-apk/android/app/src/main/java/com/pos/cashier/MainActivity.java | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/android/app/src/main/res/drawable-v24/===
+ic_launcher_foreground.xml[FV5T]: F:自适应图标前景矢量（API24+）。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/android/app/src/main/res/drawable/===
+ic_launcher_background.xml[FV5T]: F:自适应图标背景矢量。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/android/app/src/main/res/layout/===
+activity_main.xml[FV5T]: F:Capacitor 主布局（WebView 容器）。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/android/app/src/main/res/mipmap-anydpi-v26/===
+ic_launcher.xml[FV5T]: F:自适应图标声明（API26+ 方形）。 | R:- | A:- | S:-
+ic_launcher_round.xml[FV5T]: F:自适应图标声明（API26+ 圆形）。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/android/app/src/main/res/values/===
+ic_launcher_background.xml[FV5T]: F:图标背景色资源。 | R:- | A:- | S:-
+strings.xml[FV5T]: F:应用名称字符串资源（app_name=超市收银）。 | R:- | A:- | S:-
+styles.xml[FV5T]: F:应用主题（AppTheme.NoActionBarLaunch 闪屏）。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/android/app/src/main/res/xml/===
+file_paths.xml[FV5T]: F:FileProvider 路径声明（camera/save 目录共享）。 | R:- | A:- | S:-
+network_security_config.xml[FV6S]: F:网络信任锚（V5.0.9）：信任后端 :3443 自签证书（CN=POS-LAN，SAN 含 pos-server.local/localhost/LAN IP）——Android 默认拒自签，无此配置 WebView 全拒。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/android/app/src/test/java/com/getcapacitor/myapp/===
+ExampleUnitTest.java[TQ5T]: F:Capacitor 模板单元测试（占位）。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/android/gradle/wrapper/===
+gradle-wrapper.properties[FV5T]: F:Gradle Wrapper 版本锁定。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/===
+build-apk.ps1[EV6T]: F:APK 打包脚本：gradle assembleDebug 产出 app-debug.apk（约 6.94MB）→ dist/。 | R:code:mobile-apk/android/app/build.gradle | A:- | S:-
+capacitor.config.json[FV5T]: F:Capacitor 配置（appId/appName/webDir=www；server 可配内网地址）。 | R:- | A:- | S:-
+package-lock.json[FV5T]: F:Capacitor 依赖锁定。 | R:- | A:- | S:-
+package.json[FV5T]: F:Capacitor 工程声明（@capacitor/core+cli+android）。 | R:- | A:- | S:-
+sync-cert.ps1[FV5T]: F:同步后端自签证书进 APK 资产（配合 network_security_config 信任锚）。 | R:code:mobile-apk/android/app/src/main/res/xml/network_security_config.xml | A:- | S:-
+sync-pwa.ps1[FV6T]: F:PWA 资源同步脚本：backend/public/pwa+boss → www/（pwa 前端改动后必须重跑再打 APK）。 | R:code:backend/public/pwa/index.html | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/tools/===
+pwa-smoke-test.mjs[TQ6T]: F:PWA 冒烟测试脚本（APK 侧回归用）。 | R:- | A:- | S:-
+role-split-test.mjs[TQ6T]: F:角色分离测试脚本（员工/老板端隔离回归）。 | R:- | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/www/===
+ai-batch-collect.js[AA6M]: F:多商品同拍采集（APK 内嵌副本）。 | R:code:backend/public/pwa/ai-batch-collect.js | A:- | S:-
+ai-scan.js[AA7L]: F:AI 多商品识别（APK 内嵌副本）。 | R:code:backend/public/pwa/ai-scan.js | A:- | S:-
+ai-train-env.html[AA6S]: F:AI 训练环境页（相机帧采集训练样本，APK 内嵌副本，CSP relaxed）。 | R:code:backend/public/pwa/ai-train-env.html | A:- | S:-
+app.js[EU8L]: F:员工移动端 PWA 核心（APK 内嵌副本）：登录/路由/离线队列/pwa_api_base 壳页写入。 | R:code:backend/public/pwa/app.js | A:- | S:pwa_api_base 权威存 localhost 壳页 localStorage，业务页同源读取。
+barcode-decode.js[KH6S]: F:条码解码管线 V2（APK 内嵌副本）。 | R:code:backend/public/pwa/barcode-decode.js | A:- | S:-
+cashier.js[EU9L]: F:PWA 一级收银台（APK 内嵌副本）。 | R:code:backend/public/pwa/cashier.js | A:- | S:-
+cdisp.js[EU5S]: F:副屏客显页（APK 内嵌）：第二屏展示购物车明细与金额（桌面双屏同步逻辑的移动版）。 | R:- | A:- | S:-
+checkout.js[AB8L]: F:移动收银（APK 内嵌副本）。 | R:code:backend/public/pwa/checkout.js | A:- | S:-
+date-range.js[LU5M]: F:日历范围选择器（APK 内嵌副本）。 | R:code:backend/public/pwa/date-range.js | A:- | S:-
+docs.js[AB7M]: F:单据/消息页（APK 内嵌副本）。 | R:code:backend/public/pwa/docs.js | A:- | S:-
+icon.svg[FU5T]: F:应用 SVG 图标（WebView 内使用）。 | R:- | A:- | S:-
+index.html[EU8L]: F:PWA 收银端外壳（APK 内嵌副本，Capacitor WebView 直接加载 www）。 | R:code:backend/public/pwa/index.html | A:- | S:-
+label-review.html[EA6M]: F:AI 标注审核台（APK 内嵌副本）。 | R:code:backend/public/pwa/label-review.html | A:- | S:-
+manifest.webmanifest[FV5T]: F:PWA 清单（APK 内嵌副本）。 | R:- | A:- | S:-
+ops2.js[AB7L]: F:作业二期页（APK 内嵌副本）。 | R:code:backend/public/pwa/ops2.js | A:- | S:-
+pick-panel.js[LU5T]: F:PWA 自绘下拉增强器（APK 内嵌副本）。 | R:code:backend/public/pwa/pick-panel.js | A:- | S:-
+printers.js[IH8L]: F:P1 打印底座（APK 内嵌副本）。 | R:code:backend/public/pwa/printers.js | A:- | S:-
+receipt.js[IH6M]: F:小票打印+开钱箱钩子（APK 内嵌副本）。 | R:code:backend/public/pwa/receipt.js | A:- | S:-
+scale.js[AH6S]: F:移动秤连接页（APK 独有）：蓝牙/串口连接电子秤，读重与稳定判定。 | R:- | A:- | S:-
+sign-pad.js[LU5S]: F:移动签名板页（APK 独有）：触屏手写采集→PNG 上传。 | R:- | A:- | S:-
+sw.js[RR7T]: F:PWA Service Worker（APK 内嵌副本）。 | R:code:backend/public/pwa/sw.js | A:- | S:-
+tts.js[LU5M]: F:全站 TTS 共享脚本（APK 内嵌副本）。 | R:code:backend/public/tts.js | A:- | S:-
+voice.js[LU5S]: F:移动端语音播报页（APK 独有）：本地 TTS 音色选择/音量与播报配置。 | R:- | A:- | S:-
+work.js[AB8L]: F:作业页（APK 内嵌副本）。 | R:code:backend/public/pwa/work.js | A:- | S:-
+
+===D:/Software/POS_system/超市收银系统-初版代码/mobile-apk/www/boss/===
+app.js[EU8L]: F:老板移动端看板（APK 内嵌副本）。 | R:code:backend/public/boss/app.js | A:- | S:-
+index.html[EU6M]: F:老板端入口（APK 内嵌副本）。 | R:code:backend/public/boss/index.html | A:- | S:-

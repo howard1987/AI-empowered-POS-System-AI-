@@ -5,24 +5,57 @@ import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { SettingsService } from './settings.module';
 import { autoAttachSignature } from './sign';
+import { assertSigned as assertSignedGuard } from '../common/sign-guard';   // V5.0.19i（Q-03）
 import { storePrice } from './store-price.service';   // V4.26.5 门店覆盖价
 import { PRODUCT_VISIBLE } from '../common/sql';       // V5.0.0 商品可售可见性
 import { visibleStores, isHqStore, assertStoreAllowed } from '../common/scope'; // V5.0.0 批次6：调拨状态机/范围
 import { enqueueSync } from '../common/outbox';   // V4.28.2 P0-5 连锁上行（同事务发件箱）
+
+/**
+ * D4 ③：库存双账对账修复——以 batches（FIFO 物理明细）为权威，重建 inventory_current 聚合。
+ *  ① 补建「有在库批次但缺台账行」的商品；② 将台账 qty_total 对齐到 SUM(batches.remain_qty)（修正漂移）；
+ *  ③ 将「无在库批次但台账>0」的孤儿清零（避免永久虚高）。
+ *  与 sales.jobs 每日 00:05 校准同源，但更完整，且可经 POST /inventory/recon 手动触发。
+ */
+export async function reconcileInventoryCurrent(): Promise<{ inserted: number; repaired: number; zeroed: number; productIds: number[] }> {
+  return tx(async c => {
+    // 注意：cx 仅返回 rows，会丢失 rowCount；此处直接 c.query 以准确统计修复条数
+    const ins = await c.query(
+      `INSERT INTO inventory_current (store_id, product_id, qty_total, qty_on_order)
+       SELECT b.store_id, b.product_id, SUM(b.remain_qty)::numeric, 0
+         FROM batches b
+        WHERE b.status='在库'
+          AND NOT EXISTS (SELECT 1 FROM inventory_current ic WHERE ic.store_id=b.store_id AND ic.product_id=b.product_id)
+        GROUP BY b.store_id, b.product_id`, []);
+    const rep = await c.query(
+      `UPDATE inventory_current c SET qty_total = b.total, updated_at = now()
+         FROM (SELECT store_id, product_id, SUM(remain_qty)::numeric AS total
+                 FROM batches WHERE status='在库' GROUP BY store_id, product_id) b
+        WHERE c.store_id = b.store_id AND c.product_id = b.product_id AND c.qty_total <> b.total
+        RETURNING c.product_id`, []);
+    const zero = await c.query(
+      `UPDATE inventory_current c SET qty_total = 0, updated_at = now()
+         WHERE c.qty_total <> 0
+           AND NOT EXISTS (SELECT 1 FROM batches b WHERE b.store_id=c.store_id AND b.product_id=c.product_id AND b.status='在库' AND b.remain_qty > 0)
+        RETURNING c.product_id`, []);
+    return {
+      inserted: Number(ins.rowCount ?? 0),
+      repaired: Number(rep.rowCount ?? 0),
+      zeroed: Number(zero.rowCount ?? 0),
+      productIds: (rep.rows || []).map((r: any) => Number(r.product_id)),
+    };
+  });
+}
 
 // ─── Controller（库存中心：即时库存 / 批次溯源 / 临期预警 + P0-3 盘点/报损/调拨，方案 5.4） ───
 @Controller('inventory')
 class InventoryController {
   private settings = new SettingsService();
 
-  /** 必签校验（5.6.8⑤ 触发场景矩阵可配 auth.sign_required_scenes）：配置含该场景且单据未签字 → 拒绝过审 */
+  /** 必签校验（5.6.8⑤ 触发场景矩阵可配 auth.sign_required_scenes）：配置含该场景且单据未签字 → 拒绝过审
+   *  V5.0.19i（Q-03）：统一实现抽到 common/sign-guard.ts（与 purchase.module 共用，本处薄委托） */
   private async assertSigned(c: any, scene: string, table: string, bizId: number, docNo: string) {
-    const scenes = await this.settings.getJson('auth.sign_required_scenes', []);
-    if (!Array.isArray(scenes) || !scenes.includes(scene)) return;
-    const rows = await cx(c, `SELECT sign_record_id FROM ${table} WHERE id=$1`, [bizId]);
-    if (rows.length && !rows[0].sign_record_id) {
-      throw new BizException(50018, `${docNo} 尚未电子签字，按"必签才能过审"配置请先在单据列表补签后再审核`);
-    }
+    return assertSignedGuard(this.settings, c, scene, table, bizId, docNo);
   }
 
   /** 即时库存列表（keyword：名称/拼音码/条码/货号/供应商；V4.9.3 增加规格/保质期/最近到期日/供应商列） */
@@ -62,6 +95,16 @@ class InventoryController {
       r.stock_value = Math.round(Number(r.qty_total) * Number(r.sell_price) * 100) / 100;
     }
     return rows;
+  }
+
+  /** D4 ③：库存双账即时对账修复（手动触发；每日 00:05 也会自动校准）。以 batches(FIFO 物理明细) 为权威重建 inventory_current 聚合，返回修复统计 */
+  @Post('recon')
+  @RequirePerms('sys.inventory')
+  async recon(@CurrentUser() user: AuthUser) {
+    const r = await reconcileInventoryCurrent();
+    await audit(curStore(), user.sub, '进销存', 'inventory.recon', 'inventory_current', null,
+      { inserted: r.inserted, repaired: r.repaired, zeroed: r.zeroed, productIds: r.productIds.slice(0, 50) }).catch(() => {});
+    return { ok: true, ...r };
   }
 
   /** V5.0.1 门店报表钻取：低库存/负库存商品明细（mode=low|negative；storeId 仅总部节点可代查，供一键进货/调拨） */
@@ -231,25 +274,36 @@ class InventoryController {
 
   /* ═══════════ P0-3 盘点（账实分离：录入即生效、审核后置 V4.3.5；盘亏按 FIFO 扣批、盘盈调整即时库存） ═══════════ */
 
-  /** 盘点单列表（状态 / 日期筛选，含差异行数） */
+  /** 盘点单列表（状态 / 日期 / 关键字筛选，含差异行数；V5.0.18g：服务端分页 page/size + total） */
   @Get('counts')
   async countsList(
     @Query('status') status?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('keyword') keyword?: string,
+    @Query('page') page?: string,
+    @Query('size') size?: string,
   ) {
-    return q(
+    const pageSize = Math.min(Math.max(Number(size) || 10, 1), 200);
+    const pg = Math.max(Number(page) || 1, 1);
+    const kw = (keyword || '').trim();
+    const where = `WHERE ($1::text IS NULL OR c.status::text = $1)
+          AND ($2::date IS NULL OR c.created_at::date >= $2::date)
+          AND ($3::date IS NULL OR c.created_at::date <= $3::date)
+          AND ($4 = '' OR c.count_no ILIKE '%'||$4||'%')`;
+    const params: any[] = [status || null, from || null, to || null, kw];
+    const tot = await q1(`SELECT count(*)::int AS n FROM inventory_counts c ${where}`, params);
+    const rows = await q(
       `SELECT c.*, e.name AS employee_name,
               (SELECT count(*) FROM inventory_count_items i WHERE i.count_id = c.id)::int AS item_count,
               COALESCE((SELECT sum(i.diff_qty) FROM inventory_count_items i WHERE i.count_id = c.id), 0) AS diff_sum,
               COALESCE((SELECT sum(GREATEST(i.actual_qty, i.book_qty, 0)) FROM inventory_count_items i WHERE i.count_id = c.id), 0) AS total_qty
          FROM inventory_counts c LEFT JOIN employees e ON e.id = c.employee_id
-        WHERE ($1::text IS NULL OR c.status::text = $1)
-          AND ($2::date IS NULL OR c.created_at::date >= $2::date)
-          AND ($3::date IS NULL OR c.created_at::date <= $3::date)
-        ORDER BY c.id DESC LIMIT 100`,
-      [status || null, from || null, to || null],
+        ${where}
+        ORDER BY c.id DESC LIMIT $5 OFFSET $6`,
+      [...params, pageSize, (pg - 1) * pageSize],
     );
+    return { items: rows, total: Number(tot?.n || 0), page: pg, size: pageSize };
   }
 
   /** 创建盘点单：items 仅需 productId + actualQty（实盘）；book_qty 自动快照当前库存 */
@@ -265,28 +319,37 @@ class InventoryController {
     if (items.some(it => !(it.actualQty >= 0))) throw new BizException(40003, '实盘数量不能为负数');
 
     return tx(async c => {
-      await seqLock(c, 'inventory_counts', 'count_no', `PD-${today()}-%`);
-      const seq = await cx(c, `SELECT count(*)+1 AS n FROM inventory_counts WHERE count_no LIKE $1`, [`PD-${today()}-%`]);
+      const seq = await seqLock(c, 'inventory_counts', 'count_no', `PD-${today()}-%`);
       const no = `PD-${today()}-${String(seq[0].n).padStart(3, '0')}`;
       const rows = await cx(c,
         `INSERT INTO inventory_counts (store_id, count_no, scope, status, employee_id, remark)
          VALUES (${curStore()},$1,$2,'进行中',$3,$4) RETURNING id`,
         [no, b.scope === '按分类' || b.scope === '按供应商' ? b.scope : '全仓', user.sub, b.remark ?? null]);
       const id = Number(rows[0].id);
-      const lines: any[] = [];
-      for (const it of items) {
-        const cur = await cx(c,
-          `SELECT COALESCE(qty_total,0) AS qty FROM inventory_current WHERE store_id=${curStore()} AND product_id=$1`, [it.productId]);
-        const item = await cx(c,
-          `INSERT INTO inventory_count_items (count_id, product_id, book_qty, actual_qty, remark)
-           VALUES ($1,$2,$3,$4,$5) RETURNING id, book_qty, actual_qty, diff_qty`,
-          [id, it.productId, r3(Number(cur[0]?.qty ?? 0)), r3(it.actualQty), null]);
-        lines.push({ itemId: Number(item[0].id), productId: it.productId,
-                     bookQty: Number(item[0].book_qty), actualQty: Number(item[0].actual_qty),
-                     diffQty: Number(item[0].diff_qty) });
-      }
+      // P-05 修复：原逐商品 SELECT+INSERT（2 万行=4 万语句、锁全表明细数分钟）。
+      // 改为一次性 = ANY 批量取账面 + unnest 批量插入，事务内语句数压到 2 条、数据等价。
+      const bookRows: any[] = await cx(c,
+        `SELECT product_id, COALESCE(qty_total,0) AS qty FROM inventory_current
+          WHERE store_id=${curStore()} AND product_id = ANY($1::bigint[])`, [items.map((it): number => it.productId)]);
+      const bookMap = new Map<number, number>();
+      for (const r of bookRows) bookMap.set(Number(r.product_id), Number(r.qty));
+      const ins: any[] = await cx(c,
+        `INSERT INTO inventory_count_items (count_id, product_id, book_qty, actual_qty, remark)
+         SELECT $1, u.pid, u.bq, u.aq, u.rm
+           FROM unnest($2::bigint[], $3::numeric[], $4::numeric[], $5::text[]) AS u(pid, bq, aq, rm)
+         RETURNING id, product_id, book_qty, actual_qty, diff_qty`,
+        [id,
+         items.map((it): number => it.productId),
+         items.map((it): number => r3(bookMap.get(it.productId) ?? 0)),
+         items.map((it): number => r3(it.actualQty)),
+         items.map((): null => null)]);
+      const lines: { itemId: number; productId: number; bookQty: number; actualQty: number; diffQty: number }[] =
+        ins.map((r: any): { itemId: number; productId: number; bookQty: number; actualQty: number; diffQty: number } => ({
+          itemId: Number(r.id), productId: Number(r.product_id),
+          bookQty: Number(r.book_qty), actualQty: Number(r.actual_qty), diffQty: Number(r.diff_qty),
+        }));
       await audit(curStore(), user.sub, '进销存', 'count.create', 'inventory_count', id,
-        { no, lines: lines.map(l => ({ ...l, itemId: undefined })) });
+        { no, lines: lines.map((l): any => ({ ...l, itemId: undefined })) });
       return { id, countNo: no, status: '进行中', lines };
     });
   }
@@ -321,7 +384,7 @@ class InventoryController {
 
       const items = await cx(c, `SELECT * FROM inventory_count_items WHERE count_id=$1 FOR UPDATE`, [id]);
       if (!items.length) throw new BizException(50016, '盘点单无明细，不能审核');
-      const diffTotal = await this.applyCountDiffs(c, id, user.sub);
+      const diffTotal = await this.applyCountDiffs(c, id, user.sub, user.storeId);
       await cx(c,
         `UPDATE inventory_counts SET status='已审核', audited_by=$2, audited_at=now() WHERE id=$1`,
         [id, user.sub]);
@@ -340,7 +403,7 @@ class InventoryController {
    *  V5.0.16 修复：盘盈原先只改 inventory_current + 写 batch_id=NULL/unit_cost=0 的流水，
    *  而 FIFO 出库只扫 batches 表 → 盘盈数量永远无法被销售消耗，造成「账面有货但卖不出」的长期漂移。
    *  现盘盈同样生成批次（成本取最近一次入库价/供应商进价），使其可被 FIFO/FEFO 正常消耗。 */
-  private async applyCountDiffs(c: any, countId: number, employeeId: number) {
+  private async applyCountDiffs(c: any, countId: number, employeeId: number, storeId: number) {
     const items = await cx(c, `SELECT * FROM inventory_count_items WHERE count_id=$1 FOR UPDATE`, [countId]);
     let diffTotal = 0;
     for (const it of items) {
@@ -348,14 +411,18 @@ class InventoryController {
       diffTotal += diff;
       if (diff === 0) continue;
       if (diff < 0) {
-        const allocs = await this.fifoAlloc(c, it.product_id, -diff, false);
-        const cost = await this.applyOutStock(c, allocs, 'count', countId, it.id, '售罄', employeeId);
+        const allocs = await this.fifoAlloc(c, it.product_id, -diff, false, storeId);
+        const cost = await this.applyOutStock(c, allocs, 'count', countId, it.id, '售罄', employeeId, storeId);
         await cx(c, `UPDATE inventory_count_items SET diff_cost=$2 WHERE id=$1`, [it.id, r2(cost)]);
       } else {
         const batchId = await this.createGainBatch(c, it.product_id, diff, `PY-${countId}-${it.id}`);
+        // L-18 修复：盘盈入台账改 upsert —— 本店无行时也建行（原裸 UPDATE 只进批次不进台账 → 长期漂移）
         await cx(c,
-          `UPDATE inventory_current SET qty_total = qty_total + $2, updated_at=now()
-            WHERE store_id=${curStore()} AND product_id=$1`, [it.product_id, diff]);
+          `INSERT INTO inventory_current (store_id, product_id, qty_total, qty_on_order)
+           VALUES ($1,$2,$3,0)
+           ON CONFLICT (store_id, product_id)
+           DO UPDATE SET qty_total = inventory_current.qty_total + $3, updated_at=now()`,
+          [storeId, it.product_id, diff]);
         await cx(c,
           `INSERT INTO stock_flows (store_id, product_id, batch_id, direction, qty, unit_cost, ref_type, ref_id, ref_item_id, employee_id)
            VALUES (${curStore()},$1,$2,'入库',$3,$4,'count',$5,$6,$7)`,
@@ -440,8 +507,7 @@ class InventoryController {
       throw new BizException(40003, '按供应商盘点请选择供应商');
 
     return tx(async c => {
-      await seqLock(c, 'stocktake_tasks', 'task_no', `ST-${today()}-%`);
-      const seq = await cx(c, `SELECT count(*)+1 AS n FROM stocktake_tasks WHERE task_no LIKE $1`, [`ST-${today()}-%`]);
+      const seq = await seqLock(c, 'stocktake_tasks', 'task_no', `ST-${today()}-%`);
       const no = `ST-${today()}-${String(seq[0].n).padStart(3, '0')}`;
       let catNames = '';
       if (scopeType === '按分类') {
@@ -564,8 +630,7 @@ class InventoryController {
       if (t.count_id) throw new BizException(50016, '该任务已生成盘点单');
 
       // 生成盘点单（账实分离：先建单再差异生效）
-      await seqLock(c, 'inventory_counts', 'count_no', `PD-${today()}-%`);
-      const seq = await cx(c, `SELECT count(*)+1 AS n FROM inventory_counts WHERE count_no LIKE $1`, [`PD-${today()}-%`]);
+      const seq = await seqLock(c, 'inventory_counts', 'count_no', `PD-${today()}-%`);
       const no = `PD-${today()}-${String(seq[0].n).padStart(3, '0')}`;
       const scope = t.scope_type === '全仓' ? '全仓' : `任务盘点·${t.category_names || t.scope_type}`;
       const cnt = await cx(c,
@@ -578,7 +643,7 @@ class InventoryController {
           `INSERT INTO inventory_count_items (count_id, product_id, book_qty, actual_qty, remark)
            VALUES ($1,$2,$3,$4,$5)`, [countId, it.product_id, it.book_qty, it.actual_qty, it.remark]);
       }
-      const diffTotal = await this.applyCountDiffs(c, countId, user.sub);
+      const diffTotal = await this.applyCountDiffs(c, countId, user.sub, user.storeId);
       await cx(c,
         `UPDATE inventory_counts SET status='已审核', audited_by=$2, audited_at=now() WHERE id=$1`,
         [countId, user.sub]);
@@ -652,24 +717,35 @@ class InventoryController {
     return { ok: true };
   }
 
-  /** 报损单列表（状态 / 日期筛选） */
+  /** 报损单列表（状态 / 日期 / 关键字筛选；V5.0.18g：服务端分页 page/size + total） */
   @Get('losses')
   async lossesList(
     @Query('status') status?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('keyword') keyword?: string,
+    @Query('page') page?: string,
+    @Query('size') size?: string,
   ) {
-    return q(
+    const pageSize = Math.min(Math.max(Number(size) || 10, 1), 200);
+    const pg = Math.max(Number(page) || 1, 1);
+    const kw = (keyword || '').trim().toLowerCase();
+    const where = `WHERE ($1::text IS NULL OR l.status::text = $1)
+          AND ($2::date IS NULL OR l.created_at::date >= $2::date)
+          AND ($3::date IS NULL OR l.created_at::date <= $3::date)
+          AND ($4 = '' OR l.loss_no ILIKE '%'||$4||'%' OR l.reason_type::text ILIKE '%'||$4||'%')`;
+    const params: any[] = [status || null, from || null, to || null, kw];
+    const tot = await q1(`SELECT count(*)::int AS n, COALESCE(SUM(l.total_cost),0) AS s FROM loss_records l ${where}`, params);
+    const rows = await q(
       `SELECT l.*, e.name AS employee_name,
               (SELECT count(*) FROM loss_items i WHERE i.loss_id = l.id)::int AS item_count,
               COALESCE((SELECT sum(i.qty) FROM loss_items i WHERE i.loss_id = l.id), 0) AS total_qty
          FROM loss_records l LEFT JOIN employees e ON e.id = l.employee_id
-        WHERE ($1::text IS NULL OR l.status::text = $1)
-          AND ($2::date IS NULL OR l.created_at::date >= $2::date)
-          AND ($3::date IS NULL OR l.created_at::date <= $3::date)
-        ORDER BY l.id DESC LIMIT 100`,
-      [status || null, from || null, to || null],
+        ${where}
+        ORDER BY l.id DESC LIMIT $5 OFFSET $6`,
+      [...params, pageSize, (pg - 1) * pageSize],
     );
+    return { items: rows, total: Number(tot?.n || 0), sumAmount: r2(Number(tot?.s || 0)), page: pg, size: pageSize };
   }
 
   /** 创建报损单：拍照必填；明细批次自动归属（优先临期 ORDER BY expiry_date, inbound_date） */
@@ -684,8 +760,7 @@ class InventoryController {
     const reason = ['损耗', '过期', '破损', '质量问题'].includes(b.reasonType || '') ? b.reasonType! : '损耗';
 
     return tx(async c => {
-      await seqLock(c, 'loss_records', 'loss_no', `BS-${today()}-%`);
-      const seq = await cx(c, `SELECT count(*)+1 AS n FROM loss_records WHERE loss_no LIKE $1`, [`BS-${today()}-%`]);
+      const seq = await seqLock(c, 'loss_records', 'loss_no', `BS-${today()}-%`);
       const no = `BS-${today()}-${String(seq[0].n).padStart(3, '0')}`;
       const rows = await cx(c,
         `INSERT INTO loss_records (store_id, loss_no, reason_type, photo_path, status, employee_id)
@@ -703,7 +778,7 @@ class InventoryController {
         let batchId: number | null = null;
         let cost = 0;
         try {
-          const allocs = await this.fifoAlloc(c, it.productId, qty, true);
+          const allocs = await this.fifoAlloc(c, it.productId, qty, true, user.storeId);
           if (allocs.length !== 1) throw new BizException(50016, '报损需整批归属（请核对批次）');
           batchId = allocs[0].batchId;
           cost = allocs[0].cost;
@@ -882,14 +957,18 @@ class InventoryController {
           const batchNo = `ADJ-${today()}-${String(seqs[0].n++).padStart(3, '0')}`;
           const bid = await this.createGainBatch(c, pid, dq, batchNo);
           const cost = await this.gainUnitCost(c, pid);
-          await cx(c, `UPDATE inventory_current SET qty_total = qty_total + $2, updated_at=now()
-            WHERE store_id=${curStore()} AND product_id=$1`, [pid, dq]);
+          // L-18 修复：快速调整（盘盈向）入台账同改 upsert
+          await cx(c, `INSERT INTO inventory_current (store_id, product_id, qty_total, qty_on_order)
+            VALUES ($1,$2,$3,0)
+            ON CONFLICT (store_id, product_id)
+            DO UPDATE SET qty_total = inventory_current.qty_total + $3, updated_at=now()`,
+            [user.storeId, pid, dq]);
           await cx(c, `INSERT INTO stock_flows (store_id, product_id, batch_id, direction, qty, unit_cost, ref_type, ref_id, ref_item_id, employee_id)
             VALUES (${curStore()},$1,$2,'入库',$3,$4,'adjust',0,0,$5)`, [pid, bid, dq, cost, user.sub]);
           detail.push({ productId: pid, name: prows[0].name, qty: dq, dir: '盘盈', batchNo, unitCost: cost });
         } else {
-          const allocs = await this.fifoAlloc(c, pid, -dq, false);
-          const cost = await this.applyOutStock(c, allocs, 'adjust', 0, 0, '售罄', user.sub);
+          const allocs = await this.fifoAlloc(c, pid, -dq, false, user.storeId);
+          const cost = await this.applyOutStock(c, allocs, 'adjust', 0, 0, '售罄', user.sub, user.storeId);
           detail.push({ productId: pid, name: prows[0].name, qty: dq, dir: '盘亏', cost: r2(cost) });
         }
       }
@@ -901,21 +980,35 @@ class InventoryController {
 
   /* ═══════════ 调拨（批次整体转移成本不变 5.4；单店一期仅店内调拨：出库→转入新批次，同店即时库存不变） ═══════════ */
 
-  /** 调拨单列表（状态 / 日期筛选；批次6：按数据范围过滤——门店只见本店相关的单） */
+  /** 调拨单列表（状态 / 日期 / 关键字筛选；批次6：按数据范围过滤；V5.0.18g：服务端分页） */
   @Get('transfers')
   async transfersList(
     @Query('status') status?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('keyword') keyword?: string,
+    @Query('page') page?: string,
+    @Query('size') size?: string,
   ) {
+    const pageSize = Math.min(Math.max(Number(size) || 10, 1), 200);
+    const pg = Math.max(Number(page) || 1, 1);
+    const kw = (keyword || '').trim();
     const vis = visibleStores();                      // null=总部不限；否则限本店（含区域多店）
-    const params: any[] = [status || null, from || null, to || null];
+    const params: any[] = [status || null, from || null, to || null, kw];
     let scopeSql = '';
     if (vis !== null) {
       params.push(vis);
       scopeSql = ` AND (t.from_store_id = ANY($${params.length}::bigint[]) OR t.to_store_id = ANY($${params.length}::bigint[]))`;
     }
-    return q(
+    const where = `WHERE ($1::text IS NULL OR t.status::text = $1)
+          AND ($2::date IS NULL OR t.created_at::date >= $2::date)
+          AND ($3::date IS NULL OR t.created_at::date <= $3::date)
+          AND ($4 = '' OR t.transfer_no ILIKE '%'||$4||'%' OR t.reason ILIKE '%'||$4||'%' OR fs.name ILIKE '%'||$4||'%' OR ts.name ILIKE '%'||$4||'%')${scopeSql}`;
+    const tot = await q1(
+      `SELECT count(*)::int AS n FROM stock_transfers t
+         LEFT JOIN stores fs ON fs.id = t.from_store_id
+         LEFT JOIN stores ts ON ts.id = t.to_store_id ${where}`, params);
+    const rows = await q(
       `SELECT t.*, e.name AS employee_name,
               fs.name AS from_store_name, ts.name AS to_store_name, t.biz_scope,
               (SELECT count(*) FROM stock_transfer_items i WHERE i.transfer_id = t.id)::int AS item_count,
@@ -924,12 +1017,11 @@ class InventoryController {
          LEFT JOIN employees e ON e.id = t.employee_id
          LEFT JOIN stores fs ON fs.id = t.from_store_id
          LEFT JOIN stores ts ON ts.id = t.to_store_id
-        WHERE ($1::text IS NULL OR t.status::text = $1)
-          AND ($2::date IS NULL OR t.created_at::date >= $2::date)
-          AND ($3::date IS NULL OR t.created_at::date <= $3::date)${scopeSql}
-        ORDER BY t.id DESC LIMIT 100`,
-      params,
+        ${where}
+        ORDER BY t.id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, pageSize, (pg - 1) * pageSize],
     );
+    return { items: rows, total: Number(tot?.n || 0), page: pg, size: pageSize };
   }
 
   /**
@@ -961,8 +1053,7 @@ class InventoryController {
     const bizScope = !crossStoreMove ? 'store2store' : (fromIsHq ? 'hq2store' : 'store2store');
 
     return tx(async c => {
-      await seqLock(c, 'stock_transfers', 'transfer_no', `DB-${today()}-%`);
-      const seq = await cx(c, `SELECT count(*)+1 AS n FROM stock_transfers WHERE transfer_no LIKE $1`, [`DB-${today()}-%`]);
+      const seq = await seqLock(c, 'stock_transfers', 'transfer_no', `DB-${today()}-%`);
       const no = `DB-${today()}-${String(seq[0].n).padStart(3, '0')}`;
       const rows = await cx(c,
         `INSERT INTO stock_transfers (transfer_no, from_store_id, to_store_id, status, reason, employee_id, biz_scope)
@@ -1176,8 +1267,7 @@ class InventoryController {
       // V21-②：缺口自动生成采购需求（集采口径，草稿态由总部采购确认下单）
       let demandPoId: number | null = null;
       if (shortfalls.length) {
-        await seqLock(c, 'purchase_orders', 'po_no', `XQ-${today()}-%`);
-        const seq = await cx(c, `SELECT count(*)+1 AS n FROM purchase_orders WHERE po_no LIKE $1`, [`XQ-${today()}-%`]);
+        const seq = await seqLock(c, 'purchase_orders', 'po_no', `XQ-${today()}-%`);
         const poNo = `XQ-${today()}-${String(seq[0].n).padStart(3, '0')}`;
         // 供应商：取源批次供应商；缺失则取该商品最近一次入库供应商；再缺省取任一在合作供应商
         let supplierId = shortfalls.find(s => s.supplierId)?.supplierId ?? 0;
@@ -1314,7 +1404,7 @@ class InventoryController {
    * FIFO 批次归属：锁定在库批次，按序扣减分配。
    * lossFirst=true 按临期优先（报损）；否则按入库先后（FIFO）。返回 [{batchId, qty, cost}]
    */
-  private async fifoAlloc(c: any, productId: number, qty: number, lossFirst: boolean, storeId = 1) {
+  private async fifoAlloc(c: any, productId: number, qty: number, lossFirst: boolean, storeId: number) {
     const need = r3(qty);
     if (!(need > 0)) throw new BizException(40003, '数量必须大于 0');
     const order = lossFirst ? 'expiry_date, inbound_date' : 'inbound_date, id';
@@ -1339,7 +1429,7 @@ class InventoryController {
   /** 出库应用：扣批次（耗尽置 status）+ 库存流水 + 汇总扣即时库存；返回成本合计 */
   private async applyOutStock(c: any, allocs: { batchId: number; qty: number; cost: number }[],
     refType: string, refId: number, refItemId: number, exhaustedStatus: string, employeeId: number,
-    storeId = 1) {
+    storeId: number) {
     let total = 0;
     const byProduct = new Map<number, number>();
     for (const a of allocs) {

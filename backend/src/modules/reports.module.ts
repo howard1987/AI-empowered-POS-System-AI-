@@ -4,6 +4,9 @@ import { q, q1, r2 } from '../common/db';
 import { SettingsService } from './settings.module';
 import { resolveReportStores, visibleStores } from '../common/scope'; // V5.0.0 批次6：报表门店维度
 
+/** Q-04 B1：金额元 → 整数分（与 sales.module toCents 同义；合计行分整数累加，消除浮点逐行累加误差） */
+const toCents = (yuan: any): number => Math.round(Number(yuan) * 100);
+
 /**
  * 报表中心（任务卡 T13 / 方案 4.7、5.9、14.6.3）：
  *   overview  后台首页看板：今日销售/会员/分红/库存预警/临期（口径与首页看板一致）
@@ -118,7 +121,7 @@ class ReportsController {
   @RequirePerms('report.view.all')
   @Get('gifts')
   async gifts(@Query('from') from?: string, @Query('to') to?: string,
-              @Query('storeId') storeId?: string) {
+              @Query('storeId') storeId?: string, @Query('size') size?: string) {
     const rs = resolveReportStores(storeId);
     const p1: any[] = [from || null, to || null];
     const rows = await q(
@@ -139,7 +142,8 @@ class ReportsController {
         WHERE si.line_remark LIKE '赠品%'
           AND ($1::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date >= $1::date)
           AND ($2::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date <= $2::date)${this.sf(rs, p1, 'o.store_id')}
-        ORDER BY o.created_at DESC LIMIT 300`, p1);
+        ORDER BY o.created_at DESC LIMIT $${p1.length + 1}`,   // V5.0.18g：size 可调（默认 300，上限 5000）
+      [...p1, Math.min(Math.max(Number(size) || 300, 1), 5000)]);
     const sum = await q(
       `SELECT count(*)::int AS "times", COALESCE(SUM(si.qty),0) AS "qtyTotal",
               COALESCE(SUM(si.line_cost),0) AS "costTotal",
@@ -243,7 +247,8 @@ class ReportsController {
     // trend 查询按 CURRENT_DATE-6 固定近 7 天，SQL 内不含 date_trunc($1)，
     // 故 tc 不能像 pc/pc2 那样预置 [unit]，否则全门店(sf 不追加占位符)时参数数 > 占位符数
     const tc: any[] = [];
-    const trendFilter = this.sf(rs, tc, 'o.store_id');
+    // trend 查询按 CURRENT_DATE-6 固定近 7 天；store_id 过滤用无表限定片段，供下方两个子查询复用同一 $1 占位符
+    const trendFilter = this.sf(rs, tc, 'store_id');
     const cc: any[] = [];
     const catFilter = this.sf(rs, cc, 'o.store_id');
     const cur = await q1(
@@ -270,14 +275,27 @@ class ReportsController {
         WHERE status='已完成'
           AND created_at >= date_trunc($1, CURRENT_TIMESTAMP) - ${back}${periodFilter}
         GROUP BY 1 ORDER BY 1 DESC LIMIT 4`, pc2);
+    // P-02：原写法 generate_series LEFT JOIN sales_orders ON 列上表达式 = d::date 无范围谓词 → 每次刷新全表扫。
+    //   改为：历史 6 天（不含今日）直接读日结物化表 daily_settlement（settle_date+store_id 索引命中，零全扫）；
+    //   今日实时仅一天，status+created_at 范围谓词走 idx_so_status_created（非全表扫）。
     const trend = await q(
       `SELECT d::date AS "bizDate",
-              count(o.id)::int AS "orderCount",
-              COALESCE(SUM(o.payable_amount),0) AS "salesTotal",
-              COALESCE(SUM(o.profit_amount),0) AS "profitTotal"
+              COALESCE(SUM(agg."orderCount"),0)::int AS "orderCount",
+              COALESCE(SUM(agg."salesTotal"),0) AS "salesTotal",
+              COALESCE(SUM(agg."profitTotal"),0) AS "profitTotal"
          FROM generate_series(CURRENT_DATE - 6, CURRENT_DATE, '1 day') d
-         LEFT JOIN sales_orders o
-                ON COALESCE(o.pay_paid_at, o.created_at)::date = d::date AND o.status='已完成'${trendFilter}
+         LEFT JOIN (
+           SELECT settle_date AS dd, order_count AS "orderCount", sales_total AS "salesTotal", profit_total AS "profitTotal"
+             FROM daily_settlement
+            WHERE settle_date BETWEEN CURRENT_DATE - 6 AND CURRENT_DATE - 1${trendFilter}
+           UNION ALL
+           SELECT CURRENT_DATE AS dd,
+                  count(*)::int AS "orderCount",
+                  COALESCE(SUM(payable_amount),0) AS "salesTotal",
+                  COALESCE(SUM(profit_amount),0) AS "profitTotal"
+             FROM sales_orders
+            WHERE status='已完成' AND created_at >= CURRENT_DATE${trendFilter}
+         ) agg ON agg.dd = d::date
         GROUP BY d ORDER BY d`, tc);
     const categoryShare = await q(
       `SELECT COALESCE(c.name, '未分类') AS name, COALESCE(SUM(i.line_amount),0) AS revenue
@@ -294,7 +312,7 @@ class ReportsController {
   @RequirePerms('report.view.all')
   @Get('abc')
   async abc(@Query('from') from?: string, @Query('to') to?: string,
-            @Query('storeId') storeId?: string) {
+            @Query('storeId') storeId?: string, @Query('size') size?: string) {
     const rs = resolveReportStores(storeId);
     const p: any[] = [from || null, to || null];
     const rows = await q(
@@ -323,7 +341,8 @@ class ReportsController {
                    ELSE 'C' END AS "className"
          FROM ranked
         ORDER BY revenue DESC, product_id
-        LIMIT 500`, p);
+        LIMIT $${p.length + 1}`,   // V5.0.18g：size 可调（默认 500，上限 5000）
+      [...p, Math.min(Math.max(Number(size) || 500, 1), 5000)]);
     return { items: rows };
   }
 
@@ -347,45 +366,54 @@ class ReportsController {
 
   /** 商品销售明细（P1-1 / 原型#17）：按商品聚合 + 日期/关键词/分类筛选；总额合计随行返回 */
   @RequirePerms('report.view.all')
+  /** 商品销售明细报表（V5.0.18g：服务端分页 page/size；count=总行数，total=区间汇总（全量聚合，不受分页影响）） */
   @Get('sale-detail')
   async saleDetail(@Query('from') from?: string, @Query('to') to?: string,
                    @Query('keyword') keyword?: string, @Query('categoryId') categoryId?: string,
-                   @Query('storeId') storeId?: string) {
+                   @Query('storeId') storeId?: string,
+                   @Query('page') page?: string, @Query('size') size?: string) {
     const rs = resolveReportStores(storeId);
     const p: any[] = [from || null, to || null, (keyword || '').trim(), categoryId ? Number(categoryId) : null];
+    const scope = this.sf(rs, p, 'o.store_id');
+    const agg = `WITH g AS (
+        SELECT p.id AS product_id, p.name, p.base_unit, COALESCE(c.name,'未分类') AS category_name,
+               count(DISTINCT i.order_id)::int AS "orderCount",
+               COALESCE(SUM(i.qty),0) AS qty,
+               COALESCE(SUM(i.line_amount),0) AS revenue,
+               COALESCE(SUM(i.line_cost),0) AS cost,
+               COALESCE(SUM(i.line_profit),0) AS profit
+          FROM sale_items i
+          JOIN sales_orders o ON o.id = i.order_id AND o.status='已完成'
+          JOIN products p ON p.id = i.product_id
+          LEFT JOIN categories c ON c.id = p.category_id
+         WHERE ($1::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date >= $1::date)
+           AND ($2::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date <= $2::date)
+           AND ($3 = '' OR p.name ILIKE '%'||$3||'%' OR p.barcode = $3)
+           AND ($4::bigint IS NULL OR p.category_id = $4::bigint)${scope}
+         GROUP BY p.id, p.name, p.base_unit, c.name
+        HAVING COALESCE(SUM(i.line_amount),0) > 0)`;
+    const cnt = await q1<any>(
+      `${agg} SELECT count(*)::int AS n, COALESCE(SUM(qty),0) AS qty, COALESCE(SUM(revenue),0) AS revenue,
+              COALESCE(SUM(cost),0) AS cost, COALESCE(SUM(profit),0) AS profit,
+              COALESCE(SUM("orderCount"),0) AS "orderCount" FROM g`, p);
+    const pageSize = Math.min(Math.max(Number(size) || 10, 1), 2000);
+    const pg = Math.max(Number(page) || 1, 1);
     const rows = await q(
-      `SELECT p.id AS product_id, p.name, p.base_unit, COALESCE(c.name,'未分类') AS category_name,
-              count(DISTINCT i.order_id)::int AS "orderCount",
-              COALESCE(SUM(i.qty),0) AS qty,
-              COALESCE(SUM(i.line_amount),0) AS revenue,
-              COALESCE(SUM(i.line_cost),0) AS cost,
-              COALESCE(SUM(i.line_profit),0) AS profit
-         FROM sale_items i
-         JOIN sales_orders o ON o.id = i.order_id AND o.status='已完成'
-         JOIN products p ON p.id = i.product_id
-         LEFT JOIN categories c ON c.id = p.category_id
-        WHERE ($1::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date >= $1::date)
-          AND ($2::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date <= $2::date)
-          AND ($3 = '' OR p.name ILIKE '%'||$3||'%' OR p.barcode = $3)
-          AND ($4::bigint IS NULL OR p.category_id = $4::bigint)${this.sf(rs, p, 'o.store_id')}
-        GROUP BY p.id, p.name, p.base_unit, c.name
-       HAVING COALESCE(SUM(i.line_amount),0) > 0
-        ORDER BY revenue DESC, p.id
-        LIMIT 500`,
-      p);
-    const total = rows.reduce((s: any, r: any) => ({
-      orderCount: s.orderCount + Number(r.orderCount), qty: s.qty + Number(r.qty),
-      revenue: s.revenue + Number(r.revenue), cost: s.cost + Number(r.cost),
-      profit: s.profit + Number(r.profit),
-    }), { orderCount: 0, qty: 0, revenue: 0, cost: 0, profit: 0 });
-    return { items: rows, total };
+      `${agg} SELECT * FROM g ORDER BY revenue DESC, product_id LIMIT $${p.length + 1} OFFSET $${p.length + 2}`,
+      [...p, pageSize, (pg - 1) * pageSize]);
+    const total = {
+      orderCount: Number(cnt?.orderCount ?? 0), qty: Number(cnt?.qty ?? 0),
+      revenue: Number(cnt?.revenue ?? 0), cost: Number(cnt?.cost ?? 0), profit: Number(cnt?.profit ?? 0),
+    };
+    return { items: rows, total, count: Number(cnt?.n ?? 0), page: pg, size: pageSize };
   }
 
   /** 会员消费报表（P1-1 / 原型#17）：区间内消费排行 + 资产 + 新增/活跃/消费占比汇总 */
   @RequirePerms('report.view.all')
   @Get('member')
   async memberReport(@Query('from') from?: string, @Query('to') to?: string,
-                     @Query('limit') limit?: string, @Query('storeId') storeId?: string) {
+                     @Query('limit') limit?: string, @Query('storeId') storeId?: string,
+                     @Query('size') size?: string) {
     const rs = resolveReportStores(storeId);
     const p: any[] = [from || null, to || null];
     const storeCond = rs ? ` AND o.store_id = ANY($3::bigint[])` : '';
@@ -410,8 +438,8 @@ class ReportsController {
                  a.balance, a.dividend_balance, a.points, m.last_active_date
        HAVING count(o.id) > 0
         ORDER BY "salesTotal" DESC, m.id
-        LIMIT ${Math.min(Number(limit) || 100, 300)}`,
-      p);
+        LIMIT $${p.length + 1}`,   // V5.0.18g：size 可调（默认 100，上限 5000），不再写死窗口
+      [...p, Math.min(Math.max(Number(limit) || Number(size) || 100, 1), 5000)]);
     const summary = await q1(
       `SELECT (SELECT count(*)::int FROM members WHERE deleted_at IS NULL
                 AND ($1::date IS NULL OR created_at::date >= $1::date)
@@ -437,7 +465,8 @@ class ReportsController {
   @RequirePerms('report.view.all')
   @Get('employee')
   async employeeReport(@Query('from') from?: string, @Query('to') to?: string,
-                       @Query('cashierId') cashierId?: string, @Query('storeId') storeId?: string) {
+                       @Query('cashierId') cashierId?: string, @Query('storeId') storeId?: string,
+                       @Query('size') size?: string) {
     const cid = Number(cashierId) || 0;
     const rs = resolveReportStores(storeId);
     const p: any[] = [from || null, to || null, cid];
@@ -460,8 +489,8 @@ class ReportsController {
         WHERE ($3 = 0 OR e.id = $3)
         GROUP BY e.id, e.emp_no, e.name
         ORDER BY "salesTotal" DESC, e.id
-        LIMIT 100`,
-      p);
+        LIMIT $${p.length + 1}`,   // V5.0.18g：size 可调（默认 100，上限 5000）
+      [...p, Math.min(Math.max(Number(size) || 100, 1), 5000)]);
     return { items: rows };
   }
 
@@ -469,7 +498,7 @@ class ReportsController {
   @RequirePerms('report.view.all')
   @Get('fraud')
   async fraud(@Query('from') from?: string, @Query('to') to?: string,
-              @Query('storeId') storeId?: string) {
+              @Query('storeId') storeId?: string, @Query('size') size?: string) {
     const rs = resolveReportStores(storeId);
     const p1: any[] = [from || null, to || null];
     const p2: any[] = [from || null, to || null];
@@ -505,8 +534,8 @@ class ReportsController {
         GROUP BY e.id, e.name
        HAVING count(o.id) > 0
         ORDER BY "orderCount" DESC, e.id
-        LIMIT 50`,
-      p3);
+        LIMIT $${p3.length + 1}`,   // V5.0.18g：size 可调（默认 50，上限 5000）
+      [...p3, Math.min(Math.max(Number(size) || 50, 1), 5000)]);
     const oc = Number(summary.orderCount) || 0;
     const rc = Number(refunds.refundCount) || 0;
     return {
@@ -525,30 +554,40 @@ class ReportsController {
   @Get('inventory')
   async inventoryReport(@Query('from') from?: string, @Query('to') to?: string,
                         @Query('keyword') keyword?: string, @Query('categoryId') categoryId?: string,
-                        @Query('storeId') storeId?: string) {
+                        @Query('storeId') storeId?: string, @Query('size') size?: string) {
     const rs = resolveReportStores(storeId);
     const p: any[] = [from || null, to || null, (keyword || '').trim(), categoryId ? Number(categoryId) : null];
     // 流水/销售共用同一门店范围参数（追加在尾部，子查询内多处引用同一占位符）
     const fCond = rs ? ` AND f.store_id = ANY($${p.length + 1}::bigint[])` : '';
-    const f2Cond = rs ? ` AND f2.store_id = ANY($${p.length + 1}::bigint[])` : '';
     const oCond = rs ? ` AND o.store_id = ANY($${p.length + 1}::bigint[])` : '';
     if (rs) p.push(rs);
+    // P-04 修复：原对每个商品跑 5 个相关子查询（期初/入库/出库/出库成本/HAVING EXISTS），
+    // 2 万 SKU ≈ 10 万次 stock_flows 扫描（created_at::date 还废索引）→ 分钟级。
+    // 改为对 stock_flows 一次扫描 GROUP BY product_id（CASE 聚合四项 + bool_or 替代 EXISTS），
+    // 再 LEFT JOIN 回商品。语义等价：open 严格 < $1；in/out BETWEEN（NULL 即不计）；has_flow <= $2 与原 EXISTS 同口径。
     const rows = await q(
       `SELECT p.id, p.name, p.base_unit, COALESCE(c.name,'未分类') AS category_name,
-              ROUND(COALESCE((SELECT SUM(CASE WHEN f.direction='入库' THEN f.qty ELSE -f.qty END)
-                                FROM stock_flows f
-                               WHERE f.product_id=p.id AND f.created_at::date < $1::date${fCond}),0),3) AS open_qty,
-              ROUND(COALESCE((SELECT SUM(f.qty) FROM stock_flows f
-                               WHERE f.product_id=p.id AND f.direction='入库' AND f.created_at::date BETWEEN $1::date AND $2::date${fCond}),0),3) AS in_qty,
-              ROUND(COALESCE((SELECT SUM(f.qty) FROM stock_flows f
-                               WHERE f.product_id=p.id AND f.direction='出库' AND f.created_at::date BETWEEN $1::date AND $2::date${fCond}),0),3) AS out_qty,
-              ROUND(COALESCE((SELECT SUM(f.qty * f.unit_cost) FROM stock_flows f
-                               WHERE f.product_id=p.id AND f.direction='出库' AND f.created_at::date BETWEEN $1::date AND $2::date${fCond}),0),2) AS out_cost,
+              ROUND(COALESCE(fa.open_qty,0),3) AS open_qty,
+              ROUND(COALESCE(fa.in_qty,0),3) AS in_qty,
+              ROUND(COALESCE(fa.out_qty,0),3) AS out_qty,
+              ROUND(COALESCE(fa.out_cost,0),2) AS out_cost,
               COALESCE(SUM(si.line_amount),0) AS sale_amount,
               COALESCE(SUM(si.line_cost),0) AS sale_cost,
               COALESCE(SUM(si.line_profit),0) AS sale_profit,
               count(DISTINCT si.order_id)::int AS sale_orders
          FROM products p
+         LEFT JOIN (
+           SELECT f.product_id,
+                  SUM(CASE WHEN f.created_at::date < $1::date
+                           THEN CASE WHEN f.direction='入库' THEN f.qty ELSE -f.qty END ELSE 0 END) AS open_qty,
+                  SUM(CASE WHEN f.direction='入库' AND f.created_at::date BETWEEN $1::date AND $2::date THEN f.qty ELSE 0 END) AS in_qty,
+                  SUM(CASE WHEN f.direction='出库' AND f.created_at::date BETWEEN $1::date AND $2::date THEN f.qty ELSE 0 END) AS out_qty,
+                  SUM(CASE WHEN f.direction='出库' AND f.created_at::date BETWEEN $1::date AND $2::date THEN f.qty*f.unit_cost ELSE 0 END) AS out_cost,
+                  bool_or(f.created_at::date <= $2::date) AS has_flow
+             FROM stock_flows f
+            WHERE true${fCond}
+            GROUP BY f.product_id
+         ) fa ON fa.product_id = p.id
          LEFT JOIN sale_items si ON si.product_id=p.id AND si.order_id IN (
            SELECT o.id FROM sales_orders o WHERE o.status='已完成'
              AND ($1::date IS NULL OR COALESCE(o.pay_paid_at, o.created_at)::date >= $1::date)
@@ -556,19 +595,21 @@ class ReportsController {
          LEFT JOIN categories c ON c.id=p.category_id
         WHERE ($3 = '' OR p.name ILIKE '%'||$3||'%' OR p.barcode = $3)
           AND ($4::bigint IS NULL OR p.category_id = $4::bigint)
-        GROUP BY p.id, p.name, p.base_unit, c.name
-       HAVING COALESCE(SUM(si.line_amount),0) <> 0
-           OR EXISTS (SELECT 1 FROM stock_flows f2 WHERE f2.product_id=p.id AND f2.created_at::date <= $2::date${f2Cond})
+        GROUP BY p.id, p.name, p.base_unit, c.name,
+                 fa.open_qty, fa.in_qty, fa.out_qty, fa.out_cost, fa.has_flow
+       HAVING COALESCE(SUM(si.line_amount),0) <> 0 OR COALESCE(fa.has_flow,false)
         ORDER BY sale_amount DESC, p.id
-        LIMIT 500`,
-      p);
+        LIMIT $${p.length + 1}`,   // V5.0.18g：size 可调（默认 500，上限 5000）
+      [...p, Math.min(Math.max(Number(size) || 500, 1), 5000)]);
+    // Q-04 B1：金额字段分整数累加（数量/计数保持原口径）
     const total = rows.reduce((s: any, r: any) => ({
       openQty: s.openQty + Number(r.open_qty), inQty: s.inQty + Number(r.in_qty), outQty: s.outQty + Number(r.out_qty),
       saleOrders: s.saleOrders + Number(r.sale_orders),
-      saleAmount: s.saleAmount + Number(r.sale_amount), saleCost: s.saleCost + Number(r.sale_cost),
-      saleProfit: s.saleProfit + Number(r.sale_profit),
-    }), { openQty: 0, inQty: 0, outQty: 0, saleOrders: 0, saleAmount: 0, saleCost: 0, saleProfit: 0 });
-    return { items: rows, total };
+      saleAmountC: s.saleAmountC + toCents(r.sale_amount), saleCostC: s.saleCostC + toCents(r.sale_cost),
+      saleProfitC: s.saleProfitC + toCents(r.sale_profit),
+    }), { openQty: 0, inQty: 0, outQty: 0, saleOrders: 0, saleAmountC: 0, saleCostC: 0, saleProfitC: 0 });
+    return { items: rows, total: { openQty: total.openQty, inQty: total.inQty, outQty: total.outQty, saleOrders: total.saleOrders,
+      saleAmount: total.saleAmountC / 100, saleCost: total.saleCostC / 100, saleProfit: total.saleProfitC / 100 } };
   }
 }
 
@@ -649,11 +690,14 @@ class HqReportsController {
       ...x,
       margin: Number(x.salesTotal) > 0 ? r2(Number(x.profitTotal) / Number(x.salesTotal) * 100) : 0,
     }));
+    // Q-04 B1：金额分整数累加（计数保持原口径）
     const total = items.reduce((a: any, x: any) => ({
-      orderCount: a.orderCount + Number(x.orderCount), salesTotal: a.salesTotal + Number(x.salesTotal),
-      costTotal: a.costTotal + Number(x.costTotal), profitTotal: a.profitTotal + Number(x.profitTotal),
-    }), { orderCount: 0, salesTotal: 0, costTotal: 0, profitTotal: 0 });
-    return { from: r.from, to: r.to, items, total: { ...total, margin: total.salesTotal > 0 ? r2(total.profitTotal / total.salesTotal * 100) : 0 } };
+      orderCount: a.orderCount + Number(x.orderCount), salesTotalC: a.salesTotalC + toCents(x.salesTotal),
+      costTotalC: a.costTotalC + toCents(x.costTotal), profitTotalC: a.profitTotalC + toCents(x.profitTotal),
+    }), { orderCount: 0, salesTotalC: 0, costTotalC: 0, profitTotalC: 0 });
+    const salesTotal = total.salesTotalC / 100, costTotal = total.costTotalC / 100, profitTotal = total.profitTotalC / 100;
+    return { from: r.from, to: r.to, items, total: { orderCount: total.orderCount, salesTotal, costTotal, profitTotal,
+      margin: salesTotal > 0 ? r2(profitTotal / salesTotal * 100) : 0 } };
   }
 
   /** 门店排行：本区间 vs 上一区间销售额对比（增长%，红涨绿跌前端渲染）（P2-2：读物化视图） */
@@ -781,14 +825,17 @@ class HqReportsController {
       growth: Number(x.prev_sales) > 0 ? r2((Number(x.sales_total) - Number(x.prev_sales)) / Number(x.prev_sales) * 100)
             : (Number(x.sales_total) > 0 ? 100 : 0),
     }));
+    // Q-04 B1：金额分整数累加（计数保持原口径）
     const total = items.reduce((a: any, x: any) => ({
       store_count: a.store_count + Number(x.store_count),
       order_count: a.order_count + Number(x.order_count),
-      sales_total: a.sales_total + Number(x.sales_total),
-      profit_total: a.profit_total + Number(x.profit_total),
-    }), { store_count: 0, order_count: 0, sales_total: 0, profit_total: 0 });
+      sales_totalC: a.sales_totalC + toCents(x.sales_total),
+      profit_totalC: a.profit_totalC + toCents(x.profit_total),
+    }), { store_count: 0, order_count: 0, sales_totalC: 0, profit_totalC: 0 });
+    const sales_total = total.sales_totalC / 100, profit_total = total.profit_totalC / 100;
     return { from: r.from, to: r.to, prevFrom, prevTo, items,
-      total: { ...total, margin: total.sales_total > 0 ? r2(total.profit_total / total.sales_total * 100) : 0 } };
+      total: { store_count: total.store_count, order_count: total.order_count, sales_total, profit_total,
+        margin: sales_total > 0 ? r2(profit_total / sales_total * 100) : 0 } };
   }
 
   /** 库存汇总：各店 SKU 数 / 库存金额（在库批次成本）/ 临期数 / 低库存数（复用批次账本） */
@@ -819,7 +866,7 @@ class HqReportsController {
   /** 调拨在途：在途单/金额/超期未收（>2 天标红，前端渲染） */
   @RequirePerms('hq.report.allstore')
   @Get('transfer-intransit')
-  async transferIntransit() {
+  async transferIntransit(@Query('size') size?: string) {
     const rows = await q(
       `SELECT t.id, t.transfer_no, t.biz_scope, t.total_cost, t.shipped_at,
               t.shipped_at::date AS ship_date,
@@ -831,7 +878,7 @@ class HqReportsController {
          LEFT JOIN stores fs ON fs.id = t.from_store_id
          LEFT JOIN stores ts ON ts.id = t.to_store_id
         WHERE t.status = '在途'
-        ORDER BY t.shipped_at ASC NULLS LAST LIMIT 200`);
+        ORDER BY t.shipped_at ASC NULLS LAST LIMIT $1`, [Math.min(Math.max(Number(size) || 200, 1), 5000)]);   // V5.0.18g：size 可调
     return { items: rows };
   }
 
@@ -910,14 +957,15 @@ class HqReportsController {
   /** 门店往来（跨店资金对账）：各店应付/应收未结清汇总 + 明细 */
   @RequirePerms('hq.report.allstore')
   @Get('intercompany')
-  async intercompany() {
+  async intercompany(@Query('size') size?: string) {
+    const lim = Math.min(Math.max(Number(size) || 300, 1), 5000);   // V5.0.18g：size 可调
     const rows = await q(
       `SELECT l.id, l.biz_type, l.biz_ref, l.amount, l.qty, l.status, l.created_at,
               fstore.name AS from_store_name, tstore.name AS to_store_name
          FROM store_intercompany_ledger l
          LEFT JOIN stores fstore ON fstore.id = l.from_store_id
          LEFT JOIN stores tstore ON tstore.id = l.to_store_id
-        ORDER BY l.status, l.created_at DESC LIMIT 300`);
+        ORDER BY l.status, l.created_at DESC LIMIT $1`, [lim]);
     const summary = await q1(
       `SELECT count(*) FILTER (WHERE status='pending')::int AS pending_count,
               COALESCE(SUM(amount) FILTER (WHERE status='pending'),0) AS pending_amount
@@ -928,7 +976,8 @@ class HqReportsController {
   /** 进价偏离与异常（R8/R16 防舞弊信号）：待审进价单 + L1 变更留痕排行 */
   @RequirePerms('hq.report.allstore')
   @Get('cost-deviation')
-  async costDeviation(@Query('from') from?: string, @Query('to') to?: string) {
+  async costDeviation(@Query('from') from?: string, @Query('to') to?: string, @Query('size') size?: string) {
+    const lim = Math.min(Math.max(Number(size) || 100, 1), 5000);   // V5.0.18g：size 可调
     const r = this.range(from, to);
     const pending = await q(
       `SELECT d.id, d.anomaly, d.status, d.created_at, s.name AS store_name,
@@ -940,7 +989,7 @@ class HqReportsController {
          LEFT JOIN stores s ON s.id = d.store_id
          LEFT JOIN products p ON p.id = d.product_id
         WHERE d.status = 'pending'
-        ORDER BY COALESCE(d.gap_amount, 0) DESC, d.created_at DESC LIMIT 100`);
+        ORDER BY COALESCE(d.gap_amount, 0) DESC, d.created_at DESC LIMIT $1`, [lim]);
     const logs = await q(
       `SELECT s.name AS store_name, l.source, count(*)::int AS change_count,
               COALESCE(SUM(l.delta),0) AS total_delta
@@ -954,7 +1003,7 @@ class HqReportsController {
   /** 会员跨店分析：活跃店数 / 跨店消费分布（R4 连锁会员口径） */
   @RequirePerms('hq.member.crossview')
   @Get('member-cross')
-  async memberCross(@Query('from') from?: string, @Query('to') to?: string) {
+  async memberCross(@Query('from') from?: string, @Query('to') to?: string, @Query('size') size?: string) {
     const r = this.range(from, to);
     const rows = await q(
       `SELECT m.id, m.card_no, m.name,
@@ -971,7 +1020,7 @@ class HqReportsController {
           AND (o.id IS NOT NULL OR f.id IS NOT NULL)
         GROUP BY m.id, m.card_no, m.name
        HAVING count(DISTINCT o.store_id) > 1 OR count(DISTINCT f.id) > 0
-        ORDER BY total_spend DESC LIMIT 100`, [r.from, r.to]);
+        ORDER BY total_spend DESC LIMIT $3`, [r.from, r.to, Math.min(Math.max(Number(size) || 100, 1), 5000)]);   // V5.0.18g：size 可调
     return { from: r.from, to: r.to, items: rows };
   }
 }

@@ -396,24 +396,25 @@ export async function render(view, opts = {}) {
       || '<div class="empty">无明细</div>');
   }
 
-  /* ═══════════ 盘点单据列表 ═══════════ */
-  let ctStatus = '', ctPage = 1;
-  view.querySelector('#ctGo').onclick = loadCounts;
-  view.querySelector('#ctRefresh').onclick = loadCounts;
-  view.querySelector('#ctQStatus').onchange = e => { ctStatus = e.target.value; loadCounts(); };
+  /* ═══════════ 盘点单据列表（V5.0.18g：服务端分页） ═══════════ */
+  let ctStatus = '', ctPage = 1, ctTotal = 0;
+  view.querySelector('#ctGo').onclick = () => loadCounts(1);
+  view.querySelector('#ctRefresh').onclick = () => loadCounts(ctPage);
+  view.querySelector('#ctQStatus').onchange = e => { ctStatus = e.target.value; loadCounts(1); };
 
-  async function loadCounts() {
-    const p = new URLSearchParams();
+  async function loadCounts(page = 1) {
+    const p = new URLSearchParams({ page: String(page), size: '10' });
     if (ctStatus) p.set('status', ctStatus);
     const from = view.querySelector('#ctFrom').value, to = view.querySelector('#ctTo').value;
     if (from) p.set('from', from);
     if (to) p.set('to', to);
+    const kw = (view.querySelector('#ctKw').value || '').trim();
+    if (kw) p.set('keyword', kw);
     const d = await must(get('/inventory/counts?' + p));
-    let rows = Array.isArray(d) ? d : (d.items || []);
-    const kw = (view.querySelector('#ctKw').value || '').trim().toLowerCase();
-    if (kw) rows = rows.filter(o => String(o.count_no || '').toLowerCase().includes(kw) || String(o.scope || '').toLowerCase().includes(kw));
+    const rows = d.items || [];
+    ctPage = Number(d.page || page); ctTotal = Number(d.total ?? rows.length);
     // V4.9.7 列重排：明细行→总数量 · 创建→制单时间 · 签字移制单时间后 · 状态移签字后 · 数据靠左
-    const pg = paginate(rows, ctPage, 10);
+    const pg = { page: ctPage, slice: rows, pages: Math.max(Math.ceil(ctTotal / 10), 1) };
     view.querySelector('#ctList').innerHTML = rows.length ? `
       ${docTable({
         cols: [
@@ -442,7 +443,7 @@ export async function render(view, opts = {}) {
         })),
       })}${pg.bar}`
       : '<div class="empty">无盘点单</div>';
-    bindPager(view.querySelector('#ctList'), p => { ctPage = p; loadCounts(); });
+    bindPager(view.querySelector('#ctList'), p => { ctPage = p; loadCounts(p); });
     view.querySelectorAll('[data-cntrow]').forEach(tr => tr.ondblclick = () => openCountDetail(Number(tr.dataset.cntrow)));
     bindPrintSel('#ctList', 'ctpr', ctPrSel, 'ctPrAll', rows, 'ctPrints', 'ctPrN');
     view.querySelectorAll('[data-kind="count"][data-audit]').forEach(b => b.onclick = async () => {
@@ -649,18 +650,19 @@ export async function render(view, opts = {}) {
   view.querySelector('#lsRefresh').onclick = loadLosses;
   view.querySelector('#lsQStatus').onchange = e => { lsStatus = e.target.value; loadLosses(); };
 
-  async function loadLosses() {
-    const p = new URLSearchParams();
+  async function loadLosses(page = 1) {
+    const p = new URLSearchParams({ page: String(page), size: '10' });
     if (lsStatus) p.set('status', lsStatus);
     const from = view.querySelector('#lsFrom').value, to = view.querySelector('#lsTo').value;
     if (from) p.set('from', from);
     if (to) p.set('to', to);
+    const kw = (view.querySelector('#lsKw').value || '').trim();
+    if (kw) p.set('keyword', kw);
     const d = await must(get('/inventory/losses?' + p));
-    let rows = Array.isArray(d) ? d : (d.items || []);
-    const kw = (view.querySelector('#lsKw').value || '').trim().toLowerCase();
-    if (kw) rows = rows.filter(o => String(o.loss_no || '').toLowerCase().includes(kw) || String(o.reason_type || '').toLowerCase().includes(kw));
+    const rows = d.items || [];
+    lsPage = Number(d.page || page); lsTotal = Number(d.total ?? rows.length);
     // V4.9.7 列重排：明细行→总数量 · 创建→制单时间 · 签字移制单时间后 · 状态移签字后 · 数据靠左
-    const pg = paginate(rows, lsPage, 10);
+    const pg = { page: lsPage, slice: rows, pages: Math.max(Math.ceil(lsTotal / 10), 1) };
     view.querySelector('#lsList').innerHTML = rows.length ? `
       ${docTable({
         cols: [
@@ -689,7 +691,7 @@ export async function render(view, opts = {}) {
         })),
       })}${pg.bar}`
       : '<div class="empty">无报损单</div>';
-    bindPager(view.querySelector('#lsList'), p => { lsPage = p; loadLosses(); });
+    bindPager(view.querySelector('#lsList'), p => { lsPage = p; loadLosses(p); });
     view.querySelectorAll('[data-lsrow]').forEach(tr => tr.ondblclick = () => openLossDetail(Number(tr.dataset.lsrow)));
     bindPrintSel('#lsList', 'lspr', lsPrSel, 'lsPrAll', rows, 'lsPrints', 'lsPrN');
     view.querySelectorAll('[data-kind="loss"][data-audit]').forEach(b => b.onclick = async () => {
@@ -747,24 +749,25 @@ export async function render(view, opts = {}) {
     document.body.appendChild(mask);
   }
 
-  /* ── 调拨列表（含签字列） ── */
-  let trStatus = '', trPage = 1;
-  view.querySelector('#trGo').onclick = loadTransfers;
-  view.querySelector('#trRefresh').onclick = loadTransfers;
-  view.querySelector('#trQStatus').onchange = e => { trStatus = e.target.value; loadTransfers(); };
+  /* ── 调拨列表（含签字列；V5.0.18g：服务端分页） ── */
+  let trStatus = '', trPage = 1, trTotal = 0;
+  view.querySelector('#trGo').onclick = () => loadTransfers(1);
+  view.querySelector('#trRefresh').onclick = () => loadTransfers(trPage);
+  view.querySelector('#trQStatus').onchange = e => { trStatus = e.target.value; loadTransfers(1); };
 
-  async function loadTransfers() {
-    const p = new URLSearchParams();
+  async function loadTransfers(page = 1) {
+    const p = new URLSearchParams({ page: String(page), size: '10' });
     if (trStatus) p.set('status', trStatus);
     const from = view.querySelector('#trFrom').value, to = view.querySelector('#trTo').value;
     if (from) p.set('from', from);
     if (to) p.set('to', to);
+    const kw = (view.querySelector('#trKw').value || '').trim();
+    if (kw) p.set('keyword', kw);
     const d = await must(get('/inventory/transfers?' + p));
-    let rows = Array.isArray(d) ? d : (d.items || []);
-    const kw = (view.querySelector('#trKw').value || '').trim().toLowerCase();
-    if (kw) rows = rows.filter(o => String(o.transfer_no || '').toLowerCase().includes(kw) || String(o.reason || '').toLowerCase().includes(kw));
+    const rows = d.items || [];
+    trPage = Number(d.page || page); trTotal = Number(d.total ?? rows.length);
     // V4.9.7 列重排：明细行→总数量 · 创建→制单时间 · 签字移制单时间后 · 状态移签字后 · 数据靠左
-    const pg = paginate(rows, trPage, 10);
+    const pg = { page: trPage, slice: rows, pages: Math.max(Math.ceil(trTotal / 10), 1) };
     view.querySelector('#trList').innerHTML = rows.length ? `
       ${docTable({
         cols: [
@@ -799,7 +802,7 @@ export async function render(view, opts = {}) {
         })),
       })}${pg.bar}`
       : '<div class="empty">无调拨单</div>';
-    bindPager(view.querySelector('#trList'), p => { trPage = p; loadTransfers(); });
+    bindPager(view.querySelector('#trList'), p => { trPage = p; loadTransfers(p); });
     view.querySelectorAll('[data-trrow]').forEach(tr => tr.ondblclick = () => openTransferDetail(Number(tr.dataset.trrow)));
     bindPrintSel('#trList', 'trpr', trPrSel, 'trPrAll', rows, 'trPrints', 'trPrN');
     view.querySelectorAll('[data-kind="tr"][data-confirm]').forEach(b => b.onclick = async () => {

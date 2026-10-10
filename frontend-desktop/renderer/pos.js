@@ -307,7 +307,7 @@ function renderCart() {
   $('#btnPay').disabled = !cart.length;
   syncSecond({});
 }
-function chgQty(i, d) { const c = cart[i]; c.qty = Math.max(0.001, Math.round((c.qty + d) * 1000) / 1000); renderCart(); }
+function chgQty(i, d) { const c = cart[i]; c.qty = Math.min(99999, Math.max(0.001, Math.round((c.qty + d) * 1000) / 1000)); renderCart(); }   // V5.0.19i（F-08）：补数量上界
 function delRow(i) { cart.splice(i, 1); renderCart(); }
 function clearCart() { cart = []; renderCart(); }
 
@@ -328,16 +328,25 @@ function syncSecond(extra) {
 
 /* ─── 会员 ─── */
 let memberCard = null;   // 副屏会员卡全量数据
+let mResults = [];       // 会员搜索结果（供点击委托查表，避免内联 JS 拼接动态值 → XSS）
 function openMember() { dlgMember.showModal(); $('#mSearch').value = ''; $('#mSearch').focus(); $('#mResult').innerHTML = ''; }
 $('#mSearch').addEventListener('keydown', async e => {
   if (e.key !== 'Enter' || !e.target.value.trim()) return;
   const r = await call('GET', '/members?keyword=' + encodeURIComponent(e.target.value.trim()) + '&size=10');
   if (r.code !== 0) { $('#mResult').innerHTML = '<div class="hint">查询失败</div>'; return; }
   const items = r.data.items || [];
+  mResults = items;
   $('#mResult').innerHTML = items.length ? items.map(m => `<div class="row">
       <span>${esc(m.name || '—')} · ${esc(m.phone || m.card_no || '')}</span>
-      <span><span class="pill g">${money(m.balance)}</span> <button onclick="pickMember(${m.id},'${esc(String(m.name || '').replace(/'/g, ''))}','${esc(String(m.card_no || ''))}',${m.balance})">选</button></span>
+      <span><span class="pill g">${money(m.balance)}</span> <button class="pickMemBtn" data-mi="${m.id}">选</button></span>
     </div>`).join('') : '<div class="hint">无匹配会员</div>';
+});
+// F-01 修复：会员选择改为 data-* + 事件委托，禁止 onclick 拼接动态值（防 card_no 注入 XSS）
+$('#mResult').addEventListener('click', e => {
+  const btn = e.target.closest('.pickMemBtn');
+  if (!btn) return;
+  const m = mResults.find(x => x.id === Number(btn.dataset.mi));
+  if (m) pickMember(m.id, m.name || '', m.card_no || '', m.balance);
 });
 async function pickMember(id, name, cardNo, balance) {
   memberId = id; memberInfo = { name, balance, cardNo };
@@ -398,7 +407,11 @@ function calcChange() {
   $('#changeHint').textContent = d >= 0 ? `找零：${money(d)}` : '实收不足';
 }
 $('#cashGot').addEventListener('input', calcChange);
+// F-04 提交防重：在飞期间按钮已禁用；clientRef 稳定绑定本次结账意图，成功才换新，
+// 失败（含网络丢响应）保留 → 用户重试同一意图时服务端按 clientRef 去重，杜绝重复扣款
+let pendingCheckoutRef = null;
 $('#payGo').onclick = async () => {
+  if ($('#payGo').disabled) return;   // 在飞/已禁用：忽略重复点击（双击防护）
   const total = payTotal();
   const payments = [];
   if (payChannel === '现金') {
@@ -411,12 +424,14 @@ $('#payGo').onclick = async () => {
   } else payments.push({ channel: '扫码', amount: total });
 
   $('#payGo').disabled = true;
-  const body = { items: cart.map(c => ({ productId: c.productId, qty: c.qty })), payments };
+  if (!pendingCheckoutRef) pendingCheckoutRef = 'D' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+  const body = { items: cart.map(c => ({ productId: c.productId, qty: c.qty })), payments, clientRef: pendingCheckoutRef };
   if (memberId) body.memberId = memberId;
   if (SHIFT && SHIFT.status === '进行中') body.shiftId = Number(SHIFT.id);
   const r = await call('POST', '/sales/checkout', body);
   $('#payGo').disabled = false;
-  if (r.code !== 0) { $('#payErr').textContent = errMsg(r); return; }
+  if (r.code !== 0) { $('#payErr').textContent = errMsg(r); return; }  // 失败保留 clientRef，供重试去重
+  pendingCheckoutRef = null;  // 成功：下一单用新单号
   const d = r.data;
   log(`[结账] ${d.orderNo} 应收 ${money(d.payable)}${d.points ? ` · 得 ${d.points} 分` : ''}${d.roundAmount ? ` · 抹零 ${money(d.roundAmount)}` : ''}`);
   const change = payChannel === '现金' && Number($('#cashGot').value) > d.payable
@@ -476,21 +491,29 @@ async function pickOrder() {
     : '<div class="hint">暂无挂单</div>';
   dlgHeld.showModal();
 }
+let heldInFlight = false;
+let pendingHeldRef = null;
 async function checkoutHeld(id) {
+  if (heldInFlight) return;   // F-04：在飞守卫，忽略重复点击
   if (payChannel === '余额' && !memberId) { snack('余额支付需先选择会员'); return; }
+  heldInFlight = true;
+  try {
   // 服务端按结账时刻重新计价，前端按快照价估算应付作为支付金额
   const h = await call('GET', '/pos/held/' + id);
   if (h.code !== 0) { snack('挂单详情获取失败'); return; }
   const est = (h.data.items || []).reduce((s, it) => s + Number(it.unitPrice ?? it.unit_price ?? 0) * Number(it.qty), 0);
   const payments = [{ channel: payChannel, amount: Math.round(est * 100) / 100 }];
-  const body = { payments };
+  if (!pendingHeldRef) pendingHeldRef = 'DH' + id + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+  const body = { payments, clientRef: pendingHeldRef };
   if (SHIFT && SHIFT.status === '进行中') body.shiftId = Number(SHIFT.id);
   const r = await call('POST', `/pos/held/${id}/checkout`, body);
-  if (r.code !== 0) { snack('取单结账失败：' + errMsg(r)); return; }
+  if (r.code !== 0) { snack('取单结账失败：' + errMsg(r)); return; }  // 失败保留 clientRef，供重试去重
+  pendingHeldRef = null;
   log(`[取单] #${id} → ${r.data.orderNo} 应收 ${money(r.data.payable)}`);
   dlgHeld.close();
   await printRealReceipt(r.data.orderId);
   refreshShift();
+  } finally { heldInFlight = false; }
 }
 
 /* ─── 交接班 ─── */
@@ -535,17 +558,22 @@ async function refreshRechargeQueue() {
       </span>
     </div>`).join('') : '<div class="hint">暂无待支付充值单</div>';
 }
+let rechargeInFlight = false;
 async function collectRecharge(id, channel) {
-  const r = await call('POST', `/pos/recharge-orders/${id}/collect`,
-    { payChannel: channel, shiftId: SHIFT ? SHIFT.id : undefined });
-  await refreshRechargeQueue();
-  if (r.code === 0) {
-    log(`[充值] ${r.data.orderNo} 入账 +${money(r.data.principal + r.data.gift)}（${channel}·会员余额 ${money(r.data.balanceAfter)}）`);
-    $('#rechargeMsg').textContent = `${r.data.orderNo} 已入账：+${money(r.data.principal + r.data.gift)}`;
-  } else {
-    log(`[充值] 失败：${r.msg || r.code}`);
-    $('#rechargeMsg').textContent = '失败：' + (r.msg || r.code);
-  }
+  if (rechargeInFlight) return;   // F-04：在飞守卫，忽略重复点击（后端状态机已防双入账，此处避免 50074 噪音）
+  rechargeInFlight = true;
+  try {
+    const r = await call('POST', `/pos/recharge-orders/${id}/collect`,
+      { payChannel: channel, shiftId: SHIFT ? SHIFT.id : undefined });
+    await refreshRechargeQueue();
+    if (r.code === 0) {
+      log(`[充值] ${r.data.orderNo} 入账 +${money(r.data.principal + r.data.gift)}（${channel}·会员余额 ${money(r.data.balanceAfter)}）`);
+      $('#rechargeMsg').textContent = `${r.data.orderNo} 已入账：+${money(r.data.principal + r.data.gift)}`;
+    } else {
+      log(`[充值] 失败：${r.msg || r.code}`);
+      $('#rechargeMsg').textContent = '失败：' + (r.msg || r.code);
+    }
+  } finally { rechargeInFlight = false; }
 }
 
 /* ─── 外设（Electron 生效） ─── */

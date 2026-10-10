@@ -116,6 +116,7 @@ export async function render(view) {
           <div class="fld"><label>联系电话</label><input id="bcCustPhone" placeholder="手机/座机"></div>
           <div class="fld"><label>信用额度（赊账上限）</label><input id="bcCustCredit" type="number" min="0" step="100" value="0" placeholder="0 = 不限制"></div>
           <div class="fld"><label class="req">整单折扣</label><input id="bcCustDiscount" type="number" min="0.01" max="1" step="0.05" value="1"></div>
+          <div class="fld"><label title="赊账款按此账期滚动结算">账期（月）</label><input id="bcCustTerm" type="number" min="0" max="36" step="1" value="0" placeholder="0 = 现结" title="0 = 现结；如填 3，挂账日起 3 个月内滚动结清，超期未收计入「已逾期」"></div>
           <div class="fld"><label>状态</label><select id="bcCustStatus"><option value="1">启用</option><option value="0">停用</option></select></div>
         </div>
         <div style="margin:10px 18px 0;padding:10px 12px;border:1px dashed var(--line);border-radius:10px">
@@ -263,6 +264,8 @@ export async function render(view) {
             <td style="color:var(--muted,#8a8577)">最近业务</td><td>${c.last_order_at ? dt(c.last_order_at) : '—'}</td></tr>
         <tr><td style="color:var(--muted,#8a8577)">整单折扣</td><td>${(Number(c.default_discount) * 100).toFixed(0)}%</td>
             <td style="color:var(--muted,#8a8577)">订单数</td><td>${c.order_count ?? 0}</td></tr>
+        <tr><td style="color:var(--muted,#8a8577)">账期</td><td>${Number(c.payment_term_months ?? 0) > 0 ? `<b>${Number(c.payment_term_months)} 个月</b>（挂账日起 ${Number(c.payment_term_months)} 个月内滚动结清，超期未收计入「已逾期」）` : '现结'}</td>
+            <td style="color:var(--muted,#8a8577)">结算方式</td><td>${Number(c.payment_term_months ?? 0) > 0 ? '按账期滚动结算' : '现结（下单即收）'}</td></tr>
         <tr><td style="color:var(--muted,#8a8577)">应收合计</td><td>${money(c.total_receivable)}</td>
             <td style="color:var(--muted,#8a8577)">已收</td><td>${money((Number(c.paid_cash) || 0) + (Number(c.paid_collect) || 0))}</td></tr>
         <tr><td style="color:var(--muted,#8a8577)">状态</td><td>${Number(c.status) === 1 ? '<span class="tag g">启用</span>' : '<span class="tag r">停用</span>'}</td>
@@ -388,7 +391,7 @@ export async function render(view) {
     mask.onclick = e => { if (e.target === mask) mask.remove(); };
     // A5 对账单打印（@page A5 单页；账单抬头+汇总+未清明细+账龄+签署栏）
     mask.querySelector('#bcColPrint').onclick = () => {
-      const w = window.open('', '_blank', 'width=820,height=900');
+      const w = window.open('', '_blank', 'noopener,width=820,height=900');   // F-07：无需 opener
       if (!w) { toast('浏览器拦截了打印窗口，请允许弹窗', false); return; }
       w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>对账单 · ${esc(c.name)}</title>
         <style>
@@ -490,6 +493,7 @@ export async function render(view) {
     $('#bcCustPhone').value = c?.phone || '';
     $('#bcCustCredit').value = c ? Number(c.credit_limit) : 0;
     $('#bcCustDiscount').value = c ? Number(c.default_discount) : 1;
+    $('#bcCustTerm').value = c ? Number(c.payment_term_months ?? 0) : 0;
     $('#bcCustStatus').value = String(c ? Number(c.status) : 1);
     // 重置签字板（编辑已有签字客户时提示已有签字）
     const cv = $('#bcSignPad');
@@ -508,6 +512,7 @@ export async function render(view) {
       phone: $('#bcCustPhone').value.trim() || undefined,
       creditLimit: Number($('#bcCustCredit').value) || 0,
       defaultDiscount: Number($('#bcCustDiscount').value) || 1,
+      paymentTermMonths: Math.max(0, Math.min(36, Math.round(Number($('#bcCustTerm').value) || 0))),
       status: Number($('#bcCustStatus').value),
     };
     if (!body.name) return toast('客户名称必填', false);

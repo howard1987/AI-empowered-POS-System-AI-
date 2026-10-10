@@ -166,6 +166,11 @@ RunNpm @('run', 'build') $BACKEND
 if (-not (Test-Path (Join-Path $BACKEND 'dist\main.js'))) { throw 'dist/main.js 未生成' }
 Ok 'dist/ 编译完成'
 
+# ── 1.5 单元测试门禁（Q-02 特征测试基座）：纯函数表驱动用例，秒级；失败即中断构建 ──
+Step '1.5' '单元测试门禁（node --test，纯函数特征用例）'
+RunNpm @('run', 'test:unit') $BACKEND
+Ok '单测全过（CI 门禁通过）'
+
 # ── 2. 装配 server 骨架 ──
 Step 2 '装配 server/：dist · db · scripts'
 RC @((Join-Path $BACKEND 'dist'), (Join-Path $SRV 'dist'), '/E')

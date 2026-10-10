@@ -9,10 +9,9 @@
 import { Body, Controller, Get, Module, Param, Post, Query, Req } from '@nestjs/common';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { BizException } from '../common/http';
-import { audit, q, r2, tx } from '../common/db';
+import { audit, q, r2, tx, seqLock, cx } from '../common/db';
+import { chooseCoupons, sumChosenCoupons } from './coupons.pure';
 import type { PoolClient } from 'pg';
-
-const cx = (c: PoolClient, sql: string, params: any[] = []) => c.query(sql, params).then(r => r.rows);
 
 export interface SaleLineLike { p: { id: number }; unitPrice: number; lineAmount: number; }
 
@@ -140,31 +139,8 @@ export async function applyCoupons(
     if (amt > 0 || mc.type === '次卡') scored.push({ mc, amount: amt });
   }
 
-  const byReq = (ids: number[]) => ids
-    .map(id => scored.find(x => Number(x.mc.id) === Number(id)))
-    .filter(Boolean) as { mc: any; amount: number }[];
-
-  let chosen: { mc: any; amount: number }[] = [];
-  if (mode === 'single') {
-    const pool = requestedMcIds?.length ? byReq(requestedMcIds) : scored;
-    const best = pool.sort((a, b) => b.amount - a.amount)[0];
-    if (best) chosen = [best];
-  } else if (mode === 'manual') {
-    const sel = byReq(requestedMcIds || []);
-    const nonStack = sel.filter(x => x.mc.stackable === false);
-    if (nonStack.length) {
-      const bestNon = nonStack.sort((a, b) => b.amount - a.amount)[0]; // 互斥券之间也只取最优一张
-      chosen = [bestNon];
-    } else {
-      chosen = sel; // 全部可叠加：直接累加
-    }
-  } else { // auto：系统自动组合最优
-    const nonStack = scored.filter(x => x.mc.stackable === false).sort((a, b) => b.amount - a.amount)[0];
-    const nonStackAmt = nonStack ? nonStack.amount : -1;
-    const stackables = scored.filter(x => x.mc.stackable !== false);
-    const stackSum = stackables.reduce((s, x) => s + x.amount, 0);
-    chosen = stackSum >= nonStackAmt ? stackables : (nonStack ? [nonStack] : []);
-  }
+  // Q-02 纯函数抽离：模式裁决与叠加封顶求和抽至 coupons.pure.ts（零依赖、表驱动单测覆盖，行为不变）
+  const chosen = chooseCoupons(scored, mode, requestedMcIds);
 
   // V5.0.15 QA-P0 修复：原来这条「所选券均不可用」的拦截只写在 manual 分支里，
   // 而 coupon.mode 默认可能是 single/auto —— 那两种模式下收银员明明勾了券、
@@ -175,7 +151,9 @@ export async function applyCoupons(
     throw new BizException(50042, '所选优惠券均不可用（门槛/范围不满足、已过期或叠加规则冲突）');
   }
 
-  const amount = r2(chosen.reduce((s, x) => s + x.amount, 0));
+  // L-05 修复（已抽至 sumChosenCoupons）：累计抵扣永不超过 (goodsAmount − promoAmount)，保证 payable ≥ 0。
+  // 例：两张 ¥60 满减券用于 ¥100 货 → 60 + 40 = 100，应付归零且可结账。
+  const amount = sumChosenCoupons(chosen, goodsAmount, promoAmount);
   const usedIds = chosen.map(x => Number(x.mc.id));
   const names = chosen.map(x => x.mc.name);
   return { amount, usedIds, names };
@@ -251,9 +229,10 @@ export class CouponsController {
       // V5.0.2 空大类码自动生成：类型前缀-日期-当日序号（满减MJ/折扣ZK/兑换DH/次卡CK），如 MJ-2026092701
       if (!cp.code) {
         const PFX = ({ '满减券': 'MJ', '折扣券': 'ZK', '兑换券': 'DH', '次卡': 'CK' } as Record<string, string>)[cp.type] || 'CP';
-        const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-        const seqRow = await cx(c, `SELECT count(*)+1 AS n FROM coupons WHERE store_id=$1 AND code LIKE $2`,
-          [user.storeId, `${PFX}-${ymd}%`]);
+        // L-16：券码日期段与单号口径一致，取服务器本地日（原 UTC 在本地 00:00-08:00 落昨日）
+        const ymd = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '');
+        // L-11：改用 doc_seq 原子发号（原按店 count(*)+1 并发撞码；全局计数仅产生跨店空号，唯一性不变）
+        const seqRow = await seqLock(c, 'coupons', 'code', `${PFX}-${ymd}%`);
         const auto = `${PFX}-${ymd}${String(Number(seqRow[0].n)).padStart(2, '0')}`;
         await cx(c, `UPDATE coupons SET code=$2 WHERE id=$1 AND code IS NULL`, [cp.id, auto]);
         cp.code = auto;

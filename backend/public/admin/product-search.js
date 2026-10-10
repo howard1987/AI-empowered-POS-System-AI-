@@ -37,13 +37,17 @@ export function attachProductSearch(input, { onPick, placeholder } = {}) {
     pop.classList.add('open');
   }
 
+  // V5.0.19i（F-08）：请求竞态守卫 —— 慢响应晚到不得覆盖新关键词的结果（输入连续变化时后端乱序返回）
+  let qSeq = 0;
   async function query(kw) {
+    const seq = ++qSeq;
     try {
       const d = await must(get(`/products?keyword=${encodeURIComponent(kw)}&size=20`));
+      if (seq !== qSeq) return;                     // 已有更新的查询在途/完成 → 丢弃本次过期结果
       items = d.items || d || [];
       active = items.length ? 0 : -1;
       draw();
-    } catch (e) { hide(); }
+    } catch (e) { if (seq === qSeq) hide(); }
   }
 
   function pick(p) {

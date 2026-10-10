@@ -135,6 +135,8 @@ body.side-collapsed #side { display: none !important; }
   background: var(--card); border: 1px solid var(--line);
   border-radius: var(--r-lg); box-shadow: var(--shadow);
   padding: 0; margin-bottom: 16px;
+  /* V5.0.18g 真圆角：卡片内直角表格/内容贴底会盖住卡片圆角（假圆角）——统一裁剪 */
+  overflow: hidden;
 }
 /* V5.0.2：卡片内容与边框的呼吸间距——直接子元素默认左右留白（表格宿主等自带内边距的容器不受影响） */
 .card > .bar, .card > .muted, .card > .grid, .card > .doc-tip, .card > .kpis {

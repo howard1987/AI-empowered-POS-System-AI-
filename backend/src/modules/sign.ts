@@ -11,6 +11,7 @@
 import { createHash, randomInt } from 'crypto';
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import * as path from 'path';
+import { cx as cxr } from '../common/db';   // V5.0.19i（Q-03）：事务查询统一委托 common/db 规范实现
 
 export interface SignResult {
   recordId: number;
@@ -52,7 +53,7 @@ function tplSql(bySupplier: boolean): string {
 
 /** 大额治理配置（5.6.8③）：阈值默认 5000 元；确认方式默认 现场补签 */
 async function getLargeCfg(c: any): Promise<{ threshold: number; mode: string }> {
-  const cx = (sql: string, p: any[] = []) => c.query(sql, p).then((r: any) => r.rows);
+  const cx = (sql: string, p: any[] = []) => cxr(c, sql, p);   // V5.0.19i（Q-03）：委托 common/db 规范实现
   let threshold = 5000, mode = '现场补签';
   const t = await cx(`SELECT value FROM system_settings WHERE setting_key='auth.sign_threshold'`);
   if (t.length && typeof t[0].value === 'number') threshold = Number(t[0].value);
@@ -65,7 +66,7 @@ export async function autoAttachSignature(
   c: any,
   o: AttachOpts,
 ): Promise<SignResult | LiveSignRequired | null> {
-  const cx = (sql: string, p: any[] = []) => c.query(sql, p).then((r: any) => r.rows);
+  const cx = (sql: string, p: any[] = []) => cxr(c, sql, p);   // V5.0.19i（Q-03）：委托 common/db 规范实现
   // 业务员=供应商业务员：无供应商（如报损/盘点）不自动关联，交由前端手机屏幕现场签名
   if (!o.supplierId) return null;
   const large = await getLargeCfg(c);
@@ -120,7 +121,7 @@ export async function attachSignature(
   c: any,
   o: AttachOpts & { personName: string; roleTitle?: string; image: string },
 ): Promise<SignResult> {
-  const cx = (sql: string, p: any[] = []) => c.query(sql, p).then((r: any) => r.rows);
+  const cx = (sql: string, p: any[] = []) => cxr(c, sql, p);   // V5.0.19i（Q-03）：委托 common/db 规范实现
   const imagePath = saveBase64Image(o.image);
   const docHash = createHash('sha256')
     .update(`biz:${o.bizType}:${o.bizId}:${o.summary}:${o.personName}`).digest('hex');
@@ -144,7 +145,7 @@ export async function confirmSignature(
   c: any,
   o: { bizType: string; bizId: number; code: string },
 ): Promise<{ ok: boolean; err?: string }> {
-  const cx = (sql: string, p: any[] = []) => c.query(sql, p).then((r: any) => r.rows);
+  const cx = (sql: string, p: any[] = []) => cxr(c, sql, p);   // V5.0.19i（Q-03）：委托 common/db 规范实现
   const recs = await cx(
     `SELECT * FROM signature_records WHERE biz_type=$1 AND biz_id=$2 ORDER BY id DESC LIMIT 1`, [o.bizType, o.bizId]);
   if (!recs.length) return { ok: false, err: '单据没有待确认的签字记录' };
@@ -182,7 +183,7 @@ export async function attachOperatorSignature(
   c: any,
   o: { storeId: number; bizType: string; bizId: number; summary: string; usedBy: number },
 ): Promise<number | null> {
-  const cx = (sql: string, p: any[]) => c.query(sql, p).then((r: any) => r.rows);
+  const cx = (sql: string, p: any[]) => cxr(c, sql, p);   // V5.0.19i（Q-03）：委托 common/db 规范实现
   const op = await cx(`SELECT name FROM employees WHERE id=$1`, [o.usedBy]);
   const operatorName = op.length ? String(op[0].name) : '';
   if (!operatorName) return null;
@@ -261,7 +262,7 @@ export async function mergeSamples(
        supplierId?: number | null; refEmployeeId?: number | null; collectedBy: number;
        replace?: boolean; personCat?: string | null },
 ): Promise<number> {
-  const cx = (sql: string, p: any[]) => c.query(sql, p).then((r: any) => r.rows);
+  const cx = (sql: string, p: any[]) => cxr(c, sql, p);   // V5.0.19i（Q-03）：委托 common/db 规范实现
   const name = normalizeName(o.personName);
   if (!name || !o.imagePaths.length) throw new Error('姓名与签字图片不能为空');
   const newCat = o.personCat || personCatOf(o.supplierId, o.refEmployeeId, o.roleTitle);

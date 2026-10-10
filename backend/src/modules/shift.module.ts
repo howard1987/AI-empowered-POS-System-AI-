@@ -143,11 +143,14 @@ class ShiftController {
     const reason = (body.reason || '').trim().slice(0, 200);
     if (Math.abs(diff) > tolerance && !reason)
       throw new BizException(50061, `差异 ¥${Math.abs(diff).toFixed(2)} 超过容差 ¥${tolerance.toFixed(2)}，必须填写差异原因`);
+    // L-13 修复：CAS 条件收口 —— 仅「进行中」可关班；并发/重复关班影响行数为 0 → 明确报错，
+    // 杜绝二次 close 覆盖首次钱箱应答（cash_counted/diff 被无声改写）。
     const closed = await q1<any>(
       `UPDATE shifts SET closed_at=now(), cash_total=$2, cash_counted=$3, diff_amount=$4,
                           order_count=$5, refund_count=$6, status='已交班', close_reason=$7
-        WHERE id=$1 RETURNING *`,
+        WHERE id=$1 AND status='进行中' RETURNING *`,
       [id, sum.cashboxTotal, counted, diff, sum.orderCount, sum.refundCount, reason || null]);
+    if (!closed) throw new BizException(50060, '班次不存在或已交班，请刷新后重试');
     await audit(user.storeId, user.sub, '交接班', 'shift.close', 'shift', id,
       { cashboxTotal: sum.cashboxTotal, cashCounted: counted, diff, reason: reason || null,
         orderCount: sum.orderCount, tolerance });

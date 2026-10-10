@@ -14,14 +14,20 @@
  *  4) 仅 ADMIN 或 sys.data.backup 权限；执行后写 audit_logs（初始化日志本身在清空后补写）。
  */
 import { Body, Controller, Get, Module, Post } from '@nestjs/common';
+import * as bcrypt from 'bcryptjs';
+import { Client } from 'pg';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { BizException } from '../common/http';
-import { q, tx, audit } from '../common/db';
+import { q, q1, tx, audit } from '../common/db';
+import { doBackup } from './admin.backup';
+import { logDangerousOp } from './reset.history';
 
 /** 永不清（系统骨架）——任何模式/参数都无法触达 */
 const KEEP_ALWAYS = [
   'stores', 'employees', 'roles', 'permission_points', 'role_permissions',
   'employee_roles', 'system_settings', 'ai_models',
+  // V5.0.19e：高危操作留痕表。必须永不清 —— 否则清库会顺手抹掉"自己这次清库"的证据。
+  'data_reset_history',
 ] as const;
 
 /** 业务数据（默认清空）：交易 / 库存单据 / 会员分红营销 / 供应商往来 / AI 数据 / 日志 */
@@ -137,10 +143,19 @@ export class AdminResetController {
    *  V4.25.2：clearKeep 允许把「默认保留」的骨架表白名单子集也一并清空（如二次开业清员工/角色）；
    *  安全面不变：客户端永远传不了表名，清单外无法触达。 */
   @Post('execute')
-  @RequirePerms('sys.data.backup')
-  async execute(@Body() b: { keep?: string[]; clearGroups?: string[]; mode?: string; clearDevices?: boolean; clearKeep?: string[]; confirm?: string },
+  // V5.0.19f：原为 sys.data.backup（备份权限就能清库，权限边界过宽）→ 改为独立高危权限点
+  @RequirePerms('sys.data.reset')
+  async execute(@Body() b: { keep?: string[]; clearGroups?: string[]; mode?: string; clearDevices?: boolean; clearKeep?: string[]; confirm?: string; password?: string; ackRows?: number },
                 @CurrentUser() user: AuthUser) {
+    // 保险机制 ①：确认文字（原有，保留）
     if (b.confirm !== '初始化') throw new BizException(40003, '确认文字不符：请输入「初始化」后再执行');
+    // 保险机制 ②：登录密码复核 —— 仅有 token 不够，必须是操作者本人在场再输一次密码。
+    // （事故教训：任何持有会话/被借用终端的人都能一键清空全库，缺少"人在现场"的强认证。）
+    if (!b.password) throw new BizException(40003, '清库需二次确认：请再次输入您的登录密码');
+    const me = await q1<any>(`SELECT password_hash FROM employees WHERE id=$1`, [user.sub]);
+    if (!me || !bcrypt.compareSync(String(b.password), me.password_hash)) {
+      throw new BizException(41002, '登录密码不正确，已取消清库', 401);
+    }
     // 保留组解析：keep 勾选（新）或 mode（旧，兼容）
     const validKeeps = Object.keys(KEEP_GROUPS);
     let keep: string[];
@@ -183,18 +198,63 @@ export class AdminResetController {
     const before = await countRows(final);
     const grandTotal = Object.values(before).reduce((s, n) => s + n, 0);
 
-    await tx(async c => {
-      await c.query(`TRUNCATE TABLE ${final.map(t => `"${t}"`).join(', ')} CASCADE`);
+    // 保险机制 ③：影响行数确认 —— 前端必须回传"用户刚在预览页看到的行数"，
+    // 与服务端此刻重新统计的一致才放行。防止在过期页面（数据已变）上误点确认，
+    // 也避免"以为清 10 行、实际清 2000 行"这类认知错位。
+    if (b.ackRows == null) {
+      throw new BizException(40003, '清库需确认影响范围：请先打开预览页核对将清空的行数');
+    }
+    if (Number(b.ackRows) !== grandTotal) {
+      throw new BizException(40003,
+        `影响范围已变化（页面显示 ${b.ackRows} 行，实际 ${grandTotal} 行），已取消清库，请刷新预览后重新确认`);
+    }
+
+    // V5.0.19e 加固①：清库前**强制**自动备份 —— 这是唯一可回滚凭据。
+    // 事故教训（2026-10-09）：1893 张单被清空后无备份可用，只能靠"当晚恰好有自动备份"才没彻底丢。
+    // 现在把"运气"变成"机制"：备份失败即拒绝清库，绝不允许在无备份状态下清空数据。
+    let backupName: string | null = null;
+    try {
+      backupName = doBackup().name;
+      console.log(`[清库] 已强制备份当前库 → ${backupName}（清空 ${final.length} 表 / ${grandTotal} 行）`);
+    } catch (e: any) {
+      throw new BizException(50000, `清库前自动备份失败，已取消清库（数据安全优先）：${e?.message || e}`);
+    }
+
+    // V5.0.19e 加固②：留痕**先行** —— 写不进 data_reset_history 就拒绝清库。
+    // 旧实现是"清完再补 audit"：一旦 audit_logs 也在清空清单里，留痕随数据一起蒸发 → 无据可查。
+    const logged = await logDangerousOp({
+      op: 'reset', storeId: user.storeId, employeeId: user.sub,
+      empNo: (user as any).empNo ?? null, empName: (user as any).name ?? null,
+      keep, clearGroups: clearGroupKeys, tables: final.length, rowsCleared: grandTotal,
+      backupName, detail: { mode: b.mode ?? 'keep', clearDevices: !!b.clearDevices, clearKeep, counts: before },
     });
-    // audit_logs 已被清空 → 事后补写本次初始化记录（永久留存的第一条日志）
+    if (!logged) {
+      throw new BizException(50000, '高危操作留痕写入失败，已取消清库（不允许"无据可查"的清空操作）');
+    }
+
+    // V5.0.19g：清库走**超户专用连接**执行 TRUNCATE（pos_app 已被剥夺 TRUNCATE，见迁移 197）。
+    // 这样"拿到应用连接"不再具备整表清空能力 —— 即便应用层被突破，也清不掉库。
+    // 超户串只在服务端进程内可见（server-up 注入 RESTORE_DATABASE_URL），不落前端、不进日志。
+    const superUrl = process.env.RESTORE_DATABASE_URL || process.env.DATABASE_URL;
+    if (!superUrl) throw new BizException(50000, '缺少超户连接配置，已取消清库');
+    const sc = new Client({ connectionString: superUrl });
+    await sc.connect();
+    try {
+      await sc.query(`TRUNCATE TABLE ${final.map(t => `"${t}"`).join(', ')} CASCADE`);
+    } finally {
+      try { await sc.end(); } catch { /* noop */ }
+    }
+    // audit_logs 可能已被本次清空 → 补写（真正的不可删留痕在 data_reset_history，此处只是顺带）。
+    // V5.0.19e：原实现无 catch，一旦补写失败会把异常抛给调用方，让人误以为"清库失败"而重复操作。
     await audit(user.storeId, user.sub, '系统', '系统初始化', 'system', null, {
       mode: b.mode ?? 'keep', keep, clearDevices: !!b.clearDevices, clearKeep, tables: final.length,
-      rowsCleared: grandTotal, by: `${user.empNo}(${user.name})`,
-    });
+      rowsCleared: grandTotal, by: `${user.empNo}(${user.name})`, backupName,
+    }).catch((e: any) => console.error('[清库] 审计补写失败（留痕已记入 data_reset_history，不受影响）：', e?.message || e));
     const keptLabels = keep.map(k => KEEP_GROUPS[k].label);
     return {
       ok: true, keep, keptGroups: keptLabels, clearKeep, tables: final.length,
       rowsCleared: grandTotal, detail: before,
+      backupName,   // V5.0.19e：回给前端，便于在 UI 上提示"本次清库已备份为 xxx，可从该备份恢复"
       notice: clearKeep.includes('employees') || clearKeep.includes('roles')
         ? '已按勾选清空勾选的账号/角色等骨架数据，系统回到出厂状态'
         : (keptLabels.length

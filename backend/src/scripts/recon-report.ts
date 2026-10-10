@@ -23,7 +23,12 @@ async function main() {
   const label = argOf('--label') || new Date().toISOString().slice(0, 16).replace('T', ' ');
   const outFile = argOf('--out');
 
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgres://postgres:password@localhost:5432/cashier' });
+  const DATABASE_URL = process.env.DATABASE_URL;
+  if (!DATABASE_URL) {
+    console.error('[recon-report] 致命：缺少 DATABASE_URL 环境变量，拒绝以弱口令默认值连接。请在 .env 配置 DATABASE_URL');
+    process.exit(1);
+  }
+  const pool = new Pool({ connectionString: DATABASE_URL });
   const q = (s: string, p: any[] = []) => pool.query(s, p).then(r => r.rows);
   const L: string[] = [];
 

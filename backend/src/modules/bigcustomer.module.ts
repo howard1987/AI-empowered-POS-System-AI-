@@ -88,12 +88,15 @@ class BigCustomerController {
     }
     else if (dto.shareScope !== undefined && dto.shareScope !== 'store')
       throw new BizException(40003, 'shareScope 须为 store / all / 门店id数组');
+    // V5.0.18g：账期（月）——0=现结，N=账款按 N 个月滚动结算
+    const term = dto.paymentTermMonths === undefined ? 0 : Math.round(Number(dto.paymentTermMonths));
+    if (!(Number.isInteger(term) && term >= 0 && term <= 36)) throw new BizException(40003, '账期须为 0~36 的整数（月），0=现结');
     const r = await q1(
-      `INSERT INTO big_customers (store_id, name, contact, phone, credit_limit, default_discount, status, share_scope)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING id`,
+      `INSERT INTO big_customers (store_id, name, contact, phone, credit_limit, default_discount, status, share_scope, payment_term_months)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9) RETURNING id`,
       [user.storeId, name, dto.contact ?? null, dto.phone ?? null,
-       dto.creditLimit === undefined ? 0 : Number(dto.creditLimit), discount, dto.status === 0 ? 0 : 1, scopeJson]);
-    await audit(user.storeId, user.sub, 'bigcustomer', 'create', 'big_customer', r.id, { name });
+       dto.creditLimit === undefined ? 0 : Number(dto.creditLimit), discount, dto.status === 0 ? 0 : 1, scopeJson, term]);
+    await audit(user.storeId, user.sub, 'bigcustomer', 'create', 'big_customer', r.id, { name, paymentTermMonths: term });
     return { id: r.id, name };
   }
 
@@ -121,12 +124,15 @@ class BigCustomerController {
     }
     const r = await q1(
       `UPDATE big_customers SET name=$3, contact=$4, phone=$5, credit_limit=$6, default_discount=$7,
-              status=$8${scopeUpd} WHERE id=$1 AND store_id=$2 RETURNING id`,
+              status=$8, payment_term_months=$9${scopeUpd} WHERE id=$1 AND store_id=$2 RETURNING id`,
       [id, user.storeId, name,
        dto.contact !== undefined ? dto.contact : cur.contact,
        dto.phone !== undefined ? dto.phone : cur.phone,
        dto.creditLimit !== undefined ? Number(dto.creditLimit) : Number(cur.credit_limit),
-       discount, dto.status !== undefined ? Number(dto.status) : Number(cur.status), ...scopeArgs]);
+       discount, dto.status !== undefined ? Number(dto.status) : Number(cur.status),
+       dto.paymentTermMonths !== undefined ? Math.max(0, Math.min(36, Math.round(Number(dto.paymentTermMonths) || 0)))
+                                              : Number(cur.payment_term_months ?? 0),
+       ...scopeArgs]);
     await audit(user.storeId, user.sub, 'bigcustomer', 'update', 'big_customer', id, { name });
     return { id: r.id };
   }
@@ -200,11 +206,11 @@ class BigCustomerController {
     return { upserted, removed };
   }
 
-  /** 应收总览（老板看板提醒）：全店大客户未收合计 + 超90天 + 高危客户 TOP */
+  /** 应收总览（经营看板提醒）：全店大客户未收合计 + 超90天 + 按账期逾期 + 高危客户 TOP */
   @Get('receivables-overview')
   async receivablesOverview() {
     const rows = await q(
-      `SELECT bc.id, bc.name, bc.credit_limit,
+      `SELECT bc.id, bc.name, bc.credit_limit, bc.payment_term_months,
               COALESCE((SELECT SUM(so.payable_amount) FROM sales_orders so
                          WHERE so.big_customer_id=bc.id AND so.channel='大客户团购' AND so.status IN ('已完成','部分退款')),0) AS receivable,
               COALESCE((SELECT SUM(sp.amount) FROM sale_payments sp
@@ -212,15 +218,16 @@ class BigCustomerController {
                         WHERE so.big_customer_id=bc.id AND so.channel='大客户团购' AND sp.channel<>'赊账'),0) AS paid_cash,
               COALESCE((SELECT SUM(bp.amount) FROM big_customer_payments bp WHERE bp.customer_id=bc.id),0) AS paid_collect
          FROM big_customers bc WHERE bc.status=1`);
-    let totalUnpaid = 0, unpaid90 = 0;
+    let totalUnpaid = 0, unpaid90 = 0, totalOverdue = 0;
     const perCust = [];
     // 决策③(A2a)：应收汇总与 90 天账龄一律整数分累加
-    let totalUnpaidC = 0, unpaid90C = 0;
+    let totalUnpaidC = 0, unpaid90C = 0, totalOverdueC = 0;
     for (const r of rows) {
       const unpaidC = Math.max(0, Math.round(Number(r.receivable) * 100) - Math.round(Number(r.paid_cash) * 100) - Math.round(Number(r.paid_collect) * 100));
       if (unpaidC <= 0) continue;
       totalUnpaidC += unpaidC;
       const unpaid = unpaidC / 100;
+      const termMonths = Number(r.payment_term_months ?? 0);
       // 超 90 天金额：与台账同口径（赊账单逐单冲抵后按 created_at 分段）
       const creditOrders = await q(
         `SELECT so.created_at, so.payable_amount,
@@ -230,21 +237,32 @@ class BigCustomerController {
           WHERE so.big_customer_id=$1 AND so.channel='大客户团购' AND so.status IN ('已完成','部分退款')
             AND EXISTS (SELECT 1 FROM sale_payments sp WHERE sp.order_id=so.id AND sp.channel='赊账')
           ORDER BY so.created_at`, [r.id]);
-      let remainC = unpaidC, o90C = 0;
+      let remainC = unpaidC, o90C = 0, odC = 0;
       const cutoff = Date.now() - 90 * 86400000;
+      // V5.0.18g：账期滚动结算——到期日 = 挂账日 + 账期（月）；超到期日未收 = 已逾期。
+      //   未设账期（0=现结口径）不参与逾期判定，仍按 90 天账龄展示。
+      const now = Date.now();
+      const isOverdue = (createdAt: string | Date) => {
+        if (termMonths <= 0) return false;
+        const d = new Date(createdAt);
+        d.setMonth(d.getMonth() + termMonths);
+        return d.getTime() < now;
+      };
       for (const o of creditOrders) {
         const orderUnpaidC = Math.round(Number(o.payable_amount) * 100) - Math.round(Number(o.paid_now) * 100);
         if (orderUnpaidC <= 0) continue;
         const matchedC = Math.min(orderUnpaidC, remainC);
         if (new Date(o.created_at).getTime() < cutoff) o90C += matchedC;
+        if (isOverdue(o.created_at)) odC += matchedC;
         remainC -= matchedC;
       }
-      unpaid90C += o90C;
-      totalUnpaid = totalUnpaidC / 100; unpaid90 = unpaid90C / 100; // 返回口径不变（元，两位小数）
-      perCust.push({ id: r.id, name: r.name, unpaid, over90: o90C / 100 });
+      unpaid90C += o90C; totalOverdueC += odC;
+      totalUnpaid = totalUnpaidC / 100; unpaid90 = unpaid90C / 100; totalOverdue = totalOverdueC / 100;
+      perCust.push({ id: r.id, name: r.name, unpaid, over90: o90C / 100,
+        termMonths, overdue: odC / 100 });
     }
     return {
-      totalUnpaid, unpaid90, unpaidCustomers: perCust.length,
+      totalUnpaid, unpaid90, totalOverdue, unpaidCustomers: perCust.length,
       top: perCust.sort((a, b) => b.unpaid - a.unpaid).slice(0, 5),
     };
   }
@@ -511,8 +529,7 @@ class BigCustomerController {
       // 单号 + 主单
       const d = new Date();
       const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-      await seqLock(c, 'sales_orders', 'order_no', `TD-${ymd}-%`);
-      const seq = await cx(c, `SELECT count(*)+1 AS n FROM sales_orders WHERE order_no LIKE $1`, [`TD-${ymd}-%`]);
+      const seq = await seqLock(c, 'sales_orders', 'order_no', `TD-${ymd}-%`);
       const orderNo = `TD-${ymd}-${String(seq[0].n).padStart(4, '0')}`;
       const order = await cx(c,
         `INSERT INTO sales_orders (store_id, order_no, channel, member_id, big_customer_id, cashier_id, status,

@@ -553,7 +553,8 @@ export class SyncController {
   @RequirePerms('hq.sync.view')
   @Get('consistency')
   async consistency() {
-    const yest = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    // L-16：昨日口径统一由 DB 会话时区（Asia/Shanghai）计算——原 JS UTC 推导在本地 00:00-08:00 间错位一天
+    const yest = (await q1<{ d: string }>(`SELECT (CURRENT_DATE - 1)::text AS d`))!.d;
     const hq = await q<any>(
       `SELECT store_id, COUNT(*) AS orders, COALESCE(SUM(payable_amount),0) AS amount
          FROM sales_orders WHERE created_at::date = $1::date GROUP BY store_id`, [yest]);
@@ -630,8 +631,8 @@ export class SyncReconJob implements OnModuleInit {
 
   /** 对昨日：门店上报 vs 总部实际；差异≠0 落 sync_recon_daily（同日重跑覆盖） */
   async run(): Promise<void> {
-    const yest = new Date(Date.now() - 86_400_000);
-    const yDate = yest.toISOString().slice(0, 10);
+    // L-16：与 consistency 同口径——昨日由 DB 会话时区计算（本地 00:00-08:00 不再错位）
+    const yDate = (await q1<{ d: string }>(`SELECT (CURRENT_DATE - 1)::text AS d`))!.d;
     const hq = await q<any>(
       `SELECT store_id, COUNT(*) AS orders, COALESCE(SUM(payable_amount),0) AS amount
          FROM sales_orders WHERE created_at::date = $1::date GROUP BY store_id`, [yDate]);

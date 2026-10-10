@@ -33,12 +33,16 @@ export class StorePriceService {
    * 批量载入门店覆盖价 → Map<productId, {sell_price, member_price}>
    * 覆盖行仅存「与基线不同」的门店，行数天然稀疏，全量拉取开销可忽略。
    */
-  async loadMap(storeId: number): Promise<Map<number, StorePriceRow>> {
+  async loadMap(storeId: number, client?: SqlClient): Promise<Map<number, StorePriceRow>> {
     const map = new Map<number, StorePriceRow>();
     const sid = Number(storeId) || 1;
     try {
-      const rows = await q(
-        `SELECT product_id, sell_price, member_price FROM product_store_prices WHERE store_id=$1`, [sid]);
+      // L-15 修复：结算事务内传事务客户端（cx 同连接），不再用全局 q() 脱事务+抢第二连接
+      const rows = client
+        ? (await client.query(
+            `SELECT product_id, sell_price, member_price FROM product_store_prices WHERE store_id=$1`, [sid])).rows
+        : await q(
+            `SELECT product_id, sell_price, member_price FROM product_store_prices WHERE store_id=$1`, [sid]);
       for (const r of rows) {
         map.set(Number(r.product_id), {
           sell_price: r.sell_price === null || r.sell_price === undefined ? NaN : Number(r.sell_price),
@@ -57,9 +61,9 @@ export class StorePriceService {
    * 调用点在「取到商品行之后、任何价格计算之前」——覆盖后下游一切逻辑自动同口径。
    * 只在门店确有覆盖值时改写，故对未设门店价的商品零影响。
    */
-  async overlay(storeId: number, rows: any[], opts: { aliases?: string[] } = {}): Promise<any[]> {
+  async overlay(storeId: number, rows: any[], opts: { aliases?: string[] } = {}, client?: SqlClient): Promise<any[]> {
     if (!Array.isArray(rows) || !rows.length) return rows;
-    const map = await this.loadMap(storeId);
+    const map = await this.loadMap(storeId, client);
     if (!map.size) return rows;
     const alias = opts.aliases || [];
     // 优先取显式的商品 id 列（product_id / productId），最后才回落到 id ——
@@ -84,9 +88,9 @@ export class StorePriceService {
     return rows;
   }
 
-  /** 便捷：单行覆盖（结算等逐行取价的场景） */
-  async overlayOne(storeId: number, row: any): Promise<any> {
-    const [r] = await this.overlay(storeId, [row]);
+  /** 便捷：单行覆盖（结算等逐行取价的场景；事务内传 client 走同连接） */
+  async overlayOne(storeId: number, row: any, client?: SqlClient): Promise<any> {
+    const [r] = await this.overlay(storeId, [row], {}, client);
     return r;
   }
 

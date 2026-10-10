@@ -446,7 +446,7 @@ export async function render(view) {
             <td>${esc(q.cert_type)}</td><td>${esc(q.title || '—')}</td><td>${esc(q.cert_no || '—')}</td>
             <td>${esc(q.issuer || '—')}</td><td>${esc(q.issue_date || '—')}</td><td>${esc(q.expire_date || '长期')}</td>
             <td>${st}</td>            <td class="muted" style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${esc(q.remark || '')}</td>
-            <td>${q.attachment_url ? `<a href="${location.origin}${q.attachment_url.startsWith('/') ? '/' + q.attachment_url : q.attachment_url}" target="_blank"><img src="${location.origin}${q.attachment_url.startsWith('/') ? '/' + q.attachment_url : q.attachment_url}" style="height:30px;border-radius:4px;vertical-align:middle"></a>` : '—'}</td>
+            <td>${q.attachment_url ? `<a href="${esc(location.origin + (q.attachment_url.startsWith('/') ? q.attachment_url : '/' + q.attachment_url))}" target="_blank" rel="noopener noreferrer"><img src="${esc(location.origin + (q.attachment_url.startsWith('/') ? q.attachment_url : '/' + q.attachment_url))}" style="height:30px;border-radius:4px;vertical-align:middle"></a>` : '—'}</td>
             <td style="white-space:nowrap"><button class="btn sm" data-qedit="${q.id}">编辑</button> <button class="btn sm" data-qdel="${q.id}" style="color:#c0392b;border-color:#e6b0aa">删除</button></td>
           </tr>`;
         }).join('')}</tbody></table>`;
@@ -499,7 +499,7 @@ export async function render(view) {
     const box = view.querySelector('#qnAttPrev');
     if (!qnAttUrl) { box.innerHTML = ''; return; }
     const u = location.origin + (qnAttUrl.startsWith('/') ? qnAttUrl : '/' + qnAttUrl);
-    box.innerHTML = `<img src="${u}" style="height:40px;border-radius:4px;vertical-align:middle"> <button class="btn sm" id="qnAttDel" type="button" style="color:#c0392b;border-color:#e6b0aa">移除</button>`;
+    box.innerHTML = `<img src="${esc(u)}" style="height:40px;border-radius:4px;vertical-align:middle"> <button class="btn sm" id="qnAttDel" type="button" style="color:#c0392b;border-color:#e6b0aa">移除</button>`;
     box.querySelector('#qnAttDel').onclick = () => { qnAttUrl = ''; renderQnAtt(); };
   }
 

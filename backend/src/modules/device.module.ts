@@ -12,6 +12,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { storePrice } from './store-price.service';   // V4.26.5 门店覆盖价（价签按门店）
 import { assertStoreAllowed } from '../common/scope'; // V4.28.6 跨店设备审批范围校验
+import { DEVICE_PROBE_TIMEOUT_MS } from '../common/timeouts';   // V5.0.19i（Q-07）
+import { sizeOf, pageOf } from '../common/paging';   // V5.0.19i（Q-07）
 import { genPairCode } from './auth.module';         // V5.0.11b 配对码生成（与校验同源，字母表一致）
 import * as os from 'os';
 
@@ -387,7 +389,7 @@ class PrintersController {
     const ok = await new Promise<boolean>(res => {
       const sock = createConnection(Number(m[2]), m[1]);
       const done = (v: boolean) => { try { sock.destroy(); } catch { /* noop */ } res(v); };
-      const t = setTimeout(() => done(false), 6000);
+      const t = setTimeout(() => done(false), DEVICE_PROBE_TIMEOUT_MS);
       sock.on('connect', () => sock.end(raw, () => { clearTimeout(t); done(true); }));
       sock.on('error', () => { clearTimeout(t); done(false); });
     });
@@ -569,7 +571,7 @@ class PrintersController {
     const ok = await new Promise<boolean>(res => {
       const sock = createConnection(Number(m[2]), m[1]);
       const done = (v: boolean) => { try { sock.destroy(); } catch { /* noop */ } res(v); };
-      const t = setTimeout(() => done(false), 6000);
+      const t = setTimeout(() => done(false), DEVICE_PROBE_TIMEOUT_MS);
       sock.on('connect', () => sock.end(bytes, () => { clearTimeout(t); done(true); }));
       sock.on('error', () => { clearTimeout(t); done(false); });
     });
@@ -633,7 +635,7 @@ class PrintersController {
       sent = await new Promise<boolean>(res => {
         const sock = createConnection(Number(m[2]), m[1]);
         const done = (v: boolean) => { try { sock.destroy(); } catch { /* noop */ } res(v); };
-        const t2 = setTimeout(() => done(false), 6000);
+        const t2 = setTimeout(() => done(false), DEVICE_PROBE_TIMEOUT_MS);
         sock.on('connect', () => sock.end(bytes, () => { clearTimeout(t2); done(true); }));
         sock.on('error', () => { clearTimeout(t2); done(false); });
       });
@@ -862,7 +864,7 @@ class PrintJobsController {
           AND ($5::text IS NULL OR j.biz_no ILIKE '%'||$5::text||'%' OR j.content ILIKE '%'||$5::text||'%')
         ORDER BY j.id DESC LIMIT $6`,
       [user!.storeId, bizType || null, jobType || null, status || null, (qk || '').trim() || null,
-       Math.min(Number(limit) || 50, 200)],
+       sizeOf(limit, 50, 200)],   // V5.0.19i（Q-07）：补 [1,max] 下限钳制（原版可传 0/负数）
     );
   }
 
@@ -930,7 +932,7 @@ class DeviceEventsController {
     @Query('page') page?: string, @Query('size') size?: string,
     @Query('deviceType') deviceType?: string, @Query('severity') severity?: string,
   ) {
-    const pg0 = Math.max(1, Number(page) || 1), sz = Math.min(Math.max(Number(size) || 10, 1), 50);
+    const pg0 = pageOf(page), sz = sizeOf(size, 10, 50);   // V5.0.19i（Q-07）
     const conds = ['e.store_id=$1']; const params: any[] = [user.storeId];
     if (deviceType) { params.push(deviceType); conds.push(`e.device_type=$${params.length}`); }
     if (severity) { params.push(severity); conds.push(`e.severity=$${params.length}`); }

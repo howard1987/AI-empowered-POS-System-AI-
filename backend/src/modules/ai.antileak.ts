@@ -8,10 +8,11 @@
  *   自助收银挂接：member-app self-checkout 内联校验（enabled 时），差异即 41001 暂停待店员复核；
  *                 force=true 可强推但必落 antileak_alerts 待复核（老板端可见）
  */
-import { Controller, Get, Post, Param, Body, Module, Injectable } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, Module, Injectable, Query } from '@nestjs/common';
 import { q, q1, audit } from '../common/db';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
+import { sizeOf, pageOf } from '../common/paging';   // V5.0.19i（Q-07）
 
 export interface VerifyItem { productId: number; qty: number; }
 export interface VerifyInput {
@@ -97,12 +98,17 @@ export class AntileakController {
   /** 告警列表（待复核优先） */
   @Get('alerts')
   @RequirePerms('sys.settings')
-  async alerts(@CurrentUser() u: AuthUser) {
+  async alerts(@CurrentUser() u: AuthUser, @Query('page') page?: string, @Query('size') size?: string) {
+    const pageSize = sizeOf(size, 50, 200);   // V5.0.19i（Q-07）
+    const pg = pageOf(page);
+    const tot = await q1(`SELECT count(*)::int AS n FROM antileak_alerts WHERE store_id=$1`, [u.storeId]);
     const rows = await q(
       `SELECT a.*, m.name AS member_name, m.phone AS member_phone
          FROM antileak_alerts a LEFT JOIN members m ON m.id=a.member_id
-        WHERE a.store_id=$1 ORDER BY (a.status='待复核') DESC, a.id DESC LIMIT 50`, [u.storeId]);
-    return { items: rows.map(r => ({ ...r, id: Number(r.id), detail: r.detail })) };
+        WHERE a.store_id=$1 ORDER BY (a.status='待复核') DESC, a.id DESC LIMIT $2 OFFSET $3`,
+      [u.storeId, pageSize, (pg - 1) * pageSize]);
+    return { items: rows.map(r => ({ ...r, id: Number(r.id), detail: r.detail })),
+             total: Number(tot?.n || 0), page: pg, size: pageSize };
   }
 
   /** 复核处置 */

@@ -4,6 +4,7 @@ import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { SettingsService } from './settings.module';
 import { couponStockAfter, logCoupon } from './coupons.module';   // V5.0 活动发券写入库流水
+import { apportionOrderDiscount } from './sales.pure';   // Q-02：整单优惠分摊纯函数（单测锁行为）
 
 /**
  * 促销引擎（T12，方案 5.4；V4.14.1 新增 定时打折/捆绑销售/消费后奖励/满件折扣）：
@@ -322,22 +323,8 @@ export async function applyPromotions(c: any, storeId: number, lines: any[], mem
     if (chosenOrder) {
       orderPromoId = chosenOrder.id;
       orderOff = chosenOrder.off;
-      // 按行小比分摊（尾差进最后一行有余额的行）
-      let allocated = 0;
-      let lastIdx = -1;
-      lines.forEach((ln, i) => { if (ln.lineAmount > 0) lastIdx = i; });
-      lines.forEach((ln, i) => {
-        let alloc: number;
-        if (i === lastIdx) {
-          alloc = r2(chosenOrder.off - allocated);
-        } else {
-          alloc = r2(chosenOrder.off * ln.lineAmount / base);
-          allocated = r2(allocated + alloc);
-        }
-        if (alloc > ln.lineAmount) alloc = ln.lineAmount;
-        ln.promoAlloc = alloc;
-        ln.lineAmount = r2(ln.lineAmount - alloc);
-      });
+      // 按行小比分摊（尾差进最后一行有余额的行）—— Q-02 抽至 sales.pure.apportionOrderDiscount（纯函数+单测）
+      apportionOrderDiscount(lines, chosenOrder.off, base);
     }
   }
 
@@ -365,6 +352,8 @@ export async function grantPostCheckoutRewards(c: any, storeId: number, memberId
       const cp = await cx(c, `SELECT id, name, valid_days, per_member, total_qty, status FROM coupons WHERE id=$1`, [Number(rules.couponTemplateId)]);
       if (!cp.length || String(cp[0].status) !== '启用') continue;
       // ── V4.28.9d 活动级数量约束：总发放次数 / 单会员参与次数（0=不限）──
+      // L-14 修复：活动级事务锁串行化「查量→发放」，堵 totalLimit/perMemberLimit 读后发竞态穿透
+      await cx(c, `SELECT pg_advisory_xact_lock(hashtext('promo-limit:' || $1))`, [pr.id]);
       const usage = await activityUsage((s, p) => cx(c, s, p), pr.id, rules, memberId);
       if (Number(rules.totalLimit) > 0 && usage.used >= Number(rules.totalLimit)) continue;
       if (Number(rules.perMemberLimit) > 0 && usage.mine >= Number(rules.perMemberLimit)) continue;
@@ -422,6 +411,8 @@ export async function grantPostCheckoutRewards(c: any, storeId: number, memberId
         }
         // V4.28.9d 活动级数量约束：总发放次数 / 单会员参与次数（本单已有赠品行=已参与，不再拦）
         if (haveQty === 0) {
+          // L-14 修复：同上——赠品出库路径的活动级事务锁
+          await cx(c, `SELECT pg_advisory_xact_lock(hashtext('promo-limit:' || $1))`, [pr.id]);
           const usage = await activityUsage((s, p) => cx(c, s, p), pr.id, rules, memberId);
           if (Number(rules.totalLimit) > 0 && usage.used >= Number(rules.totalLimit)) continue;
           if (Number(rules.perMemberLimit) > 0 && usage.mine >= Number(rules.perMemberLimit)) continue;

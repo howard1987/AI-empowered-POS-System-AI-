@@ -223,10 +223,11 @@ export async function render(view) {
 
   // 待办与预警（原型 #1：点条目直达处理）
   const alerts = [];
+  const ibPending = inbounds.items || inbounds || [];   // V5.0.18g：入库列表已改 {items,total} 分页结构
   if (expiry.length) alerts.push({ icon: '🟠', cls: 'o', to: 'stock',
     text: `${expiry.length} 个批次临期（${expiry.slice(0, 2).map(x => x.product_name).join(' · ')}）`, pill: '库存管理 ▸' });
-  if (inbounds.length) alerts.push({ icon: '🔵', cls: 'b', to: 'purchase',
-    text: `${inbounds.length} 张入库单待审核（${inbounds.slice(0, 2).map(x => x.inbound_no).join(' · ')}）`, pill: '入库审核 ▸' });
+  if (ibPending.length) alerts.push({ icon: '🔵', cls: 'b', to: 'purchase',
+    text: `${ibPending.length} 张入库单待审核（${ibPending.slice(0, 2).map(x => x.inbound_no).join(' · ')}）`, pill: '入库审核 ▸' });
   if (orders.length) alerts.push({ icon: '⚡', cls: 'b', to: 'po',
     text: `${orders.length} 张采购订单待审批（${orders.slice(0, 2).map(x => x.po_no).join(' · ')}）`, pill: '采购订单 ▸' });
   const pendRecon = recons.filter(r => r.status === '生成' || r.status === '待供应商确认');
@@ -243,11 +244,13 @@ export async function render(view) {
     const fmt = v => { const r = v / div; return r >= 100 ? r.toFixed(0) : r >= 10 ? r.toFixed(1) : r.toFixed(2); };
     const max = Math.max(...salesTrend.map(t => Number(t.salesTotal)), 0);
     const bars = salesTrend.map((t, i) => {
-      const h = max ? Math.max(Number(t.salesTotal) / max * 100, 2) : 2;
+      // V5.0.18g 修复：柱高改 px——原 height:xx% 的直接父容器（column flex）无定高（外层 align-items:flex-end 不拉伸），
+      // 百分比高度失效塌缩为 0 → 柱图不显示。110px 容器扣除上下文字约 38px，柱区最大 72px。
+      const h = max ? Math.max(Math.round(Number(t.salesTotal) / max * 72), 3) : 3;
       const last = i === salesTrend.length - 1;
       return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
         <small style="font-size:10px;color:var(--ink-3)">${fmt(Number(t.salesTotal))}</small>
-        <div style="width:100%;height:${h}%;background:linear-gradient(180deg,${last ? '#e8912d' : '#6aa36f'},${last ? '#d4791a' : '#4d8a54'});border-radius:4px 4px 0 0"></div>
+        <div style="width:100%;height:${h}px;background:linear-gradient(180deg,${last ? '#e8912d' : '#6aa36f'},${last ? '#d4791a' : '#4d8a54'});border-radius:4px 4px 0 0"></div>
         <small style="font-size:10px;${last ? 'font-weight:700;color:var(--ink-2)' : 'color:var(--ink-3)'}">${String(t.bizDate).slice(5, 10)}${last ? ' 今日' : ''}</small>
       </div>`;
     }).join('');
@@ -266,14 +269,56 @@ export async function render(view) {
     });
   }
 
-  // 分类销售占比（近 30 日 Top8）
+  // 分类销售占比（近 30 日 Top8）——V5.0.18g：导引线引出「名称+占比」标签（名称与数据合并，不再分居两端）
   const catTotal = d.categoryShare.reduce((s, x) => s + Number(x.revenue), 0);
-  const cats = d.categoryShare.slice(0, 8).map((x, i) => {
-    const pct = catTotal ? Number(x.revenue) / catTotal * 100 : 0;
-    return `<div style="display:flex;align-items:center;gap:6px;font-size:11.5px">
-      <span style="width:9px;height:9px;border-radius:2px;background:${CAT_COLORS[i % CAT_COLORS.length]}"></span>${esc(x.name)}
-      <b class="num" style="margin-left:auto">${pct.toFixed(1)}%</b></div>`;
-  }).join('');
+  const catSegs = (() => {
+    const total = catTotal || 1;
+    let prev = 0;
+    return d.categoryShare.filter(x => Number(x.revenue) > 0).slice(0, 8).map((x, i) => {
+      const start = prev;
+      const end = Math.min(prev + Number(x.revenue) / total * 100, 100);
+      prev = end;
+      return { name: String(x.name), pct: end - start, start, end, color: CAT_COLORS[i % CAT_COLORS.length] };
+    });
+  })();
+  // 生成 ECharts 风格环形图 SVG：donut 弧段（段间留白）+ 中心总额 + 外侧导引线标签（名称: 占比%）
+  function catDonutSvg() {
+    const CX = 165, CY = 105, R = 80, RI = 48, W = 330, H = 210, TAU = Math.PI * 2;
+    const pt = (r, a) => [CX + Math.cos(a) * r, CY + Math.sin(a) * r];
+    const segs = catSegs.map(s => {
+      const a0 = s.start / 100 * TAU - Math.PI / 2, a1 = s.end / 100 * TAU - Math.PI / 2;
+      return { ...s, a0, a1, mid: (a0 + a1) / 2, side: Math.cos((a0 + a1) / 2) >= 0 ? 1 : -1 };
+    });
+    const gapA = 0.016;   // 扇区间白缝（弧度）
+    const arcs = segs.map(s => {
+      let b0 = s.a0 + gapA, b1 = s.a1 - gapA;
+      if (b1 - b0 < 0.01) { const m = (s.a0 + s.a1) / 2; b0 = m - 0.005; b1 = m + 0.005; }   // 极小段保可见
+      const [ox0, oy0] = pt(R, b0), [ox1, oy1] = pt(R, b1), [ix1, iy1] = pt(RI, b1), [ix0, iy0] = pt(RI, b0);
+      const large = (b1 - b0) > Math.PI ? 1 : 0;
+      return `<path d="M${ox0.toFixed(2)},${oy0.toFixed(2)} A${R} ${R} 0 ${large} 1 ${ox1.toFixed(2)},${oy1.toFixed(2)}
+          L${ix1.toFixed(2)},${iy1.toFixed(2)} A${RI} ${RI} 0 ${large} 0 ${ix0.toFixed(2)},${iy0.toFixed(2)} Z"
+          fill="${s.color}" stroke="#fff" stroke-width="1"></path>`;
+    }).join('');
+    // 导引线：中角引出 径向段→水平段→「名称: 占比%」；同侧标签垂直防重叠（17px）
+    const L = segs.map(s => ({ ...s, ly: CY + Math.sin(s.mid) * (R + 14) }));
+    for (const side of [1, -1]) {
+      const g = L.filter(s => s.side === side).sort((a, b) => a.ly - b.ly);
+      for (let i = 1; i < g.length; i++) if (g[i].ly - g[i - 1].ly < 17) g[i].ly = g[i - 1].ly + 17;
+    }
+    const leaders = L.map(s => {
+      const [x0, y0] = pt(R + 2, s.mid);
+      const ex = CX + s.side * (R + 26);
+      return `<polyline points="${x0.toFixed(1)},${y0.toFixed(1)} ${CX + s.side * (R + 16)},${s.ly.toFixed(1)} ${ex},${s.ly.toFixed(1)}"
+          fill="none" stroke="${s.color}" stroke-width="1.2" opacity=".9"></polyline>
+        <text x="${ex + s.side * 4}" y="${(s.ly + 3.8).toFixed(1)}" fill="var(--ink-2)" font-size="11"
+          text-anchor="${s.side > 0 ? 'start' : 'end'}">${esc(s.name)}: <tspan fill="var(--ink)" font-weight="700">${s.pct.toFixed(2)}%</tspan></text>`;
+    }).join('');
+    return `<svg width="${W}" height="${H}" style="overflow:visible;font-size:11.5px">
+      ${arcs}${leaders}
+      <text x="${CX}" y="${CY - 2}" text-anchor="middle" font-size="15" font-weight="700" fill="var(--ink)">${money(catTotal)}</text>
+      <text x="${CX}" y="${CY + 15}" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">近30日销售额</text>
+    </svg>`;
+  }
 
   const body = view.querySelector('#homeBody');
   body.innerHTML = `
@@ -285,33 +330,25 @@ export async function render(view) {
       <div class="kpi"><div class="t">新增会员</div><div class="v">${c.newMembers} 人</div></div>
       <div class="kpi"><div class="t">分红计提 / 抵扣</div><div class="v" style="font-size:18px;color:var(--warn)">${money(c.dividendGiven)}</div><div class="t">抵扣 ${money(c.dividendUsed)}</div></div>
     </div>
-    <div class="grid" style="grid-template-columns:1.15fr .85fr;margin-top:14px">
-      <div class="grid" style="gap:16px;align-content:start">
+    <div style="display:grid;grid-template-columns:1.15fr .85fr;grid-template-rows:auto 1fr;gap:16px;margin-top:14px">
         <div class="card"><h3>近 7 日营业额
           <span id="salesUnitSeg" style="margin-left:auto;display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;font-weight:400">
             ${['元', '千元', '万元'].map(u => `<button data-u="${u}" style="border:none;padding:3px 10px;font-size:11.5px;cursor:pointer;color:var(--ink-3);background:transparent">${u}</button>`).join('')}
           </span></h3>
           <div id="sales7Box" style="padding:12px 16px 14px"></div>
         </div>
-        <div class="card"><h3>🥧 分类销售占比（近 30 日 Top8）</h3>
-          <div style="padding:12px 16px 14px;display:flex;gap:16px;align-items:center">
-            <div style="width:108px;height:108px;border-radius:50%;background:conic-gradient(${d.categoryShare.slice(0, 8).map((x, i) => {
-              const p = catTotal ? Number(x.revenue) / catTotal * 100 : 0;
-              return `${CAT_COLORS[i % CAT_COLORS.length]} ${p.toFixed(2)}%`;
-            }).join(',')});position:relative;flex:0 0 auto">
-              <div style="position:absolute;inset:24px;background:#fff;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center"><b style="font-size:13px">${money(c.salesTotal)}</b><small style="font-size:9.5px;color:var(--ink-3)">总销售额</small></div>
-            </div>
-            <div style="flex:1;display:grid;gap:5px">${cats || '<div class="empty">暂无数据</div>'}</div>
-          </div>
-        </div>
-      </div>
-      <div class="grid" style="gap:16px;align-content:start">
         <div class="card" id="wxTimeCard"><h3>🕒 今日概览 </h3>
           <div style="padding:10px 16px 12px">
             <div id="wxTime"></div>
             <div id="wxBody" class="muted" style="font-size:12.5px;margin-top:4px">天气加载中…</div>
           </div>
         </div>
+        <div class="card" style="display:flex;flex-direction:column;min-height:0"><h3>🥧 分类销售占比（近 30 日 Top8）</h3>
+          <div id="catPieBox" style="flex:1;min-height:250px;display:flex;align-items:center;justify-content:center">
+            ${catSegs.length ? catDonutSvg() : '<div class="empty">暂无数据</div>'}
+          </div>
+        </div>
+      <div style="display:flex;flex-direction:column;gap:16px;min-height:0">
         <div class="card"><h3>⏰ 待办与预警（${alerts.length}）</h3>
           <div style="padding:8px 16px 12px;display:grid;gap:7px;font-size:12.5px">
             ${alerts.length ? alerts.map(a => `
@@ -320,7 +357,7 @@ export async function render(view) {
               </div>`).join('') : '<div class="empty">暂无待办，一切正常 ✓</div>'}
           </div>
         </div>
-        <div class="card"><h3>🚀 快捷入口</h3>
+        <div class="card" style="flex:1"><h3>🚀 快捷入口</h3>
           <div style="padding:10px 16px 14px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
             ${QUICK.map(q => q.qr
               ? `<button class="btn" data-qr="1" data-qr-target="${q.qrTarget || 'pwa'}" style="padding:10px 4px;font-size:12px">${q.icon} ${q.title}</button>`
@@ -333,6 +370,45 @@ export async function render(view) {
       </div>
     </div>`;
   paintSales7((() => { try { return localStorage.getItem(SALES_UNIT_KEY) || '元'; } catch { return '元'; } })());
+
+  // V5.0.18g：分类占比饼图改用 ECharts 渲染（与参考版式一致：outer 标签 + smooth 导引线折角 + 圆角扇区 + 右侧图例）。
+  // vendor/echarts.min.js 本地 1MB 动态加载；加载失败时保留上方 SVG donut 兜底。
+  function renderCatPie() {
+    const box = view.querySelector('#catPieBox');
+    if (!box || !catSegs.length || !window.echarts) return;
+    const data = d.categoryShare.filter(x => Number(x.revenue) > 0).slice(0, 8)
+      .map(x => ({ name: String(x.name), value: Number(x.revenue) }));
+    const total = data.reduce((s, x) => s + x.value, 0) || 1;
+    echarts.init(box).setOption({
+      tooltip: { trigger: 'item', formatter: p => `${p.name}<br/>${money(p.value)}（${p.percent.toFixed(2)}%）` },
+      legend: {
+        orient: 'vertical', right: 6, top: 'middle', itemWidth: 12, itemHeight: 12, itemGap: 8,
+        textStyle: { fontSize: 11.5 },
+        formatter: name => { const it = data.find(x => x.name === name); return `${name}: ${(it ? it.value / total * 100 : 0).toFixed(2)}%`; },
+      },
+      title: {
+        text: money(catTotal), subtext: '近30日销售额', left: '36%', top: '48%', textAlign: 'center',
+        textStyle: { fontSize: 15, fontWeight: 700 }, subtextStyle: { fontSize: 10 },
+      },
+      series: [{
+        type: 'pie', radius: ['40%', '62%'], center: ['36%', '56%'],
+        label: { show: true, fontSize: 11.5, formatter: '{b}: {d}%', position: 'outer', alignTo: 'labelLine', bleedMargin: 5 },
+        labelLine: { show: true, length: 12, length2: 12, smooth: true, distanceToLabelLine: 3 },
+        avoidLabelOverlap: true,
+        data,
+        itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
+      }],
+    });
+  }
+  if (catSegs.length) {
+    if (window.echarts) renderCatPie();
+    else {
+      const s = document.createElement('script');
+      s.src = 'vendor/echarts.min.js';
+      s.onload = renderCatPie;
+      document.head.appendChild(s);
+    }
+  }
 
   // 扫码登录（快捷入口 → 弹窗出码；按入口分别指向店员端 PWA / 老板端）
   view.querySelectorAll('[data-qr]').forEach(b => b.onclick = () => showQrLoginModal(b.dataset.qrTarget === 'boss' ? 'boss' : 'pwa'));
@@ -347,7 +423,8 @@ export async function render(view) {
       url = String(row?.value ?? '').replace(/^"|"$/g, '');
     } catch { /* 设置读取失败走默认地址 */ }
     if (!url) url = API.base + '/member/';
-    window.open(url, '_blank');
+    // F-07：新窗口默认持有 opener（可通过 window.opener 反向操纵本页），强制 noopener/noreferrer
+    window.open(url, '_blank', 'noopener,noreferrer');
   });
 
   // ═══ V4.16.2 天气+时间小卡：时钟 15s 刷新（元素不在即自清）；天气复用 /brain/weather，失败静默 ═══

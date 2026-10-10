@@ -12,7 +12,7 @@ import { Body, Controller, Get, Post } from '@nestjs/common';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { PRODUCT_VISIBLE } from '../common/sql';   // V5.0.0 商品可售可见性
 import { BizException } from '../common/http';
-import { q, tx, audit } from '../common/db';
+import { q, tx, audit, seqLock, cx as cxr } from '../common/db';   // V5.0.19i（Q-03）
 
 async function getSetting(key: string, fb: any = null): Promise<any> {
   const r = await q(`SELECT value FROM system_settings WHERE setting_key=$1`, [key]);
@@ -138,7 +138,7 @@ export class AiPricingController {
     if (!items.length) throw new BizException(40003, '所选建议已失效（价格变化），请刷新后重试');
 
     return tx(async c => {
-      const cx = (sql: string, p: any[] = []) => c.query(sql, p).then((x: any) => x.rows);
+      const cx = (sql: string, p: any[] = []) => cxr(c, sql, p);   // V5.0.19i（Q-03）：委托 common/db 规范实现
       const prod = await cx(`SELECT id, name, sell_price FROM products WHERE id = ANY($1) FOR UPDATE`, [items.map(i => i.productId)]);
       const byId = new Map<number, any>(prod.map((r: any) => [Number(r.id), r] as [number, any]));
       const norm = items.filter(i => byId.has(i.productId)).filter(i => Number(byId.get(i.productId).sell_price) !== Number(i.newPrice));
@@ -146,7 +146,8 @@ export class AiPricingController {
       let diffTotal = 0;
       for (const it of norm) diffTotal += Number(it.newPrice) - Number(byId.get(it.productId).sell_price);
       const ym = new Date().toISOString().slice(0, 7).replace('-', '');
-      const seq = await cx(`SELECT count(*)+1 AS n FROM price_changes WHERE pc_no LIKE $1`, [`TJ-${ym}-%`]);
+      // L-11：改用 doc_seq 原子发号（原裸 count(*)+1 并发撞 pc_no 唯一约束）
+      const seq = await seqLock(c, 'price_changes', 'pc_no', `TJ-${ym}-%`);
       const no = `TJ-${ym}-${String(seq[0].n).padStart(3, '0')}`;
       const head = await cx(
         `INSERT INTO price_changes (pc_no, effective_date, remark, item_count, diff_total, created_by, price_type, status)

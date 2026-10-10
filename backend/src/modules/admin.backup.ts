@@ -18,7 +18,8 @@
  *  3) 备份目录固定为 cwd/backups，绝不接受客户端传入路径；
  *  4) pg_dump 连接串取自服务端 DATABASE_URL（与业务库一致），密码不落盘、不回显。
  */
-import { Controller, Get, Injectable, Module, OnModuleDestroy, OnModuleInit, Param, Post, Query, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, Injectable, Module, OnModuleDestroy, OnModuleInit, Param, Post, Query, Req, Res } from '@nestjs/common';
+import * as bcrypt from 'bcryptjs';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { BizException } from '../common/http';
 import { q1, audit } from '../common/db';
@@ -28,8 +29,13 @@ import { randomBytes } from 'crypto';
 import { spawnSync } from 'child_process';
 import { Transform } from 'stream';
 import { pipeline } from 'stream/promises';
+import { logDangerousOp } from './reset.history';
 
 const DATABASE_URL = process.env.DATABASE_URL;
+/** 恢复专用连接串：恢复需 DROP/重建全部对象（--clean），须用属主/超户角色；
+ *  默认回落 DATABASE_URL。部署时应将 RESTORE_DATABASE_URL 指向 postgres 超户或库属主，
+ *  否则 pos_app 等最小权限角色会因「must be owner」失败（缺陷 D3）。 */
+const RESTORE_DATABASE_URL = process.env.RESTORE_DATABASE_URL || DATABASE_URL;
 const BACKUP_ROOT = path.resolve(process.cwd(), 'backups');
 const RETAIN_DAYS = Math.max(1, Number(process.env.POS_BACKUP_RETAIN_DAYS || 14));
 const DEFAULT_HOUR = '02:30';
@@ -133,9 +139,26 @@ function dirSize(dir: string): number {
   return size;
 }
 
+/** 本地日期 YYYY-MM-DD（与备份目录名 tsName() 同用本地时区，避免跨日判断错位） */
+function localDay(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** 今日是否已有有效备份（用于防止每次服务重启都重复全量备份） */
+function hasBackupToday(): boolean {
+  try {
+    if (!fs.existsSync(BACKUP_ROOT)) return false;
+    const ymd = tsName().slice(0, 8);   // YYYYMMDD（本地时区，与目录名一致）
+    return fs.readdirSync(BACKUP_ROOT, { withFileTypes: true })
+      .some(e => e.isDirectory() && e.name.startsWith(ymd)
+              && fs.existsSync(path.join(BACKUP_ROOT, e.name, 'database.dump')));
+  } catch { return false; }
+}
+
 /** 执行一次备份（手动 / 自动共用）。返回相对路径与统计信息。
  *  nameOverride：供「恢复前保险快照」传入带唯一后缀的名字，避免与同一秒内的目标备份同名而被覆盖。 */
-function doBackup(nameOverride?: string): { name: string; file: string; size: number; tookMs: number; removed: number } {
+export function doBackup(nameOverride?: string): { name: string; file: string; size: number; tookMs: number; removed: number } {
   if (!DATABASE_URL) throw new BizException(50000, '缺少 DATABASE_URL 环境变量，无法执行备份');
   fs.mkdirSync(BACKUP_ROOT, { recursive: true });
   const dump = locatePgDump();
@@ -153,9 +176,11 @@ function doBackup(nameOverride?: string): { name: string; file: string; size: nu
   });
   if (r.status !== 0) {
     const err = String(r.stderr || r.stdout || r.error?.message || 'pg_dump 执行失败');
+    // S-09：stderr 详情（主机/端口/角色名等部署细节）只入服务端日志，不回显给调用方
+    console.error('[备份失败] pg_dump:', err.slice(-2000));
     // 失败时清理半成品，避免留下半截文件被列表误认
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* noop */ }
-    throw new BizException(50000, '数据库备份失败：' + err.slice(-500));
+    throw new BizException(50000, '数据库备份失败，请查看服务端日志（logs/error.log）');
   }
   const size = fs.statSync(file).size;
   const tookMs = Date.now() - t0;
@@ -224,11 +249,12 @@ function doRestore(name: string): { name: string; size: number; tookMs: number; 
   // ① 保险快照：先备份当前库，便于误恢复后找回。
   //    名字必须与目标备份不同 —— tsName() 只到秒，若与目标同名会直接把目标文件覆盖掉。
   const safe = doBackup(`${tsName()}_pre${Date.now().toString(36).slice(-4)}`);
-  // ② 恢复
+  // ② 恢复：必须用属主/超户连接（RESTORE_DATABASE_URL）执行 --clean（DROP 需属主权限）；
+  //   --no-privileges 已移除 → 备份中携带的 GRANT（如 pos_app 的访问授权）在恢复后重新生效，避免恢复后应用失权。
   const restore = locatePgRestore();
   const t0 = Date.now();
-  const r = spawnSync(restore, ['--clean', '--if-exists', '--no-owner', '--no-privileges',
-    '--format=custom', '--dbname', DATABASE_URL, f], {
+  const r = spawnSync(restore, ['--clean', '--if-exists', '--no-owner',
+    '--format=custom', '--dbname', RESTORE_DATABASE_URL, f], {
     cwd: process.cwd(),
     timeout: 10 * 60_000,
     maxBuffer: 200 * 1024 * 1024,
@@ -236,8 +262,10 @@ function doRestore(name: string): { name: string; size: number; tookMs: number; 
   });
   if (r.status !== 0) {
     const err = String(r.stderr || r.stdout || r.error?.message || 'pg_restore 执行失败');
+    // S-09：stderr 详情只入服务端日志；对客户端保留「可回退的保险快照名」这一行动信息
+    console.error('[恢复失败] pg_restore:', err.slice(-2000));
     // 恢复失败：保险快照已生成，提示用户可从 safe.name 回退
-    throw new BizException(50000, '数据库恢复失败（已自动备份当前库为 ' + safe.name + '）：' + err.slice(-500));
+    throw new BizException(50000, '数据库恢复失败（已自动备份当前库为 ' + safe.name + '，详情见服务端日志）');
   }
   const tookMs = Date.now() - t0;
   return { name, size: fs.statSync(f).size, tookMs, backupName: safe.name };
@@ -313,12 +341,31 @@ export class AdminBackupController {
 
   /** 从某个备份恢复整个数据库（危险操作；恢复前自动备份当前库作保险） */
   @Post('restore/:name')
-  @RequirePerms('sys.data.backup')
-  async restore(@Param('name') name: string, @CurrentUser() user: AuthUser) {
+  // V5.0.19f：原为 sys.data.backup（备份权限即可覆盖整个库）→ 改为独立高危权限点
+  @RequirePerms('sys.data.restore')
+  async restore(@Param('name') name: string, @Body() b: { password?: string; confirmName?: string },
+                @CurrentUser() user: AuthUser) {
     if (!/^[A-Za-z0-9_-]+$/.test(name || '')) throw new BizException(40003, '非法的备份名称');
+    // 保险机制 ①：登录密码复核（与清库同规格的强认证）
+    if (!b?.password) throw new BizException(40003, '恢复数据库需二次确认：请再次输入您的登录密码');
+    const me = await q1<any>(`SELECT password_hash FROM employees WHERE id=$1`, [user.sub]);
+    if (!me || !bcrypt.compareSync(String(b.password), me.password_hash)) {
+      throw new BizException(41002, '登录密码不正确，已取消恢复', 401);
+    }
+    // 保险机制 ②：备份名二次确认 —— 手打一遍备份名，杜绝在列表里误点相邻项
+    // （恢复是覆盖整个库，选错一个备份 = 把业务数据换成了另一个时间点的状态）
+    if (!b.confirmName || String(b.confirmName) !== name) {
+      throw new BizException(40003, `请正确输入要恢复的备份名称「${name}」以完成二次确认`);
+    }
     const r = doRestore(name);
     await audit(user.storeId, user.sub, '系统', '数据库恢复', 'restore', null,
       { name: r.name, size: r.size, tookMs: r.tookMs, backupName: r.backupName }).catch(() => { });
+    // V5.0.19e：恢复同样是不可逆高危操作 → 写入不可删的 data_reset_history（audit_logs 会被恢复覆盖，不能只靠它）
+    await logDangerousOp({
+      op: 'restore', storeId: user.storeId, employeeId: user.sub,
+      empNo: (user as any).empNo ?? null, empName: (user as any).name ?? null,
+      backupName: r.backupName, detail: { restoredFrom: r.name, size: r.size, tookMs: r.tookMs },
+    });
     return { ok: true, ...r };
   }
 }
@@ -330,8 +377,13 @@ export class BackupJob implements OnModuleInit, OnModuleDestroy {
   private lastDay = '';
 
   onModuleInit() {
+    // V5.0.19e 加固：lastDay 原本只存在内存里 —— 服务每重启一次就会再全量备份一次
+    // （2026-10-09 一晚因反复重启产生了 14 份备份，既浪费磁盘又提前触发保留期清理）。
+    // 启动时先看磁盘上今天是否已有备份，有则视为已跑过。
+    if (hasBackupToday()) this.lastDay = localDay();
     this.timer = setInterval(() => { this.tick().catch(() => { }); }, 60_000);
-    console.log(`[备份] 数据库自动备份定时器已启动（每日 ${DEFAULT_HOUR} 起，ops.backup_hour 可改；保留 ${RETAIN_DAYS} 天）`);
+    console.log(`[备份] 数据库自动备份定时器已启动（每日 ${DEFAULT_HOUR} 起，ops.backup_hour 可改；保留 ${RETAIN_DAYS} 天）` +
+      (this.lastDay ? `；今日已有备份，本次启动不再重复备份` : ''));
   }
 
   onModuleDestroy() { if (this.timer) clearInterval(this.timer); }
@@ -344,7 +396,7 @@ export class BackupJob implements OnModuleInit, OnModuleDestroy {
       const target = await getBackupHour();
       // 当天还没到设定时刻 → 不跑；已跑过 → 不重复（窗口 = 设定时刻起到当天结束，命中即锁当天）
       if (hhmm < target) return;
-      const day = now.toISOString().slice(0, 10);
+      const day = localDay();   // V5.0.19e：改用本地日（原 UTC 日与备份目录名的本地日不一致，跨时区会重复备份）
       if (this.lastDay === day) return;
       this.lastDay = day;
       const r = doBackup();

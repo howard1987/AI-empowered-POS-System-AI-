@@ -94,6 +94,61 @@
         "created_by": "YL",
         "order": 102,
         "enabled": true
+      },
+      {
+        "rule_id": "excl-binary-audio",
+        "action": "exclude",
+        "pattern": "*.wav",
+        "pattern_kind": "glob",
+        "reason": "TTS生成的音频片段为服务端产物，无代码语义，不入代码索引",
+        "source": "user",
+        "created_by": "codebuddy",
+        "order": 200,
+        "enabled": true
+      },
+      {
+        "rule_id": "excl-binary-image",
+        "action": "exclude",
+        "pattern": "*.png",
+        "pattern_kind": "glob",
+        "reason": "截图/图标/启动图为二进制资产，无代码语义",
+        "source": "user",
+        "created_by": "codebuddy",
+        "order": 201,
+        "enabled": true
+      },
+      {
+        "rule_id": "excl-binary-photo",
+        "action": "exclude",
+        "pattern": "*.jpg",
+        "pattern_kind": "glob",
+        "reason": "AI训练帧与截图为二进制资产，无代码语义",
+        "source": "user",
+        "created_by": "codebuddy",
+        "order": 202,
+        "enabled": true
+      },
+      {
+        "rule_id": "excl-binary-jar",
+        "action": "exclude",
+        "pattern": "*.jar",
+        "pattern_kind": "glob",
+        "reason": "gradle wrapper二进制，无代码语义",
+        "source": "user",
+        "created_by": "codebuddy",
+        "order": 203,
+        "enabled": true
+      },
+      {
+        "rule_id": "excl-binary-xlsx",
+        "action": "exclude",
+        "pattern": "*.xlsx",
+        "pattern_kind": "glob",
+        "reason": "测试用例/盘点表等办公文档，无代码语义",
+        "source": "user",
+        "created_by": "codebuddy",
+        "order": 204,
+        "enabled": true
       }
     ]
   },

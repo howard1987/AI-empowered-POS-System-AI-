@@ -320,7 +320,8 @@ export async function render(view) {
         if (evi) {
           clearInterval(timer);
           toast('📷 移动端已回传退货凭证');
-          const w = window.open(imgUrl(evi), '_blank');
+          // F-07：凭证图片为令牌签名 URL，禁止新窗口持有 opener（防 opener 反向取址）
+          const w = window.open(imgUrl(evi), '_blank', 'noopener,noreferrer');
           if (!w) loadList();
         }
       } catch { /* 忽略，继续轮询 */ }
@@ -330,10 +331,10 @@ export async function render(view) {
   /* ── 浏览 ── */
   view.querySelectorAll('#qStat .segbtn').forEach(b => b.onclick = () => {
     view.querySelectorAll('#qStat .segbtn').forEach(x => x.classList.remove('on'));
-    b.classList.add('on'); qStatus = b.dataset.v; loadList();
+    b.classList.add('on'); qStatus = b.dataset.v; loadList(1);
   });
-  view.querySelector('#qGo').onclick = loadList;
-  view.querySelector('#qRefresh').onclick = loadList;
+  view.querySelector('#qGo').onclick = () => loadList(1);
+  view.querySelector('#qRefresh').onclick = () => loadList(rePage);
   view.querySelector('#qBatch').onclick = async () => {
     const ids = [...view.querySelectorAll('[data-chk]:checked')].filter(c => c.dataset.auditable === '1').map(c => c.dataset.chk);
     if (!ids.length) return toast('请勾选待审核的退货单', false);
@@ -479,36 +480,33 @@ export async function render(view) {
     inp.click();
   }
 
-  /* ── 列表：取数+过滤后缓存 reRows，drawList 按 10 条/页本地分页重画 ── */
+  /* ── 列表：V5.0.18g 服务端分页（筛选下推 SQL，历史单据全可查） ── */
   let reRows = [];
   let rePage = 1;
-  async function loadList() {
-    const d = await must(get('/purchase/returns'));
-    const all = d.items || d || [];
-    // V4.9.7 供应商改输入匹配（名称模糊过滤）
+  let reTotal = 0;
+  async function loadList(page = 1) {
+    // V4.9.7 供应商改输入匹配（名称模糊过滤 → 传后端 supplierId）
     const supName = view.querySelector('#qSup').value.trim();
     const supHit = supName ? supList.find(x => x.name === supName)
       || supList.find(x => (x.name || '').includes(supName) || supName.includes(x.name || '')) : null;
     const sup = supHit ? String(supHit.id) : '';
     const from = view.querySelector('#qFrom').value, to = view.querySelector('#qTo').value;
-    reRows = all.filter(r => {
-      if (qStatus && r.status !== qStatus) return false;
-      if (sup && String(r.supplier_id ?? r.supplierId ?? '') !== sup) return false;
-      const day = (r.created_at || r.createdAt || '').slice(0, 10);
-      if (from && day < from) return false;
-      if (to && day > to) return false;
-      return true;
-    });
-    rePage = 1;
-    const sum = reRows.reduce((s, r) => s + (Number(r.total_amount) || 0), 0);
-    view.querySelector('#qSum').textContent = sum.toFixed(2);
-    view.querySelector('#qCount').textContent = `共 ${reRows.length} 张单据`;
+    const qs = new URLSearchParams({ page: String(page), size: '10' });
+    if (qStatus) qs.set('status', qStatus);
+    if (sup) qs.set('supplierId', sup);
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    const d = await must(get('/purchase/returns?' + qs.toString()));
+    reRows = d.items || [];
+    rePage = Number(d.page || page);
+    reTotal = Number(d.total ?? reRows.length);
+    view.querySelector('#qSum').textContent = Number(d.sumAmount ?? 0).toFixed(2);
+    view.querySelector('#qCount').textContent = `共 ${reTotal} 张单据`;
     drawList();
   }
   function drawList() {
     const rows = reRows;
-    const pg = paginate(rows, rePage, 10);
-    rePage = pg.page;
+    const pg = { page: rePage, slice: rows, pages: Math.max(Math.ceil(reTotal / 10), 1) };
     const DELETABLE = ['待审核', '已取消', '已作废'];
     // V4.26.2 合并为一列后，回显条件与勾选范围一致
     const allChecked = rows.length > 0 && rows.every(r => delSel.has(Number(r.id)));
@@ -552,7 +550,7 @@ export async function render(view) {
       })}
       ${pg.bar}`
       : '<div class="empty">无符合条件的退货单</div>';
-    bindPager(view.querySelector('#rList'), p => { rePage = p; drawList(); });
+    bindPager(view.querySelector('#rList'), p => { rePage = p; loadList(p); });
     // 双击行任意处打开明细；表头复选框全选/取消全选；凭证缩略图点击放大
     view.querySelectorAll('[data-ret]').forEach(tr => tr.ondblclick = () => openDetail(tr.dataset.ret));
     view.querySelectorAll('[data-eviimg]').forEach(img => img.onclick = (e) => {

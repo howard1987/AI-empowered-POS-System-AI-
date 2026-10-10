@@ -250,7 +250,8 @@ async function printDocsHiprint(hp, docs, copies, jobType, metas) {
       html += one;
     }
   }
-  const w = window.open('', '_blank', 'width=760,height=980');
+  // F-07：打印窗口无需 opener（noopener 不影响 w.document.write 写入）
+  const w = window.open('', '_blank', 'noopener,width=760,height=980');
   if (!w) { toast('浏览器拦截了打印窗口，请允许弹窗后重试', false); return false; }
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>单据打印</title>
     <style>${css}@page{margin:0}body{margin:0;-webkit-print-color-adjust:exact}</style></head>
@@ -329,7 +330,7 @@ const PRINT_CSS = `
 
 /** 打印窗口：一次打印多张单据（每单一页 × 份数）；成功后逐单留痕 */
 function openPrintWindow(docs) {
-  const w = window.open('', '_blank', 'width=700,height=920');
+  const w = window.open('', '_blank', 'noopener,width=700,height=920');   // F-07：同上
   if (!w) { toast('浏览器拦截了打印窗口，请允许弹窗后重试', false); return false; }
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>A5单据打印</title><style>${PRINT_CSS}</style></head><body>${docs.join('')}
     <script>window.onload=function(){setTimeout(function(){window.print()},150)}<\/script></body></html>`);

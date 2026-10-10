@@ -589,9 +589,11 @@ async function ensureAppRole() {
   fs.writeFileSync(pwFile, pw + '\n');
   await c.query(`GRANT CONNECT ON DATABASE postgres TO pos_app`);
   await c.query(`GRANT USAGE ON SCHEMA public TO pos_app`);
-  await c.query(`GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES ON ALL TABLES IN SCHEMA public TO pos_app`);
+  // V5.0.19g：不再授予 TRUNCATE —— 清库（/admin/reset/execute）改走超户专用连接，
+  // 于是"拿到应用连接"也不再具备整表清空能力（纵深防御：应用层被攻破仍清不掉库）。
+  await c.query(`GRANT SELECT,INSERT,UPDATE,DELETE,REFERENCES ON ALL TABLES IN SCHEMA public TO pos_app`);
   await c.query(`GRANT USAGE,SELECT,UPDATE ON ALL SEQUENCES IN SCHEMA public TO pos_app`);
-  await c.query(`ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES ON TABLES TO pos_app`);
+  await c.query(`ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE,REFERENCES ON TABLES TO pos_app`);
   await c.query(`ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT USAGE,SELECT,UPDATE ON SEQUENCES TO pos_app`);
   await c.end();
   return pw;
@@ -612,7 +614,31 @@ async function main() {
   initPaths();
 
   if (CMD === 'stop') {
-    console.log('▶ 停止内嵌 PostgreSQL …');
+    // V5.0.19h：原实现只停 PG —— 后端主/子进程要等 WinSW stoptimeout(30s) 超时后才被强杀，
+    // 表现为"每次都要在任务管理器手动结束 pos-server"。
+    // 现在：按 PID 文件 taskkill /T /F 整棵进程树（server-up up + dist/main.js），
+    //       连接全部断开后 PG 用 fast 模式秒关。服务停止从 30s+ 降到数秒。
+    console.log('▶ 停止后端进程树与内嵌 PostgreSQL …');
+    const pidFile = path.join(WORK, 'pos-server.pid');
+    let killed = false;
+    try {
+      const pid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+      if (pid && pid !== process.pid) {
+        const r = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+        killed = r.status === 0;
+        console.log(killed ? `✅ 已结束后端进程树（PID ${pid}）` : `ℹ 后端进程树（PID ${pid}）已不在运行`);
+      }
+    } catch { /* 无 pid 文件 → 回退按命令行匹配 */ }
+    if (!killed) {
+      // 回退：按 CommandLine 精确匹配（stop 进程自身的命令行不含 " up" 与 main.js，不会误杀自己）
+      try {
+        spawnSync('powershell.exe', ['-NoProfile', '-Command',
+          `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { ($_.CommandLine -like '*server-up.mjs* up*') -or ($_.CommandLine -like '*dist\\main.js*') } | ForEach-Object { taskkill /PID $($_.ProcessId) /T /F 2>$null }`],
+          { stdio: 'ignore' });
+        console.log('✅ 已按命令行匹配结束后端进程');
+      } catch { /* noop */ }
+    }
+    try { fs.rmSync(pidFile, { force: true }); } catch { /* noop */ }
     console.log(pgStop() ? '✅ 已停止' : 'ℹ 未运行或数据目录不存在');
     return;
   }
@@ -641,9 +667,11 @@ async function main() {
     await checkVersionGate();   // 校验内置 PG 版本与数据目录一致；不一致则提示升级（或自动迁移）
     await pgStart();
     env.DATABASE_URL = dbUrl();
+    env.RESTORE_DATABASE_URL = dbUrl();   // D3：恢复须用超户连接执行 --clean（业务进程切 pos_app 后恢复仍走超户）
   } else {
     if (!cfg.DATABASE_URL) throw new Error('PG_MODE=external 时必须在 .env 配置 DATABASE_URL');
     env.DATABASE_URL = cfg.DATABASE_URL;
+    env.RESTORE_DATABASE_URL = cfg.DATABASE_URL;   // D3：恢复用超户连接（业务进程若配 APP_DATABASE_URL 切 pos_app，恢复仍走超户）
     console.log('▶ 使用外部 PostgreSQL：' + String(cfg.DATABASE_URL).replace(/:[^:@/]+@/, ':****@'));
   }
 
@@ -694,6 +722,8 @@ async function main() {
   console.log('════════════════════════════════════════════════');
   console.log('');
 
+  // V5.0.19h：记录主进程 PID（stop 命令用它 taskkill /T /F 整树结束，免去 WinSW 30s 超时）
+  try { fs.writeFileSync(path.join(WORK, 'pos-server.pid'), String(process.pid) + '\n'); } catch { /* noop */ }
   const child = spawn(process.execPath, [path.join(ROOT, 'dist', 'main.js')], { cwd: ROOT, env, stdio: 'inherit', windowsHide: true });
   const bye = () => { try { child.kill(); } catch { /* noop */ } process.exit(0); };
   process.on('SIGINT', bye);

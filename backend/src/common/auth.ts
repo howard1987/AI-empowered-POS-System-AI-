@@ -77,7 +77,9 @@ async function empState(sub: number) {
   const hit = stateCache.get(sub);
   if (hit && hit.exp > now) return hit;
   const r = await q1<any>(`SELECT status, COALESCE(token_version,0) AS token_version FROM employees WHERE id=$1`, [sub]);
-  const v = { status: r?.status ?? '离职', tv: Number(r?.token_version ?? 0), exp: now + 60_000 };
+  // S-01：吊销判定缓存 TTL 由 60s 收紧到 10s。配合「停用/注销一律 token_version+1」，
+  // 即便多实例（PM2 cluster）无共享缓存，旧会话也最坏 10s 内被守卫拒绝（tv 校验天然跨进程）。
+  const v = { status: r?.status ?? '离职', tv: Number(r?.token_version ?? 0), exp: now + 10_000 };
   stateCache.set(sub, v);
   return v;
 }

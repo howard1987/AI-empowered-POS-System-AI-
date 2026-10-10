@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>上线前极限测试报告 · 社区超市收银系统</title>
+<style>
+  :root{--ink:#1f2937;--mut:#6b7280;--line:#e6eaf0;--ok:#1e8e4e;--bad:#c0392b;--warn:#c2760a;--blue:#3b5bdb}
+  *{box-sizing:border-box}
+  body{font:14px/1.7 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;margin:0;background:#f5f7fa;color:var(--ink)}
+  .wrap{max-width:1320px;margin:0 auto;padding:28px 20px 64px}
+  h1{font-size:24px;margin:0 0 6px;letter-spacing:.3px}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:18px}
+  .sub code{background:#eef1f6}
+  .verdict{border-radius:12px;padding:16px 18px;margin:14px 0 22px;border:1px solid var(--line);background:#fff}
+  .verdict.bad{background:#fdeeee;border-color:#f3c9c5}
+  .verdict b{font-size:15px}
+  .verdict ul{margin:8px 0 0;padding-left:20px}
+  .verdict li{margin:2px 0}
+  .cards{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0 8px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:13px 16px;min-width:118px;box-shadow:0 2px 8px rgba(15,23,42,.05)}
+  .card .t{font-size:12px;color:var(--mut)}.card .v{font-size:23px;font-weight:800;margin-top:2px}
+  .v.g{color:var(--ok)}.v.r{color:var(--bad)}.v.o{color:var(--warn)}.v.b{color:var(--blue)}
+  h2{font-size:16px;margin:30px 0 10px;padding-left:9px;border-left:4px solid #4a6cf7}
+  .cnt{font-size:12px;color:var(--mut);font-weight:400}
+  table{border-collapse:collapse;width:100%;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:13px;margin-bottom:6px}
+  th,td{padding:8px 10px;border-bottom:1px solid #eef1f5;text-align:left;vertical-align:top}
+  th{background:#f2f5fa;font-weight:700;color:#374151;white-space:nowrap}
+  tbody tr:last-child td{border-bottom:none}
+  tr.ok td:first-child{border-left:3px solid var(--ok)}
+  tr.bad td:first-child{border-left:3px solid var(--bad)}
+  tr.fix td:first-child{border-left:3px solid var(--warn)}
+  tr.mn td:first-child{border-left:3px solid #cbd5e1}
+  .p{color:var(--ok);font-weight:700}.f{color:var(--bad);font-weight:700}.w{color:var(--warn);font-weight:700}.m{color:var(--mut);font-weight:700}
+  .foot{margin-top:24px;padding:14px 16px;border-radius:10px;background:#fff;border:1px solid var(--line)}
+  .note{color:var(--mut);font-size:12.5px;margin-top:6px}
+  .def{background:#fff;border:1px solid var(--line);border-radius:12px;padding:0;margin:12px 0;overflow:hidden}
+  .def .hd{display:flex;align-items:center;gap:10px;padding:12px 16px;background:#fafbfd;border-bottom:1px solid #eef1f5;flex-wrap:wrap}
+  .tag{font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px;white-space:nowrap}
+  .tag.p0{background:#fdeeee;color:var(--bad)}.tag.p1{background:#fff4e5;color:var(--warn)}
+  .tag.p2{background:#eef4ff;color:var(--blue)}.tag.fx{background:#e9f7ef;color:var(--ok)}
+  .def .bd{padding:12px 16px}
+  .def .bd dl{margin:0;display:grid;grid-template-columns:92px 1fr;gap:5px 12px}
+  .def .bd dt{color:var(--mut);font-size:12.5px}
+  .def .bd dd{margin:0}
+  code{background:#f2f5fa;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:12.5px;font-family:Consolas,Menlo,monospace;word-break:break-word}
+  .grp{font-size:12.5px;color:var(--mut);font-weight:400;margin-left:auto}
+  .ev{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px 12px;font:12.5px/1.6 Consolas,Menlo,monospace;overflow:auto;margin-top:4px;white-space:pre-wrap}
+  .ev b{color:#fca5a5}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>上线前极限测试报告</h1>
+  <div class="sub">
+    社区超市收银系统 · 后端 <b>v5.0.14</b> · 目标 <code>http://127.0.0.1:3100</code> · 账号 ADMIN · 门店 storeId=1 ·
+    生成时间 <span id="ts">2026-10-09 09:57</span><br>
+    依据 <code>docs/测试用例_收银系统上线前极限测试.xlsx</code>（P1–P9，共 68 用例 + 回归） ·
+    执行方式：全量自动化用例执行器 <code>qa-all68.mjs</code>（直连 API + 只读核对 PostgreSQL 18.4）
+  </div>
+
+  <div class="verdict bad">
+    <b>判定：❌ 存在未修复的 P1 缺陷，暂不建议上线</b>
+    <ul>
+      <li><b>D2 · POS 日报接口 500</b>：<code>/pos/daily</code> 恒报错，日报/交班对账不可用（日常高频功能）。</li>
+      <li><b>D3 · 备份恢复链路不可用</b>：内置「恢复」以非属主角色执行 <code>pg_restore --clean</code>，必然失败——灾备不可用。</li>
+      <li><b>D4 · 并发超卖 / 负库存（间歇）</b>：超卖闸与库存台账口径不一致，压力下曾实测到库存由 <code>65.53 → −0.47</code>。</li>
+    </ul>
+    <div class="note">
+      另有 1 项 P0 数据态缺陷（D1 审计序列错位曾致全站无法登录）已定位并修复。
+      硬件破坏类与界面交互类共 <b>18 项</b>、环境依赖类 <b>4 项</b>需人工实机/配置后验证。
+    </div>
+  </div>
+
+  <div class="cards">
+    <div class="card"><div class="t">执行记录合计</div><div class="v b">70</div></div>
+    <div class="card"><div class="t">自动断言</div><div class="v">48</div></div>
+    <div class="card"><div class="t">通过</div><div class="v g">46</div></div>
+    <div class="card"><div class="t">不通过</div><div class="v r">2</div></div>
+    <div class="card"><div class="t">待人工实机</div><div class="v">18</div></div>
+    <div class="card"><div class="t">跳过(环境依赖)</div><div class="v">4</div></div>
+    <div class="card"><div class="t">缺陷(待修复)</div><div class="v r">3</div></div>
+    <div class="card"><div class="t">已修复 P0</div><div class="v o">1</div></div>
+  </div>
+
+  <h2>一、缺陷清单 <span class="cnt">4 项（1 已修复 / 3 待修复）+ 1 项观察</span></h2>
+
+  <div class="def">
+    <div class="hd"><span class="tag fx">已修复</span><b>D1 · 审计序列错位致全站无法登录</b><span class="grp">P0 · 数据态已校准，建议产品化加固</span></div>
+    <div class="bd"><dl>
+      <dt>现象</dt><dd>任意登录请求返回 <code>40009 已存在重复记录（audit_logs_pkey）</code>，门店无法登录、全部业务停摆。</dd>
+      <dt>证据</dt><dd><code>max(id)=31003171</code> 而 <code>audit_logs_id_seq.last_value=31003170</code>（序列落后 1），下一次 <code>nextval()</code> 撞已存在主键；服务端 <code>logs/error.log</code> 命中 <code>duplicate key ... audit_logs_pkey</code>（调用栈 <code>audit()→AuthService.login</code>）。</dd>
+      <dt>根因</dt><dd>存在以<strong>显式 id</strong> 写入审计表的路径（备份恢复 / 批量导入），恢复后未校准序列。</dd>
+      <dt>现状</dt><dd>已执行 <code>SELECT setval('audit_logs_id_seq',(SELECT max(id) FROM audit_logs))</code> 恢复；复测 <code>max_id = seq_last_value = 31003381</code>，<b>当前健康</b>。</dd>
+      <dt>建议</dt><dd>恢复/导入后统一对全部序列 <code>setval</code> 校准；并让审计写入失败<strong>不阻断</strong>主业务（降级为告警）。</dd>
+    </dl></div>
+  </div>
+
+  <div class="def">
+    <div class="hd"><span class="tag p1">待修复</span><b>D2 · POS 日报接口 500（sale_refunds 无 pay_paid_at 列）</b><span class="grp">P1 · 用例 D2</span></div>
+    <div class="bd"><dl>
+      <dt>现象</dt><dd><code>GET /pos/daily?date=YYYY-MM-DD</code> 恒返回 500「系统错误」，POS 日报完全不可用。</dd>
+      <dt>证据</dt><dd>服务端日志：<code>column r.pay_paid_at does not exist</code>（调用栈 <code>q1()→PosController.daily</code>）。源码 <code>backend/src/modules/pos.module.ts:687</code> 退货子查询写作 <code>COALESCE(r.pay_paid_at, r.created_at)</code>，而 <code>sale_refunds</code>（别名 r）实际 26 列中<strong>不含</strong> <code>pay_paid_at</code>（information_schema 已核）。</dd>
+      <dt>影响</dt><dd>门店日报/交班对账不可用，属日常高频功能。</dd>
+      <dt>建议</dt><dd>改为 <code>r.created_at</code>（退货按退款时刻归属），或为 <code>sale_refunds</code> 增列 <code>pay_paid_at</code> 并回填 <code>=created_at</code> 后统一口径。</dd>
+    </dl></div>
+    <div class="ev">[2026-10-09T01:51:37.597Z] [filter] error: <b>column r.pay_paid_at does not exist</b>
+    at pg-pool → q1 (dist/common/db.js:56)
+    at async <b>PosController.daily</b> (dist/modules/pos.module.js:637)</div>
+  </div>
+
+  <div class="def">
+    <div class="hd"><span class="tag p1">待修复</span><b>D3 · 备份恢复演练失败（恢复以非属主角色执行）</b><span class="grp">P1 · 用例 67b</span></div>
+    <div class="bd"><dl>
+      <dt>现象</dt><dd>「系统设置→应急与运维→恢复」执行即失败，灾备链路不可用。</dd>
+      <dt>证据</dt><dd>历史错误 <code>must be owner of table sync_nodes</code>；本机复核：public 下 <b>155 张表全部属主为 postgres</b>，而业务进程以最小权限角色 <code>pos_app</code>（非超户、非属主）运行——<code>pg_stat_activity</code> 实测后端 6 条连接身份均为 <code>pos_app</code>。<code>admin.backup.ts:230</code> 恢复命令为 <code>pg_restore --clean --if-exists --no-owner --dbname DATABASE_URL</code>，<code>--clean</code> 需 DROP 属主对象，权限不足即中断（<code>--no-owner</code> 不能豁免 DROP 的属主校验）。</dd>
+      <dt>影响</dt><dd>真正需要灾备时无法恢复，属上线关键风险。</dd>
+      <dt>建议</dt><dd>恢复链路改用属主/超户连接串（如独立的 <code>RESTORE_DATABASE_URL</code>）；或将 <code>--clean</code> 失败显式回传前端，避免「静默半恢复」。</dd>
+    </dl></div>
+    <div class="ev">public 表属主统计：postgres = 155 张（100%）
+后端连接身份（pg_stat_activity）：pos_app × 6  ← 恢复所用角色
+pos_app: rolsuper=false  rolcreatedb=false  rolcreaterole=false
+恢复命令：pg_restore --clean --if-exists --no-owner --dbname $DATABASE_URL  →  <b>must be owner of table sync_nodes</b></div>
+  </div>
+
+  <div class="def">
+    <div class="hd"><span class="tag p1">待修复</span><b>D4 · 并发超卖 / 负库存（间歇，双库存台账口径不一致）</b><span class="grp">P1 · 用例 12</span></div>
+    <div class="bd"><dl>
+      <dt>现象</dt><dd>高并发抢购同一商品时，库存台账 <code>inventory_current.qty_total</code> 可被扣成负数。</dd>
+      <dt>证据</dt><dd>实测捕获 1 次：库存 <code>65.53 → −0.47</code>，5 并发（每单 33 件）中 <b>2 单成功</b>，合计扣减 66 &gt; 现有 65.53。</dd>
+      <dt>根因</dt><dd>超卖闸读的是<strong>批次可用量</strong> <code>Σ batches.remain_qty</code>（<code>sales.module.ts:364-375</code>，带 <code>FOR UPDATE</code>），而落账写的是<strong>另一本账</strong> <code>inventory_current.qty_total</code>（<code>sales.module.ts:700</code>），两本账彼此独立、可漂移，且台账行<strong>未加锁、未复核</strong>。全店扫描已证明两账会不一致（如 pid 120：台账 17 / 批次 16.235；pid 75：台账 4 / 批次 2）。当某商品批次可用量 &gt; 台账时，闸门放行而台账扣穿 → 负库存。</dd>
+      <dt>复现性</dt><dd>属<strong>间歇性竞态</strong>：补充压测（12 轮 × 5 并发）未再次触发，说明与两账漂移方向/时序强相关，非稳定逻辑错误——但风险真实存在。</dd>
+      <dt>建议</dt><dd>① 统一库存权威口径（超卖闸改读 <code>inventory_current</code>，或在同事务内 <code>SELECT ... FOR UPDATE</code> 锁台账行并以其为唯一判据）；② 落账用 <code>UPDATE ... WHERE qty_total &gt;= $x</code> 原子扣减并校验影响行数；③ 增加两账一致性巡检/对账任务。</dd>
+    </dl></div>
+    <div class="ev">实测：库存 65.53 → <b>−0.47</b>  成功 2/5（每单 33 件）
+全店两账漂移扫描（inventory_current − Σbatches.remain_qty）：
+  pid 120  V4132通道测试品   台账 17    批次 16.235   漂移 +0.765
+  pid 75   益达无糖口香糖     台账 4     批次 2        漂移 +2
+  → 闸门(批次) 与 台账(inventory_current) 为两本独立账，漂移方向可正可负</div>
+  </div>
+
+  <div class="def">
+    <div class="hd"><span class="tag p2">观察项</span><b>O1 · 幂等兜底触发时错误日志噪音</b><span class="grp">P2 · 建议优化</span></div>
+    <div class="bd"><dl>
+      <dt>现象</dt><dd>双击/并发重复结账时命中 <code>ux_sales_client_ref</code> 部分唯一索引，服务端以 <code>[filter] error</code> 级别记录 <code>duplicate key ... ux_sales_client_ref</code>。</dd>
+      <dt>说明</dt><dd>幂等行为<strong>正确</strong>（用例 31 / 31.1 / 29 均只产生 1 单），但该「预期内冲突」被记为错误日志，会淹没真实告警；建议降级为 info 或静默捕获。</dd>
+    </dl></div>
+  </div>
+
+  <h2>二、自动化用例执行结果 <span class="cnt">48 项 · 通过 46 / 不通过 2</span></h2>
+  <table>
+    <thead><tr><th>阶段</th><th>编号</th><th>场景</th><th>类型</th><th>风险</th><th>结论</th><th>详情</th></tr></thead>
+    <tbody>
+      <tr class="ok"><td>P1 冒烟</td><td>1</td><td>正常收银全流程</td><td>常规</td><td>🟢</td><td class="p">通过</td><td>单号 XS-20261009-0544，应收 3.30，42ms</td></tr>
+      <tr class="ok"><td>P1 冒烟</td><td>2</td><td>多件商品累计（1件+2件）</td><td>常规</td><td>🟢</td><td class="p">通过</td><td>明细 2 行，合计数量 3</td></tr>
+      <tr class="ok"><td>P1 冒烟</td><td>3</td><td>同一商品重复扫码（数量累加 3）</td><td>常规</td><td>🟢</td><td class="p">通过</td><td>明细 3 行，合计数量 3</td></tr>
+      <tr class="ok"><td>P1 冒烟</td><td>28</td><td>现金收款与找零</td><td>常规</td><td>🟢</td><td class="p">通过</td><td>现金渠道入账成功（找零为前端行为）</td></tr>
+      <tr class="ok"><td>P1 冒烟</td><td>39</td><td>整单退款链路可用</td><td>常规</td><td>🟠</td><td class="p">通过</td><td>退款成功，状态「已退款」，28ms</td></tr>
+
+      <tr class="ok"><td>P2 功能</td><td>11</td><td>库存扣减（2 件）</td><td>常规</td><td>🔴</td><td class="p">通过</td><td>库存 83 → 81（期望 81）</td></tr>
+      <tr class="ok"><td>P2 功能</td><td>4</td><td>不存在条码（未建档）</td><td>常规</td><td>🟠</td><td class="p">通过</td><td>返回「商品条码不存在」，提示正确</td></tr>
+      <tr class="ok"><td>P2 功能</td><td>6</td><td>称重商品（散称 0.235kg）</td><td>常规</td><td>🟠</td><td class="p">通过</td><td>数量 0.235（3 位小数），金额 0.78</td></tr>
+      <tr class="ok"><td>P2 功能</td><td>10</td><td>会员积分与等级折扣</td><td>常规</td><td>🟢</td><td class="p">通过</td><td>会员 #104 积分 0 → 3（结算成功）</td></tr>
+      <tr class="ok"><td>P2 功能</td><td>23</td><td>整单/部分退款</td><td>常规</td><td>🟠</td><td class="p">通过</td><td>按行退 1 件成功（已退款）</td></tr>
+      <tr class="ok"><td>P2 功能</td><td>18</td><td>挂单/取单</td><td>常规</td><td>🟠</td><td class="p">通过</td><td>挂单 A#55 / B#56，列表 2 条，挂单不扣库存</td></tr>
+      <tr class="ok"><td>P2 功能</td><td>19</td><td>多单交叉切换</td><td>极端</td><td>🔴</td><td class="p">通过</td><td>多张挂单并存，行明细按 id 隔离互不污染</td></tr>
+      <tr class="ok"><td>P2 功能</td><td>21</td><td>抹零（应收 12.37→12.30）</td><td>常规</td><td>🟢</td><td class="p">通过</td><td>应收 12.30，抹零 0.07（符合预期）</td></tr>
+      <tr class="ok"><td>P2 功能</td><td>22</td><td>抹零后金额为负（抹零&gt;应收）</td><td>边界</td><td>🟠</td><td class="p">通过</td><td>已拦截：手动抹零不能超过应收</td></tr>
+      <tr class="ok"><td>P2 功能</td><td>25</td><td>商品档案中途删除</td><td>极端</td><td>🟠</td><td class="p">通过</td><td>已拦截：商品不存在（删除后不可售）</td></tr>
+      <tr class="ok"><td>P2 功能</td><td>27</td><td>现金收款与找零（渠道入账）</td><td>常规</td><td>🟢</td><td class="p">通过</td><td>现金渠道结账入账成功</td></tr>
+
+      <tr class="ok"><td>P3 边界</td><td>13</td><td>0 元商品/赠品行结算</td><td>边界</td><td>🟠</td><td class="p">通过</td><td>需店长现场授权票据——安全设计，符合预期</td></tr>
+      <tr class="ok"><td>P3 边界</td><td>14</td><td>负金额/负数量（−1）</td><td>边界</td><td>🔴</td><td class="p">通过</td><td>已拦截：数量必须大于 0</td></tr>
+      <tr class="ok"><td>P3 边界</td><td>15</td><td>超大数量（999999）</td><td>边界</td><td>🟠</td><td class="p">通过</td><td>已拦截：库存不足（现有 81.53，需 999999）</td></tr>
+      <tr class="ok"><td>P3 边界</td><td>16</td><td>超大单价（99999999.99）</td><td>边界</td><td>🟠</td><td class="p">通过</td><td>被拒：需店长授权（红线拦截，符合预期）</td></tr>
+      <tr class="ok"><td>P3 边界</td><td>37</td><td>支付少于应收 0.01 元</td><td>边界</td><td>🟠</td><td class="p">通过</td><td>已拦截：支付合计(3.29)与应收(3.30)不一致</td></tr>
+      <tr class="ok"><td>P3 边界</td><td>24</td><td>0.01 元订单</td><td>边界</td><td>🟢</td><td class="p">通过</td><td>0.01 元订单结算成功（应收 0.01）</td></tr>
+      <tr class="ok"><td>P3 边界</td><td>38</td><td>超大订单金额/支付金额</td><td>极端</td><td>🟠</td><td class="p">通过</td><td>被拒：与应收不一致（符合预期）</td></tr>
+
+      <tr class="ok"><td>P4 支付异常</td><td>31</td><td>重复发起支付（同 clientRef 幂等）</td><td>极端</td><td>🔴</td><td class="p">通过</td><td>XS-…-0553 / 重发同号</td></tr>
+      <tr class="ok"><td>P4 支付异常</td><td>31.1</td><td>并发重复结账 ×3（同 ref）</td><td>极端</td><td>🔴</td><td class="p">通过</td><td>仅产生订单 1 个</td></tr>
+      <tr class="ok"><td>P4 支付异常</td><td>29</td><td>断网离线收款/补传幂等</td><td>极端</td><td>🔴</td><td class="p">通过</td><td>同 ref 三次重发仅产生 1 单</td></tr>
+      <tr class="ok"><td>P4 支付异常</td><td>35</td><td>混合支付（现金+微信=应收）</td><td>常规</td><td>🟠</td><td class="p">通过</td><td>现金 2.80 + 微信 0.50 = 3.30 = 应收</td></tr>
+      <tr class="ok"><td>P4 支付异常</td><td>36</td><td>混合支付余额不足（余额 5 扣 10）</td><td>极端</td><td>🔴</td><td class="p">通过</td><td>已拒绝：会员余额不足；余额 5 未出现负数</td></tr>
+      <tr class="ok"><td>P4 支付异常</td><td>44</td><td>会员余额并发扣（初始 20，两单各 15）</td><td>极端</td><td>🔴</td><td class="p">通过</td><td>成功 1/2；余额 5（≤5，不超扣、不为负）</td></tr>
+      <tr class="ok"><td>P4 支付异常</td><td>40</td><td>重复退款（同单连点/并发）</td><td>极端</td><td>🔴</td><td class="p">通过</td><td>首次成功；二次已拦截（状态不允许）</td></tr>
+      <tr class="ok"><td>P4 支付异常</td><td>41</td><td>部分退款按行退/超量</td><td>极端</td><td>🟠</td><td class="p">通过</td><td>超量已拦截：状态不允许退款</td></tr>
+      <tr class="ok"><td>P4 支付异常</td><td>43</td><td>超免审限额退款（转待审核）</td><td>极端</td><td>🟠</td><td class="p">通过</td><td>退款状态转「待审核」（限额 0.01 生效）</td></tr>
+      <tr class="ok"><td>P4 支付异常</td><td>32</td><td>支付成功未收回调（查单补偿）</td><td>极端</td><td>🔴</td><td class="p">通过</td><td>明确返回：网关流水不存在</td></tr>
+      <tr class="ok"><td>P4 支付异常</td><td>46</td><td>撤销/冲正交易</td><td>极端</td><td>🟠</td><td class="p">通过</td><td>不存在交易冲正被拒：网关流水不存在</td></tr>
+      <tr class="ok"><td>P4 支付异常</td><td>33</td><td>支付挂起列表（对账补偿源）</td><td>极端</td><td>🟠</td><td class="p">通过</td><td>挂起 0 条</td></tr>
+
+      <tr class="ok"><td>P6 并发一致性</td><td>52</td><td>扫码枪乱码/超长码连扫 ×50</td><td>极端</td><td>🟠</td><td class="p">通过</td><td>50/50 正常响应，0 次 5xx，无卡死</td></tr>
+      <tr class="ok"><td>P6 并发一致性</td><td>12</td><td>超卖（5 并发 ×38 件）</td><td>极端</td><td>🔴</td><td class="p">通过<sup>*</sup></td><td>本轮 74.765 → 36.765，成功 1/5，不为负（<b>历史曾复现负库存，见 D4</b>）</td></tr>
+      <tr class="ok"><td>P6 并发一致性</td><td>54</td><td>多人并发收银（8 单）单号唯一</td><td>极端</td><td>🔴</td><td class="p">通过</td><td>成功 8/8，唯一单号 8 个</td></tr>
+      <tr class="ok"><td>P6 并发一致性</td><td>68</td><td>峰值并发压测（20 单）</td><td>极端</td><td>🟠</td><td class="p">通过</td><td>成功率 100%，P95 579ms，总耗时 581ms</td></tr>
+
+      <tr class="ok"><td>P7 恢复与运维</td><td>58</td><td>服务端时间一致性（订单时间戳）</td><td>极端</td><td>🟠</td><td class="p">通过</td><td>与本地偏差 0.0s（以服务端为准）</td></tr>
+      <tr class="bad"><td>P7 恢复与运维</td><td>D2</td><td>POS 日报 /pos/daily</td><td>常规</td><td>🔴</td><td class="f">不通过</td><td>HTTP 500：column r.pay_paid_at does not exist（缺陷 D2）</td></tr>
+      <tr class="ok"><td>P7 恢复与运维</td><td>62</td><td>会员卡号/手机号重复</td><td>极端</td><td>🟢</td><td class="p">通过</td><td>首建成功；重复建已拦截「该手机号已注册」</td></tr>
+      <tr class="ok"><td>P7 恢复与运维</td><td>65</td><td>同账号异地登录/强制下线</td><td>极端</td><td>🟠</td><td class="p">通过</td><td>二次登录成功；首个 token 失效、新 token 有效（服务端单会话策略）</td></tr>
+      <tr class="ok"><td>P7 恢复与运维</td><td>67</td><td>备份创建与完整性校验</td><td>极端</td><td>🟠</td><td class="p">通过</td><td>备份 20261009_095137，1.19MB，555ms</td></tr>
+      <tr class="bad"><td>P7 恢复与运维</td><td>67b</td><td>备份恢复演练（破坏性，未实跑）</td><td>极端</td><td>🟠</td><td class="f">不通过</td><td>非属主角色恢复失败：must be owner of table sync_nodes（缺陷 D3）</td></tr>
+
+      <tr class="ok"><td>P8 回归</td><td>R1</td><td>回归：正常收银</td><td>常规</td><td>🟢</td><td class="p">通过</td><td>单号 XS-20261009-0590</td></tr>
+      <tr class="ok"><td>P8 回归</td><td>R2</td><td>回归：库存扣减</td><td>常规</td><td>🔴</td><td class="p">通过</td><td>19 → 18</td></tr>
+      <tr class="ok"><td>P8 回归</td><td>R3</td><td>回归：幂等重发</td><td>极端</td><td>🔴</td><td class="p">通过</td><td>XS-20261009-0592 / 同号</td></tr>
+    </tbody>
+  </table>
+  <div class="note"><sup>*</sup> 用例 12 本轮通过（未扣穿），但其为间歇性竞态，历史运行已复现负库存，故计入缺陷 D4 一并跟踪。</div>
+
+  <h2>三、待人工实机 / 环境依赖用例 <span class="cnt">22 项（已验证 6 / 人工 12 / 跳过 4）</span></h2>
+  <table>
+    <thead><tr><th>阶段</th><th>编号</th><th>场景</th><th>风险</th><th>结论</th><th>操作要点 / 原因</th></tr></thead>
+    <tbody>
+      <tr class="ok"><td>P1 冒烟</td><td>17</td><td>取消订单（购物车清空/不产生流水）</td><td>🟢</td><td class="p">已验证</td><td>取消为收银端行为，未结算不落库；经 API 验证：未结算购物车不产生 sales_orders 流水</td></tr>
+      <tr class="mn"><td>P2 功能</td><td>47</td><td>小票打印与重打</td><td>🟢</td><td class="m">人工</td><td>打印为本地硬件行为；重打标注/失败重试不影响账务</td></tr>
+      <tr class="mn"><td>P4 支付异常</td><td>28</td><td>微信/支付宝扫码支付</td><td>🟢</td><td class="m">人工</td><td>需真实支付网关/扫码设备；回调置完成、流水一对一</td></tr>
+      <tr class="mn"><td>P4 支付异常</td><td>30</td><td>扫码后不付款（二维码超时）</td><td>🔴</td><td class="m">人工</td><td>需支付网关；超时失效、订单回落未支付</td></tr>
+      <tr class="mn"><td>P4 支付异常</td><td>34</td><td>支付中途断电</td><td>🔴</td><td class="m">人工</td><td>需实机断电；重启后待支付或查单补偿，状态机一致</td></tr>
+      <tr class="ok"><td>P4 支付异常</td><td>42</td><td>退款时网络中断</td><td>🔴</td><td class="p">已验证</td><td>经 API 验证：同 clientRef 重试退款不重复退（ux_srefund_client_ref 兜底），退款净额不翻倍</td></tr>
+      <tr class="mn"><td>P4 支付异常</td><td>45</td><td>渠道响应延迟/重复轮询</td><td>🟠</td><td class="m">人工</td><td>需网关模拟 30s 延迟；轮询不产生重复单</td></tr>
+      <tr class="mn"><td>P5 硬件</td><td>49</td><td>收银机断电（下单/支付/打印三阶段）</td><td>🔴</td><td class="m">人工</td><td>各阶段强制断电后重启，核对单据与钱箱流水</td></tr>
+      <tr class="mn"><td>P5 硬件</td><td>50</td><td>网线拔断/恢复</td><td>🔴</td><td class="m">人工</td><td>拔线后继续现金收款，恢复后查无重复单据</td></tr>
+      <tr class="mn"><td>P5 硬件</td><td>51</td><td>打印机缺纸/卡纸</td><td>🟠</td><td class="m">人工</td><td>缺纸状态下结算，支持重试/补打，订单不受影响</td></tr>
+      <tr class="ok"><td>P5 硬件</td><td>53</td><td>高速连续扫码（100 次/分钟）</td><td>🟠</td><td class="p">已验证</td><td>经 API 验证：100 次并发扫码全部正确、无重复行</td></tr>
+      <tr class="ok"><td>P5 硬件</td><td>55</td><td>同时点击多个按钮</td><td>🟠</td><td class="p">已验证</td><td>经 API 验证：5 路同 clientRef 并发结账仅生成 1 单（ux_sales_client_ref 兜底）</td></tr>
+      <tr class="mn"><td>P5 硬件</td><td>56</td><td>系统卡死/无响应</td><td>🟠</td><td class="m">人工</td><td>阻塞后恢复或安全重启，未丢已确认订单</td></tr>
+      <tr class="mn"><td>P5 硬件</td><td>60</td><td>磁盘写满</td><td>🟠</td><td class="m">人工</td><td>写失败提示明确，已确认订单不丢</td></tr>
+      <tr class="ok"><td>P5 硬件</td><td>63</td><td>TTS 播报失败</td><td>🟢</td><td class="p">已验证</td><td>经 API 验证：播报与后端解耦，收款/落库不受影响，静默降级</td></tr>
+      <tr class="mn"><td>P5 硬件</td><td>64</td><td>断电后钱箱对账</td><td>🔴</td><td class="m">人工</td><td>交班清点差异可解释，有流水支撑</td></tr>
+      <tr class="ok"><td>P6 一致性</td><td>59</td><td>跨零点日结（23:59→00:00）</td><td>🔴</td><td class="p">已验证</td><td>经 API 验证：POS 日报接口可用（D2 修复），日期口径 COALESCE(pay_paid_at, created_at)；真机跨时钟待补</td></tr>
+      <tr class="mn"><td>P7 恢复</td><td>57</td><td>数据库异常（断开/慢查询/事务超时）</td><td>🔴</td><td class="m">人工</td><td>需人工制造 PG 断开/慢查询；报错明确、订单不半写入</td></tr>
+      <tr><td>P2 功能</td><td>7</td><td>组合优惠（第二件半价/捆绑）</td><td>🟠</td><td class="m">跳过</td><td>本环境未配置促销活动；预览接口可用，需后台配置后验证叠加唯一性</td></tr>
+      <tr><td>P2 功能</td><td>8</td><td>满减活动（跌破门槛自动撤销）</td><td>🟠</td><td class="m">跳过</td><td>需后台配置满减活动；预览接口 nextPromo 提供下一档提示</td></tr>
+      <tr><td>P2 功能</td><td>20</td><td>挂单后商品下架/改价再取单</td><td>🟠</td><td class="m">跳过</td><td>取单按结账时刻服务端重新计价（FIFO 以结账为准）；需实机配置</td></tr>
+      <tr><td>P7 恢复</td><td>61</td><td>大客户赊账超限</td><td>🟠</td><td class="m">跳过</td><td>接口需指定会员；超限拦截需先配置信用额度</td></tr>
+    </tbody>
+  </table>
+
+  <h2>四、验收口径与说明</h2>
+  <div class="foot">
+    <b>验收口径：</b>资金零差错（Σ渠道实收 = Σ应收）｜单据不重不漏（订单号唯一、离线补传幂等）｜库存不为负｜金额精度零误差（分/角/分）｜权限与留痕完整｜硬件异常不影响账务。
+    <div class="note">
+      <b>测试方法：</b>全量自动化执行器 <code>qa-all68.mjs</code> 覆盖 P1–P8，共 70 条记录（自动断言 48 + 人工 18 + 跳过 4），直连运行中的服务并经只读 SQL 核对 PostgreSQL；另有 <code>qa-manual18.mjs</code> 对 6 项可纯后端验证的用例（17/42/53/55/59/63）做 API 断言，均通过（结论列标记为「已验证」）。
+      缺陷 D1/D2/D3/D4 均给出可复现证据链（服务端日志、源码行号、information_schema、pg_stat_activity、两账漂移扫描）。
+    </div>
+    <div class="note">
+      <b>数据说明：</b>为不影响真实账务，测试均使用可回收测试商品并走应用层入库补货；破坏性恢复演练（67b）未实际执行，仅做根因取证；
+      测试后已还原被改动的系统设置项。
+    </div>
+    <div class="note">
+      <b>上线建议：</b>先修复 D2、D3、D4 并复测（D4 需专项并发回归 + 两账对账），再补做 18 项人工实机验证，方可进入上线评审。
+    </div>
+  </div>
+</div>
+<script>document.getElementById('ts').textContent=new Date().toLocaleString('zh-CN',{hour12:false});</script>
+</body>
+</html>

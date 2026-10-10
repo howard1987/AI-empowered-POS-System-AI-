@@ -106,13 +106,39 @@ export class PayGatewayService {
     const outTradeNo = String(dto.outTradeNo || '').trim() ||
       `PG${Date.now()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
-    // 幂等：同 out_trade_no 已成功 → 原样返回（扫码枪重触发/网络重试不重复扣款）；他店占用 → 拒绝
-    const exist = await q1<any>(`SELECT * FROM pay_gateway_txns WHERE out_trade_no=$1`, [outTradeNo]);
-    if (exist && Number(exist.store_id) !== Number(user.storeId))
-      throw new BizException(40903, '商户单号已被其他门店占用，请勿复用流水号', 400);
-    if (exist && exist.status === 'SUCCESS') {
-      return { success: true, idempotent: true, channel: exist.channel, outTradeNo,
-               transactionId: exist.transaction_id, paidAmount: Number(exist.amount_cents) / 100 };
+    // 并发互斥（修复 L-03 双扣竞态）：先以 PENDING 占位，抢不到行说明同 out_trade_no 已在处理/已存在
+    // → 转查单/幂等，绝不重复触通道；原实现「先查后扣」在并发窗口会向通道发起两笔真实扣款。
+    const ins = await q(
+      `INSERT INTO pay_gateway_txns (store_id, out_trade_no, channel, auth_code_last4, amount_cents, status)
+       VALUES ($1,$2,$3,$4,$5,'PENDING') ON CONFLICT (out_trade_no) DO NOTHING RETURNING id`,
+      [user.storeId, outTradeNo, channel, code.slice(-4), amountCents]);
+    if (!ins.length) {
+      // 已被本请求并发/历史占用 → 查现状，不再触通道
+      const row = await q1<any>(`SELECT * FROM pay_gateway_txns WHERE out_trade_no=$1`, [outTradeNo]);
+      if (row) {
+        if (Number(row.store_id) !== Number(user.storeId))
+          throw new BizException(40903, '商户单号已被其他门店占用，请勿复用流水号', 400);
+        if (row.status === 'SUCCESS')
+          return { success: true, idempotent: true, channel: row.channel, outTradeNo,
+                   transactionId: row.transaction_id, paidAmount: Number(row.amount_cents) / 100 };
+        if (row.status === 'FAIL')
+          return { success: false, channel: row.channel, outTradeNo, failCode: row.fail_code, failMsg: row.fail_msg };
+        // PENDING：顾客支付确认中 → 走查单兜底（若有 query 能力）
+        if (adapter.query) {
+          const polled = await this.pollUserpaying(adapter, outTradeNo);
+          if (polled.state === 'SUCCESS') {
+            const srow = await this.markSuccess(outTradeNo, polled.transactionId!, user.storeId, channel, code.slice(-4), amountCents);
+            return { success: true, channel, outTradeNo, transactionId: srow.transaction_id,
+                     paidAmount: Number(srow.amount_cents) / 100, userpayingResolved: true };
+          }
+          if (polled.state === 'FAIL') {
+            await this.markFail(outTradeNo, polled.failCode ?? 'PAYERROR', polled.failMsg ?? '顾客未完成支付');
+            return { success: false, channel, outTradeNo, failCode: polled.failCode ?? 'PAYERROR', failMsg: polled.failMsg ?? '顾客未完成支付' };
+          }
+        }
+        return { success: false, pending: true, channel, outTradeNo, failCode: 'USERPAYING',
+                 failMsg: '顾客支付确认中…请勿重复扫码；稍后可点「查单」确认结果' };
+      }
     }
 
     const r = await adapter.micropay({ outTradeNo, authCode: code, amountCents, description: '门店扫码收款' });

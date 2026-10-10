@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>超市收银系统 · 源码审查报告 v5.0.14 · 2026-10-09</title>
+<style>
+:root{
+  --seed-bg:#f4f6f9; --seed-fg:#1c2733; --seed-surface:#ffffff; --seed-primary:#1f4e79;
+  --seed-accent:#0e7a5f; --seed-radius:10px;
+  --c-p0:#b3261e; --c-p1:#c96a00; --c-p2:#1a63a8; --c-p3:#5c6b73; --c-ok:#0e7a5f;
+  --fg:var(--seed-fg); --fg-muted:color-mix(in srgb, var(--seed-fg) 62%, transparent);
+  --fg-faint:color-mix(in srgb, var(--seed-fg) 42%, transparent);
+  --bg:var(--seed-bg); --surface:var(--seed-surface);
+  --line:color-mix(in srgb, var(--seed-fg) 12%, transparent);
+  --line-strong:color-mix(in srgb, var(--seed-fg) 22%, transparent);
+  --tint:color-mix(in srgb, var(--seed-primary) 6%, var(--surface));
+  --code-bg:color-mix(in srgb, var(--seed-fg) 94%, #9fd0ff);
+  --code-fg:#e8f0f6;
+  --radius:var(--seed-radius);
+  --mono:"JetBrains Mono","Cascadia Code",Consolas,"Courier New",monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:15px/1.75 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;}
+code,kbd{font-family:var(--mono);font-size:.86em}
+a{color:var(--seed-primary)}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+
+/* ── header ─────────────────────────── */
+header.report-head{background:linear-gradient(160deg, color-mix(in srgb,var(--seed-primary) 92%, #000) 0%, var(--seed-primary) 62%, color-mix(in srgb,var(--seed-primary) 70%, var(--seed-accent)) 100%);color:#f2f6fa;padding:44px 0 108px}
+.head-meta{display:flex;flex-wrap:wrap;gap:8px 22px;font-size:13px;opacity:.9;margin-bottom:14px}
+.head-meta b{font-weight:600}
+h1.title{margin:0 0 10px;font-size:31px;line-height:1.3;letter-spacing:.5px;font-weight:700}
+.subtitle{font-size:15.5px;opacity:.92;max-width:780px;margin:0 0 22px}
+.head-badges{display:flex;flex-wrap:wrap;gap:10px}
+.hb{background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.28);border-radius:999px;padding:4px 14px;font-size:12.5px}
+.grade-float{position:absolute;right:0;top:36px;text-align:center;background:var(--surface);color:var(--fg);border-radius:14px;padding:14px 22px;box-shadow:0 8px 28px rgba(16,36,56,.18)}
+.grade-float .g{font-size:46px;font-weight:800;line-height:1;color:var(--seed-primary)}
+.grade-float .gl{font-size:12px;color:var(--fg-muted);margin-top:4px}
+.head-inner{position:relative}
+
+/* ── summary cards ─────────────────── */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:-64px 0 26px;position:relative;z-index:2}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;box-shadow:0 3px 14px rgba(28,45,66,.06)}
+.card .n{font-size:30px;font-weight:800;line-height:1.15}
+.card .l{font-size:12.5px;color:var(--fg-muted)}
+.card.p0 .n{color:var(--c-p0)} .card.p1 .n{color:var(--c-p1)} .card.p2 .n{color:var(--c-p2)} .card.p3 .n{color:var(--c-p3)}
+.card.tot .n{color:var(--seed-primary)}
+
+main{padding:8px 0 60px}
+section{margin:44px 0}
+.sec-head{display:flex;align-items:baseline;gap:12px;border-bottom:2px solid color-mix(in srgb,var(--seed-primary) 35%,var(--line));padding-bottom:8px;margin-bottom:18px}
+.sec-head h2{margin:0;font-size:21px;letter-spacing:.3px}
+.sec-head .sec-note{font-size:12.5px;color:var(--fg-faint)}
+h3{font-size:16.5px;margin:26px 0 10px}
+
+nav.toc{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 20px;font-size:13.5px;display:flex;flex-wrap:wrap;gap:6px 20px}
+nav.toc a{text-decoration:none;color:var(--fg-muted);padding:2px 0}
+nav.toc a:hover{color:var(--seed-primary)}
+
+/* ── chips & badges ─────────────────── */
+.chip{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.6px;border-radius:5px;padding:2px 8px;color:#fff;vertical-align:1px;white-space:nowrap}
+.chip.p0{background:var(--c-p0)} .chip.p1{background:var(--c-p1)} .chip.p2{background:var(--c-p2)} .chip.p3{background:var(--c-p3)}
+.chip.ok{background:var(--c-ok)}
+.chip.ghost{background:transparent;color:var(--fg-muted);border:1px solid var(--line-strong);font-weight:600}
+.vtag{font-size:11px;color:var(--c-ok);border:1px dashed color-mix(in srgb,var(--c-ok) 55%,transparent);border-radius:5px;padding:1px 7px;white-space:nowrap}
+.vtag.stat{color:var(--fg-faint);border-color:var(--line-strong)}
+
+/* ── finding cards ──────────────────── */
+article.finding{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--line-strong);border-radius:var(--radius);padding:16px 20px 14px;margin:14px 0}
+article.finding.lv-p0{border-left-color:var(--c-p0)}
+article.finding.lv-p1{border-left-color:var(--c-p1)}
+article.finding.lv-p2{border-left-color:var(--c-p2)}
+article.finding.lv-p3{border-left-color:var(--c-p3)}
+.f-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:6px}
+.f-id{font-family:var(--mono);font-size:12px;color:var(--fg-faint);font-weight:700}
+.f-title{font-size:15.5px;font-weight:700;margin:0}
+.f-loc{font-family:var(--mono);font-size:12px;color:var(--seed-primary);background:var(--tint);border:1px solid var(--line);border-radius:6px;padding:2px 8px;display:inline-block;margin:2px 0}
+.f-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 22px;margin-top:8px}
+.f-grid>div{min-width:0}
+.f-k{font-size:11.5px;font-weight:700;color:var(--fg-faint);letter-spacing:1px;margin-bottom:2px}
+.f-b{font-size:13.8px}
+pre.code{background:var(--code-bg);color:var(--code-fg);border-radius:8px;padding:11px 14px;overflow-x:auto;font-family:var(--mono);font-size:12.2px;line-height:1.6;margin:8px 0 4px}
+pre.code .cm{color:#8fa3b8} pre.code .hl{color:#ffb3ab;font-weight:600} pre.code .fix{color:#8fe3b8}
+.fix-box{background:color-mix(in srgb,var(--c-ok) 7%,var(--surface));border:1px solid color-mix(in srgb,var(--c-ok) 30%,transparent);border-radius:8px;padding:9px 13px;font-size:13.5px;margin-top:8px}
+.fix-box b{color:color-mix(in srgb,var(--c-ok) 80%,#000)}
+
+/* ── tables ─────────────────────────── */
+table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;font-size:13.4px}
+th{background:var(--tint);text-align:left;font-size:12px;letter-spacing:.8px;color:var(--fg-muted);padding:9px 12px;border-bottom:1px solid var(--line-strong)}
+td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.loc,td .loc{font-family:var(--mono);font-size:12px;color:var(--seed-primary);white-space:nowrap}
+td.c-n{text-align:center;font-weight:700}
+table.compact td{padding:7px 10px}
+
+/* ── dashboard-ish blocks ───────────── */
+.two-col{display:grid;grid-template-columns:minmax(280px,360px) 1fr;gap:22px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px}
+.panel h4{margin:0 0 10px;font-size:13px;letter-spacing:1px;color:var(--fg-muted)}
+.bar-row{display:grid;grid-template-columns:150px 1fr 44px;align-items:center;gap:10px;font-size:13px;margin:7px 0}
+.bar{height:10px;border-radius:5px;background:color-mix(in srgb,var(--seed-fg) 7%,transparent);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:5px}
+.grade-table td:first-child{font-weight:600}
+.gbar{height:8px;border-radius:4px;background:color-mix(in srgb,var(--seed-fg) 7%,transparent);min-width:110px}
+.gbar i{display:block;height:100%;border-radius:4px;background:var(--seed-primary)}
+.donut-wrap{display:flex;align-items:center;gap:18px}
+.legend{font-size:13px;line-height:2}
+.legend .sw{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:7px;vertical-align:-1px}
+
+/* ── misc ───────────────────────────── */
+.callout{border-radius:var(--radius);padding:14px 18px;font-size:13.8px;margin:14px 0;border:1px solid}
+.callout.warn{background:color-mix(in srgb,var(--c-p0) 5%,var(--surface));border-color:color-mix(in srgb,var(--c-p0) 32%,transparent)}
+.callout.good{background:color-mix(in srgb,var(--c-ok) 6%,var(--surface));border-color:color-mix(in srgb,var(--c-ok) 32%,transparent)}
+.callout.info{background:color-mix(in srgb,var(--c-p2) 6%,var(--surface));border-color:color-mix(in srgb,var(--c-p2) 30%,transparent)}
+.callout h5{margin:0 0 6px;font-size:13.5px}
+ul.tight{margin:6px 0;padding-left:22px} ul.tight li{margin:3px 0}
+.timeline{list-style:none;margin:0;padding:0;border-left:2px solid var(--line-strong);margin-left:10px}
+.timeline>li{margin:0 0 18px;padding-left:20px;position:relative}
+.timeline>li::before{content:"";position:absolute;left:-7px;top:6px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:3px solid var(--seed-primary)}
+.tl-when{font-size:12px;font-weight:800;letter-spacing:1px;color:var(--seed-primary)}
+footer{border-top:1px solid var(--line);padding:22px 0 40px;font-size:12.5px;color:var(--fg-faint);line-height:1.9}
+kbd.win{font-family:inherit;background:var(--tint);border:1px solid var(--line-strong);border-bottom-width:2px;border-radius:5px;padding:0 6px}
+@media (max-width:860px){.f-grid{grid-template-columns:1fr}.two-col{grid-template-columns:1fr}.grade-float{position:static;margin-top:18px;display:inline-block;text-align:center}}
+@media print{
+  body{background:#fff} header.report-head{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  article.finding,.panel,table,.card{box-shadow:none;break-inside:avoid}
+  nav.toc{display:none}
+}
+</style>
+</head>
+<body>
+
+<header class="report-head" data-component="report-header">
+  <div class="wrap head-inner">
+    <div class="head-meta">
+      <span><b>项目</b> 超市收银系统（社区超市 POS）</span>
+      <span><b>版本</b> v5.0.14（git 工作区 @ 2026-10-08）</span>
+      <span><b>审计日期</b> 2026-10-09</span>
+      <span><b>范围</b> backend / frontend-web / frontend-h5 / frontend-desktop</span>
+    </div>
+    <h1 class="title">源码审查报告 · 安全漏洞 / 逻辑缺陷 / 性能瓶颈 / 代码质量</h1>
+    <p class="subtitle">覆盖约 6.3 万行核心源码（后端 TypeScript 35,717 行 · 97 文件；Web 前端 25,375 行 · 76 文件；H5 与 Electron 桌面端 ≈2,400 行）。采用 production-code-audit 全维度检测 + supercharge 15 类代码坏味道扫描，五路并行深度分析，关键结论逐条回读源码人工核验。</p>
+    <div class="head-badges">
+      <span class="hb">NestJS(自研轻量装饰器) + PostgreSQL 18</span>
+      <span class="hb">原生 JS 收银端/管理端 PWA</span>
+      <span class="hb">Electron 桌面收银</span>
+      <span class="hb">JWT + RBAC 权限点</span>
+      <span class="hb">连锁多店同步架构</span>
+    </div>
+    <div class="grade-float" aria-label="综合评级">
+      <div class="g">B−</div><div class="gl">综合评级<br>有条件生产就绪</div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<nav class="toc" data-component="toc" aria-label="报告目录">
+  <a href="#summary">执行摘要</a>
+  <a href="#p0">P0 详解（6）</a>
+  <a href="#security">安全（9）</a>
+  <a href="#logic">业务正确性（15）</a>
+  <a href="#perf">性能（9）</a>
+  <a href="#quality">质量与架构（7）</a>
+  <a href="#frontend">前端（8）</a>
+  <a href="#actions">行动计划</a>
+  <a href="#verification">核验与误报</a>
+  <a href="#coverage">覆盖度</a>
+  <a href="#appendix">量化附录</a>
+</nav>
+
+<!-- ═══════════ 执行摘要 ═══════════ -->
+<section id="summary" data-component="executive-summary">
+  <div class="cards">
+    <div class="card tot"><div class="n">49</div><div class="l">确认问题总数（去重后）</div></div>
+    <div class="card p0"><div class="n">6</div><div class="l">P0 · 严重（资损/中断/可利用）</div></div>
+    <div class="card p1"><div class="n">18</div><div class="l">P1 · 高（尽快修复）</div></div>
+    <div class="card p2"><div class="n">20</div><div class="l">P2 · 中（迭代内消化）</div></div>
+    <div class="card p3"><div class="n">5</div><div class="l">P3 · 低（机会性处理）</div></div>
+    <div class="card"><div class="n">63K</div><div class="l">审查源码行数 / 180 文件</div></div>
+  </div>
+
+  <div class="callout warn" data-component="verdict">
+    <h5>总体结论：单店交易主链路防御扎实，但连锁模式与高并发收银存在 P0 级隐患，建议先修复 6 项 P0 再扩大门店推广。</h5>
+    <p style="margin:6px 0 0">这套代码明显经过多轮自我整改（P0-F3 弱密钥拒绝、P2-M9 发号锁、V4.28.5 目录鉴权等均留有痕迹），安全基线显著高于典型 AI 生成项目：<b>全部 SQL 参数化、未发现可利用的注入点、事务连接纪律 0 违例、TODO/调试残留为 0</b>。真正的风险集中在四处：① <b>连锁（多店）模式的资金/库存归属逻辑存在多个从未被多店场景检验过的缺陷</b>（硬编码 storeId=1、同步失败处理语句永远报错、下行水位跳单）；② <b>支付通道的并发竞态</b>（被扫付款码可双扣、真实扣退款发生在数据库事务内）；③ <b>结账链路的性能放大器</b>（全天一把串行发号锁 + 事务内逐行往返 + 事务内跨网 HTTP，高峰期可复现排队雪崩）；④ <b>前端纵深不足</b>（桌面端会员卡号可注入执行 JS、247 个提交点仅 13 处有防重、h5 弱网下按钮静默失效）。零单元测试与零 CI 意味着以上问题无法被自动拦截——这是所有问题的共同根因。</p>
+  </div>
+
+  <div class="two-col">
+    <div class="panel" data-component="severity-chart">
+      <h4>严重度分布</h4>
+      <div class="donut-wrap">
+        <svg width="132" height="132" viewBox="0 0 42 42" role="img" aria-label="49 项发现的严重度分布：P0 六项、P1 十八项、P2 二十项、P3 五项">
+          <circle cx="21" cy="21" r="15.915" fill="none" stroke="color-mix(in srgb,var(--seed-fg) 8%,transparent)" stroke-width="7"/>
+          <circle cx="21" cy="21" r="15.915" fill="none" stroke="var(--c-p0)" stroke-width="7" stroke-dasharray="12.24 87.76" stroke-dashoffset="25" transform="rotate(0 21 21)"/>
+          <circle cx="21" cy="21" r="15.915" fill="none" stroke="var(--c-p1)" stroke-width="7" stroke-dasharray="36.73 63.27" stroke-dashoffset="12.76"/>
+          <circle cx="21" cy="21" r="15.915" fill="none" stroke="var(--c-p2)" stroke-width="7" stroke-dasharray="40.82 59.18" stroke-dashoffset="-23.97"/>
+          <circle cx="21" cy="21" r="15.915" fill="none" stroke="var(--c-p3)" stroke-width="7" stroke-dasharray="10.2 89.8" stroke-dashoffset="-64.79"/>
+          <text x="21" y="20" text-anchor="middle" font-size="8.5" font-weight="800" fill="var(--seed-fg)">49</text>
+          <text x="21" y="27.5" text-anchor="middle" font-size="3.6" fill="var(--fg-muted)">findings</text>
+        </svg>
+        <div class="legend">
+          <div><span class="sw" style="background:var(--c-p0)"></span>P0 严重 — 6 项（12%）</div>
+          <div><span class="sw" style="background:var(--c-p1)"></span>P1 高 — 18 项（37%）</div>
+          <div><span class="sw" style="background:var(--c-p2)"></span>P2 中 — 20 项（41%）</div>
+          <div><span class="sw" style="background:var(--c-p3)"></span>P3 低 — 5 项（10%）</div>
+        </div>
+      </div>
+    </div>
+    <div class="panel" data-component="category-grades">
+      <h4>分维度评级（A–E）</h4>
+      <table class="compact grade-table">
+        <tr><td>安全防护</td><td style="width:52%"><div class="gbar"><i style="width:80%"></i></div></td><td><b>B</b></td><td style="font-size:12px;color:var(--fg-muted)">注入/认证面已治理；遗留密钥回退与跨店 scope 有洞</td></tr>
+        <tr><td>资金/库存正确性</td><td><div class="gbar"><i style="width:55%;background:var(--c-p0)"></i></div></td><td><b>C</b></td><td style="font-size:12px;color:var(--fg-muted)">单店锁完备；连锁模式 4 个 P0/P1 级账实缺陷</td></tr>
+        <tr><td>性能与可用性</td><td><div class="gbar"><i style="width:58%;background:var(--c-p1)"></i></div></td><td><b>C+</b></td><td style="font-size:12px;color:var(--fg-muted)">索引补课积极；结账持全局锁+事务内 N+1 是雪崩引信</td></tr>
+        <tr><td>架构与可测试性</td><td><div class="gbar"><i style="width:45%;background:var(--c-p1)"></i></div></td><td><b>C−</b></td><td style="font-size:12px;color:var(--fg-muted)">976 行结账巨函数、零单元测试、零 CI</td></tr>
+        <tr><td>代码卫生</td><td><div class="gbar"><i style="width:78%"></i></div></td><td><b>B−</b></td><td style="font-size:12px;color:var(--fg-muted)">TODO=0、注释残留≈0；any 755 处、静默降级 catch 若干</td></tr>
+        <tr><td>前端健壮/安全</td><td><div class="gbar"><i style="width:60%;background:var(--c-p2)"></i></div></td><td><b>C+</b></td><td style="font-size:12px;color:var(--fg-muted)">esc 纪律普遍良好；桌面端 1 处可利用 XSS、防重/超时缺失</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ P0 详解 ═══════════ -->
+<section id="p0" data-component="p0-findings">
+  <div class="sec-head"><h2>一、P0 严重发现详解</h2><span class="sec-note">资损 · 业务中断 · 可直接利用 —— 全部经审计员回读源码逐行核验</span></div>
+
+  <article class="finding lv-p0" id="L-01" data-component="finding">
+    <div class="f-head"><span class="chip p0">P0</span><span class="f-id">L-01</span><h3 class="f-title">连锁同步失败处理 SQL 对同一列赋值两次 —— 重试 / 退避 / 死信机制从未生效过</h3><span class="vtag">✓ 已逐行核验</span></div>
+    <span class="f-loc">backend/src/modules/sync-store.service.ts:175-181, 187-191, 200-205</span>
+    <pre class="code">UPDATE sync_outbox SET <span class="hl">status='failed'</span>, last_error=$2,
+   retry = retry + 1,
+   next_retry_at = now() + (...),
+   <span class="hl">status = CASE WHEN retry + 1 &gt;= $3 THEN 'dead' ELSE status END</span>  <span class="cm">-- status 第二次出现</span>
+ WHERE idem_key=$1</pre>
+    <div class="f-b">PostgreSQL 对 <code>SET</code> 中重复列直接报 <code>multiple assignments to same column "status"</code>。三处同型：<b>被总部拒绝（rejected）的循环没有 catch</b> → 异常冒泡使整轮 push 判失败并计入熔断；网络失败分支带 <code>.catch(()=&gt;{})</code> → 静默失败。后果：<code>retry</code> 永不自增、<code>next_retry_at</code> 永不生效、<code>dead</code> 死信永远落不了——永久失败的单据（如跨店撞号）每 60 秒无限重推锤总部。当前连锁同步的“失败处理”路径实际上是一条从未跑通过的死路。</div>
+    <div class="fix-box"><b>修复：</b>合并为单次赋值：<code>SET last_error=$2, retry=retry+1, status = CASE WHEN retry+1&gt;=$3 THEN 'dead' ELSE 'failed' END, next_retry_at = CASE WHEN retry+1&gt;=$3 THEN NULL ELSE now()+make_interval(secs=&gt;$4) END</code>；并补一条针对 rejected 分支的集成测试（可用本地假 HQ 返回 rejected 验证）。</div>
+  </article>
+
+  <article class="finding lv-p0" id="L-02" data-component="finding">
+    <div class="f-head"><span class="chip p0">P0</span><span class="f-id">L-02</span><h3 class="f-title">盘点 / 报损 / 快速调整的出库归属硬编码 storeId=1 —— 连锁分店盘亏会凭空扣总店批次</h3><span class="vtag">✓ 已逐行核验</span></div>
+    <span class="f-loc">backend/src/modules/inventory.module.ts:1398, 1421（默认参数）· 调用点 408-409, 774, 959-960 均未传 storeId</span>
+    <pre class="code"><span class="cm">// 定义：storeId 默认 1</span>
+private async fifoAlloc(c, productId, qty, lossFirst, <span class="hl">storeId = 1</span>) {...}
+private async applyOutStock(c, allocs, refType, ..., employeeId, <span class="hl">storeId = 1</span>) {...}
+
+<span class="cm">// applyCountDiffs :408-409 —— 盘亏生效，未传第 5 参</span>
+const allocs = await this.fifoAlloc(c, it.product_id, -diff, false);
+const cost   = await this.applyOutStock(c, allocs, 'count', countId, it.id, '售罄', employeeId);
+<span class="cm">// createLoss :774、quickAdjust :959-960 同型；仅调拨 :1063 正确传了 fromStore</span></pre>
+    <div class="f-b">分店（curStore()≠1）做盘亏/报损时：FIFO 锁定并核销的是 <b>1 号店的批次</b>，而 <code>inventory_current</code> 扣的是本店 → store 1 批次被凭空扣减但台账不动（超卖闸门失效），本店台账被扣却无批次出库（账实背离、成本毛利全错）。auditLoss 按 batch_id 复核（<code>WHERE id=$1</code> 无 store 过滤）进一步放行跨店串扣。单店部署 store_id=1 恰好掩盖了一切，属于<b>随连锁上线即引爆</b>的潜伏缺陷。</div>
+    <div class="fix-box"><b>修复：</b>删除 <code>storeId = 1</code> 默认值改为<b>必传参数</b>（编译期强制暴露所有调用点），全部传 <code>curStore()</code>；批次定位统一 <code>WHERE id=$1 AND store_id=$2</code>。同类“默认参数兜底单店”写法建议在连锁相关模块全局搜 <code>= 1</code> 清一遍。</div>
+  </article>
+
+  <article class="finding lv-p0" id="L-03" data-component="finding">
+    <div class="f-head"><span class="chip p0">P0</span><span class="f-id">L-03</span><h3 class="f-title">付款码被扫扣款「先查后扣」无并发互斥 —— 双击扫码枪可真实双扣顾客资金</h3><span class="vtag">✓ 已逐行核验</span></div>
+    <span class="f-loc">backend/src/modules/pay.gateway.ts:110-118</span>
+    <pre class="code">const exist = await q1(`SELECT * FROM pay_gateway_txns WHERE out_trade_no=$1`, [outTradeNo]);
+<span class="cm">// ↑ 两条并发请求同 out_trade_no，都读到 null（首扣流水尚未落库）</span>
+if (exist && exist.status === 'SUCCESS') return { idempotent: true, ... };
+const r = await adapter.micropay({ outTradeNo, authCode: code, amountCents, ... });  <span class="cm">// ← 双双真实扣款</span></pre>
+    <div class="f-b">幂等声明写在注释里，实现却是经典 check-then-act 竞态：扫码枪重触发 / 前端超时重试时，两条请求都在“流水落库前”的窗口读到空 → 各自向微信/支付宝发起真实扣款。后置的 <code>markSuccess ON CONFLICT</code> 只能去重本地流水，撤销不了通道侧的第二笔扣款。顾客被双倍扣款、需人工退款与客诉。仅 USERPAYING 分支在<b>扣款之后</b>才写 PENDING 占位，挡不住这个窗口。</div>
+    <div class="fix-box"><b>修复：</b>把占位前置——先 <code>INSERT INTO pay_gateway_txns(...,'PENDING') ON CONFLICT (out_trade_no) DO NOTHING RETURNING id</code>；拿不到 id 说明并发/已存在 → 转查单逻辑，绝不触通道。或对 out_trade_no 取 <code>pg_advisory_xact_lock(hashtext('pay:'+out_trade_no))</code> 包住“查-扣-记”全程。退款 refundInTx 同样核对。</div>
+  </article>
+
+  <article class="finding lv-p0" id="L-04" data-component="finding">
+    <div class="f-head"><span class="chip p0">P0</span><span class="f-id">L-04</span><h3 class="f-title">在数据库事务内发起真实资金指令（总部扣款 / 通道退款）—— 回滚了事务，回滚不了钱</h3><span class="vtag">✓ 行号经抽样核验</span></div>
+    <span class="f-loc">backend/src/modules/sales.module.ts:782, 832, 866（结账事务内 hqMemberPost）· refund.module.ts:317 → pay.gateway.ts:270-275</span>
+    <div class="f-b">连锁余额/分红/积分支付在 <code>tx()</code> 内同步 HTTP 调总部扣款（超时 8s）：总部扣款成功后，本地任何一步失败（金额不平 :905、审计写入异常）都会 ROLLBACK——<b>总部余额已实扣而订单不存在</b>，只能靠 3 天后的每日 job 冲正。退款同理：通道原路退款成功后本地回滚 → 顾客已到账、系统无记录（直接资损）。叠加 L-05/P-01 的全天发号锁：一条慢 HQ 响应能阻塞<b>所有收银台</b>的结账；HTTP 挂起期间持续持有 member_accounts/batches 行锁，正是 db.ts 注释里记录过的“连接被抢光 → 系统错误”故障模式的重演剧本。</div>
+    <div class="fix-box"><b>修复：</b>外部资金指令两阶段化——① 事务内只做本地预占（冻结额度/落“处理中”流水）并提交；② 事务外发起 HQ/通道调用；③ 结果回执再开小事务 CAS 落终态，失败走补偿冲正（现有 offlineBalanceCredit 挂账补偿可升级为正式通道）。过渡期最低要求：把 HTTP 移到取发号锁之前、timeout 降到 2s、失败自动进人工对账队列。</div>
+  </article>
+
+  <article class="finding lv-p0" id="P-01" data-component="finding">
+    <div class="f-head"><span class="chip p0">P0</span><span class="f-id">P-01</span><h3 class="f-title">每笔结账抢一把「全天全局」advisory 锁并做无索引 LIKE count —— 高峰结账串行化雪崩</h3><span class="vtag">✓ 已逐行核验</span></div>
+    <span class="f-loc">backend/src/common/db.ts:76-81（seqLock）· 调用例 sales.module.ts:634 · 30+ 种单据复用</span>
+    <pre class="code">await c.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`seq:${table}:${pattern}`]);
+<span class="hl">-- 锁持有到整个结账事务 COMMIT（不是取号即放）；键=表+当日前缀，不含 store 维度</span>
+const r = await c.query(`SELECT count(*)+1 FROM ${table} WHERE ${col} LIKE $1`, ['XS-20261009-%']);
+<span class="hl">-- order_no 仅有默认 collation 的 UNIQUE btree，前缀 LIKE 走不了 → 全表/全索引扫描</span></pre>
+    <div class="f-b">单号“取号即放”被实现成“取号锁跟到事务尾”：多收银机并发时，从发号那一刻起<b>全部结账串行排队</b>，每单后面几百毫秒的事务体（L-04 的 HTTP、逐行扣批、审计）都乘进队头时延。同时每笔结账都对当日订单做 LIKE 前缀 count——按日均 3000 单、半年 50 万行估，单次 30–150ms 且持续恶化。这是把“防撞号”做成了“全局堵号”。（该文件此前已因连接池 10 太小导致结账排队报错过，本次修的是根因的另一半。）</div>
+    <div class="fix-box"><b>修复：</b>改原子计数器表，取号 O(1) 且不持锁跨业务：<code>INSERT INTO doc_seq(store_id,day,prefix,n) VALUES($1,$2,$3,1) ON CONFLICT (store_id,day,prefix) DO UPDATE SET n=doc_seq.n+1 RETURNING n</code>。过渡方案：锁键加入 store 维度 + 建 <code>(order_no text_pattern_ops)</code> 部分索引 + 取号后立即释放（改用会话级锁 + 显式解锁或独立小事务取号）。同步消灭 L-11 的 16 处裸 count+1。</div>
+  </article>
+
+  <article class="finding lv-p0" id="F-01" data-component="finding">
+    <div class="f-head"><span class="chip p0">P0</span><span class="f-id">F-01</span><h3 class="f-title">桌面收银端会员选择内联 JS 二次解码 XSS —— 恶意卡号可在收银机执行任意脚本</h3><span class="vtag">✓ 已逐行核验</span></div>
+    <span class="f-loc">frontend-desktop/renderer/pos.js:339</span>
+    <pre class="code">&lt;button onclick="pickMember(${m.id},'${esc(String(m.name||'').<span class="fix">replace(/'/g,'')</span>)}',
+   '<span class="hl">${esc(String(m.card_no || ''))}</span>   <span class="cm">← 未剔单引号</span>',<span class="hl">${m.balance}</span>)"&gt;选&lt;/button&gt;</pre>
+    <div class="f-b">这是 HTML 属性 + 内联 JS 的<b>双重解码陷阱</b>：<code>esc()</code> 把 <code>'</code> 转成 <code>&amp;#39;</code>，但浏览器把 onclick 属性值交给 JS 引擎<b>之前</b>会先解一次 HTML 实体——转义等于没做。name 字段有 <code>replace(/'/g,'')</code> 兜底，而 <b>card_no 没有</b>；<code>${m.balance}</code> 也裸拼在参数位。构造卡号 <code>1',alert(document.cookie),'</code>（H5 自助办卡可自填？——需确认注册入口；后台录入则可内鬼触发），收银员点“选”即执行任意 JS，可窃取 <code>localStorage.pos_token</code> 并借 DesktopShell 桥触发静默打印等特权（见 F-06）。同文件 349/475 行已经用了正确的 <code>data-* + addEventListener</code> 模式，唯独此处漏网。</div>
+    <div class="fix-box"><b>修复：</b>消灭内联 JS 拼数据——会员对象暂存局部数组，按钮只拼 <code>data-mi="${idx}"</code>，事件委托读取。同时全端约定：<b>任何 onclick 不得拼接动态值</b>（可加一条 eslint 规则 / 构建期 grep 门禁）。</div>
+  </article>
+</section>
+
+<!-- ═══════════ 安全 ═══════════ -->
+<section id="security" data-component="findings-security">
+  <div class="sec-head"><h2>二、安全漏洞（9 项）</h2><span class="sec-note">SQL 注入 / 命令执行 / SSRF / 认证绕过 未发现可利用点（见第七节误报排除）；余量集中在密钥遗留、跨店 scope 与生成随机性</span></div>
+
+  <article class="finding lv-p1" id="S-01">
+    <div class="f-head"><span class="chip p1">P1</span><span class="f-id">S-01</span><h3 class="f-title">员工停用存在 60 秒操作窗口，且吊销缓存清理只在当前进程</h3><span class="vtag">✓ 已核验 auth.ts:74-85,114-117</span></div>
+    <div class="f-b"><code>empState</code> 60s 进程内 Map 缓存吊销判定；停用路径只调 <code>clearAuthStateCache</code>（本进程）且<b>不推进 token_version</b>。多实例（PM2 cluster）下其它 worker 的缓存在 ≤60s 内仍放行被停收银员结账/退款——离职即时冻结在单进程部署勉强够用，横向扩展后是舞弊窗口。</div>
+    <div class="fix-box"><b>修复：</b>停用/重置一律 <code>token_version+1</code>（tv 校验天然兜底跨进程），缓存 TTL 降到 5–10s 或经 DB 广播失效。</div>
+  </article>
+
+  <article class="finding lv-p2" id="S-02">
+    <div class="f-head"><span class="chip p2">P2</span><span class="f-id">S-02</span><h3 class="f-title">跨店退货受理店取请求体 storeId，未过 assertStoreAllowed —— 写路径 scope 旁路</h3><span class="vtag">✓ 已核验 return-chain.module.ts:67,97-99</span></div>
+    <div class="f-b">读路径 scope 治理完备（curStore() 权威），但 <code>apply()</code> 的 <code>acceptStore = Number(dto.storeId ?? user.storeId)</code> 直接落进 <code>sale_refunds.store_id</code>。A 店收银员可把退货单/资金往来挂到任意 B 店，审核通过后归属错乱。同文件 <code>lookup</code>（:29-36）按单号跨全连锁取单并可枚举（单号 XS-日期-序号可猜）。</div>
+    <div class="fix-box"><b>修复：</b>受理店强制取 JWT；lookup 限本店+原单店并加频控；订单号引入随机段。</div>
+  </article>
+
+  <article class="finding lv-p2" id="S-03">
+    <div class="f-head"><span class="chip p2">P2</span><span class="f-id">S-03</span><h3 class="f-title">电子签名图目录 /signatures 未纳入鉴权（V4.28.5 F-09 整改只覆盖了兄弟目录 /uploads）</h3><span class="vtag">✓ 行号核验（main.ts:87-98,119 + sign.ts:166-171）</span></div>
+    <div class="f-b">签名 PNG 落盘 <code>public/signatures/</code>，经静态根直读无需登录。顾客签字是单据冒名与纠纷证据，URL 一旦经日志/同步 payload 泄露即永久可取。</div>
+    <div class="fix-box"><b>修复：</b>把 <code>/uploads</code> 的鉴权中间件同样注册到 <code>/signatures</code>；或签名文件迁移至 uploads 树下复用既有闸门。</div>
+  </article>
+
+  <article class="finding lv-p2" id="S-04">
+    <div class="f-head"><span class="chip p2">P2</span><span class="f-id">S-04</span><h3 class="f-title">支付商户密钥解密保留「源码内置常量旧密钥」回退分支，P0-F2 整改未闭环</h3><span class="vtag">✓ 行号核验（secret.ts:16, 60-61）</span></div>
+    <div class="f-b"><code>LEGACY_KEY = sha256('cashier-local-pay-enc-key-v1')</code> 硬编码在源码，<code>decryptSecret</code> 对新钥失败后回退旧钥。任何能读到数据库备份（sys.data.backup 角色可下载，备份含 system_settings 密文）+ 拿到源码的人，即可离线还原微信/支付宝商户私钥。</div>
+    <div class="fix-box"><b>修复：</b>设置过渡截止：命中 LEGACY 分支即告警并强制要求重存密钥；到期删除回退。商户 API 密钥在平台侧支持轮换，泄露即换。</div>
+  </article>
+
+  <article class="finding lv-p2" id="S-05">
+    <div class="f-head"><span class="chip p2">P2</span><span class="f-id">S-05</span><h3 class="f-title">三个运维脚本保留硬编码弱口令连接串回退（db.ts 已拒绝，脚本漏网）</h3></div>
+    <div class="f-b"><code>chain-init.ts:112</code>（postgres://cashier:cashier123@localhost）、<code>recon-report.ts:26</code>、<code>upgrade-v5.ts:21</code>。忘配 env 时脚本静默使用弱凭据连接，与 db.ts 的 fail-fast 原则冲突。</div>
+    <div class="fix-box"><b>修复：</b>与 db.ts 同口径——缺 <code>DATABASE_URL</code> 直接 exit(1)。</div>
+  </article>
+
+  <article class="finding lv-p2" id="S-06">
+    <div class="f-head"><span class="chip p2">P2</span><span class="f-id">S-06</span><h3 class="f-title">安全敏感随机值用 Math.random：扫码购 6 位核销码、会员临时密码，核销端无失败锁定</h3></div>
+    <div class="f-b"><code>member-app.module.ts:344-351</code> 核销码 = Math.random 六位，重试耗尽后回退<b>时间戳尾 6 位</b>（完全可预测）；<code>verify-code</code>（sales.module.ts:1257）无失败计数/频控 → 内网设备可爆破冒核他人订单取货。<code>members.module.ts:198</code> 重置临时密码同样出自非加密 PRNG。</div>
+    <div class="fix-box"><b>修复：</b><code>crypto.randomInt</code>；核销接口加按订单/IP 的失败锁定与频控（复用 ratelimit.ts）。</div>
+  </article>
+
+  <article class="finding lv-p2" id="S-07">
+    <div class="f-head"><span class="chip p2">P2</span><span class="f-id">S-07</span><h3 class="f-title">display 副屏 SSE 与 cfg 为 @Public，默认 BIND_HOST 监听 0.0.0.0 —— 内网任意主机可无鉴权订阅收银实况</h3></div>
+    <div class="f-b">CORS 只约束浏览器，非浏览器客户端可直连订阅任意门店的订单推送与配置读取。本地部署信任内网的口径可以接受，但应与 BIND_HOST/防火墙策略绑定说明。</div>
+    <div class="fix-box"><b>修复：</b>副屏配对一次性令牌；部署文档将 BIND_HOST 设为必配项并在启动日志强警告。</div>
+  </article>
+
+  <article class="finding lv-p2" id="S-08">
+    <div class="f-head"><span class="chip p2">P2</span><span class="f-id">S-08</span><h3 class="f-title">会员价签 / 门店价格等“总部价 vs 分店覆盖价”的鉴权粒度依赖单点，改价票据 120s 窗口内可复用</h3></div>
+    <div class="f-b">ai.pricing / store-price 链路复核中未发现直接漏洞，但改价授权票据未按“一次单据一票据”消费（记录未见状态位），窗口内重放可二次改价——属纵深欠缺，随 L-03 的占位式幂等一并治理。</div>
+    <div class="fix-box"><b>修复：</b>票据加 used 标记 + 订单号绑定，验证即烧。</div>
+  </article>
+
+  <article class="finding lv-p3" id="S-09">
+    <div class="f-head"><span class="chip p3">P3</span><span class="f-id">S-09</span><h3 class="f-title">备份失败响应把 pg_dump/pg_restore stderr 原文回显给调用方</h3></div>
+    <div class="f-b"><code>admin.backup.ts:159-162,243-245</code> 泄露主机/端口/角色名等部署细节；权限面窄（sys.data.backup），与 http.ts 统一脱敏口径不一致。</div>
+    <div class="fix-box"><b>修复：</b>详情只写服务端日志，响应回通用文案 + traceId。</div>
+  </article>
+</section>
+
+<!-- ═══════════ 业务正确性 ═══════════ -->
+<section id="logic" data-component="findings-logic">
+  <div class="sec-head"><h2>三、资金与库存正确性（15 项）</h2><span class="sec-note">P0 四见第一节（L-01…L-04）· 并发锁与幂等的整体纪律好，问题集中在连锁与低频路径</span></div>
+
+  <article class="finding lv-p1" id="L-05">
+    <div class="f-head"><span class="chip p1">P1</span><span class="f-id">L-05</span><h3 class="f-title">多张可叠加券各自按「货值−促销」封顶且互不递减 → 应付可算成负数，合法双券结账 100% 被拒</h3></div>
+    <div class="f-b"><code>coupons.module.ts:35,41,178</code> 每张券独立 <code>min(discount, goodsAmount - promoAmount)</code>，<code>sales.module.ts:439-442</code> 直接求和 → 两张 60 元券用 100 元货：couponAmount=120、payableCents=−2000，最终在金额平衡校验（:905）抛 50031。不致资损（fail-closed），但“叠加券”功能实际不可用，客诉直接落在收银台。</div>
+    <div class="fix-box"><b>修复：</b>逐张对 running 剩余额封顶后再累加；补一张“双券 120 元券 100 元货”的用例断言 payable=0 且可结账。</div>
+  </article>
+
+  <article class="finding lv-p1" id="L-06">
+    <div class="f-head"><span class="chip p1">P1</span><span class="f-id">L-06</span><h3 class="f-title">跨店退货 new_batch 收货只回补 batches/流水，不回补 inventory_current —— 退回的货“账面在、闸门锁”</h3></div>
+    <div class="f-b"><code>return-chain.module.ts:255-271</code> 入库分支缺少 inventory_current upsert，而结账超卖闸/落账唯一以它为准（sales:367-371,712-719），与代码里 D4 注释“两本账必须同源”直接冲突。退货商品卖不出去或落账扣成负。</div>
+    <div class="fix-box"><b>修复：</b>仿 confirmTransfer/receiveTransfer 的 <code>ON CONFLICT</code> upsert 补账。</div>
+  </article>
+
+  <article class="finding lv-p1" id="L-07">
+    <div class="f-head"><span class="chip p1">P1</span><span class="f-id">L-07</span><h3 class="f-title">日结漂移校准（无 status 过滤）与手动对账（仅“在库”）两套口径 → 负余批次存在时库存值反复摆动</h3></div>
+    <div class="f-b"><code>sales.jobs.ts:116-121</code> vs <code>inventory.module.ts:24,31,1364-1374</code>。软超卖产生“售罄负余”批次后，两任务交替把 inventory_current 回写成不同值——账实差异随任务节奏震荡，且与 L-02 的错店扣减互相放大。</div>
+    <div class="fix-box"><b>修复：</b>统一单一权威口径（建议 <code>status='在库' AND remain_qty&gt;0</code>），两处共用同一 SQL 常量。</div>
+  </article>
+
+  <article class="finding lv-p1" id="L-08">
+    <div class="f-head"><span class="chip p1">P1</span><span class="f-id">L-08</span><h3 class="f-title">下行同步水位推进到 maxVer 而非「连续成功前缀」—— 失败版本被永久跳过，主数据悄悄不一致</h3></div>
+    <div class="f-b"><code>sync-store.service.ts:228-244</code>：版本 5 应用失败、6/7 成功即推 in_version=7，此后 pull 不再返回 5 —— 该条价格/促销/主档变更<b>静默丢失</b>，分店与总部长期漂移且无告警。</div>
+    <div class="fix-box"><b>修复：</b>水位只推进到连续成功前缀；失败项落 replay 队列 + 计数告警。</div>
+  </article>
+
+  <article class="finding lv-p1" id="L-09">
+    <div class="f-head"><span class="chip p1">P1</span><span class="f-id">L-09</span><h3 class="f-title">退货只回冲成本不回冲收入 → 全额退货后该单毛利 = 全部销售额（分红/提成基数虚高）</h3></div>
+    <div class="f-b"><code>refund.module.ts:213-224</code> 把 <code>cost_amount</code> 减到 0 而 <code>payable_amount</code> 不动，<code>profit_amount = payable - cost</code> 反而更高。若报表/分红侧未额外过滤退货，即形成分配性资损。</div>
+    <div class="fix-box"><b>修复：</b>收入按比例同额回冲，或 profit 语义固化为“原始成交毛利”并在所有下游统一改用净额（sales − refunds）口径。</div>
+  </article>
+
+  <article class="finding lv-p1" id="L-10">
+    <div class="f-head"><span class="chip p1">P1</span><span class="f-id">L-10</span><h3 class="f-title">结账赠奖 try/catch 吞异常承诺“不阻断收银”，但 PG 事务已进入 aborted 态 → 赠品一处失败反而整单结账失败</h3><span class="vtag">✓ 已核验 sales.module.ts:973-977</span></div>
+    <pre class="code"><span class="cm">// V4.14.1 消费后奖励：满阈值发购物券/登记赠品（事务内，失败不阻断收银）← 注释的承诺不成立</span>
+try { rewards = await grantPostCheckoutRewards(c, user.storeId, ..., orderId, user.sub); } <span class="hl">catch { rewards = []; }</span>
+await audit(...);  <span class="cm">// ← 若上面有真实 SQL 失败，这里起全部语句报 current transaction is aborted</span></pre>
+    <div class="f-b">catch 吞掉的只是 JS 异常；grantPostCheckoutRewards 内部再包的小 catch（promotions:429-486）同样改变不了 aborted 事务状态。结果双输：要么整单 500（承诺落空），要么部分赠奖 SQL 已执行后静默（积分/权益少发无痕迹）。</div>
+    <div class="fix-box"><b>修复：</b>赠奖放独立事务（提交后异步发放）或用 <code>SAVEPOINT</code> 包裹失败回滚到点；catch 分支记 log.warn + traceId（联动 Q-05）。</div>
+  </article>
+
+  <h3>P2 / P3 其余正确性缺陷（表格速览）</h3>
+  <table class="compact">
+    <tr><th style="width:56px">级别</th><th style="width:56px">ID</th><th>问题</th><th style="width:300px">位置</th><th>要点</th></tr>
+    <tr><td><span class="chip p2">P2</span></td><td class="loc">L-11</td><td>16+ 处裸 <code>count(*)+1</code> 发号未迁移 seqLock</td><td class="loc">inventory 326/501/625/756/1046/1261 · products 1569/1938/1989 · purchase 1014 · chain 1532/1678 · ai 等</td><td>报损/盘点/调拨/改价/挂账单双端并发撞 UNIQUE → 500/断流；与 P-01 统一治理</td></tr>
+    <tr><td><span class="chip p2">P2</span></td><td class="loc">L-12</td><td>会员卡号 <code>MAX(id)+1</code> 无锁发号</td><td class="loc">members.module.ts:116-117 · member-app:130</td><td>并发注册卡号重复/错位；改 seqLock 或以真实 id 反推</td></tr>
+    <tr><td><span class="chip p2">P2</span></td><td class="loc">L-13</td><td>交接班 close 无 <code>AND status='进行中'</code> CAS；退款按原单 shift_id 归属</td><td class="loc">shift.module.ts:146-150, 36-41</td><td>重复关班覆盖钱箱应答；今日退昨单砸错班次现金差</td></tr>
+    <tr><td><span class="chip p2">P2</span></td><td class="loc">L-14</td><td>促销赠品/发奖总量“读后发”无锁 → 并发超发</td><td class="loc">promotions.module.ts:30-47,368-374,424-428</td><td>totalLimit/perCapLimit 竞态穿透；FOR UPDATE 或活动级 advisory lock</td></tr>
+    <tr><td><span class="chip p2">P2</span></td><td class="loc">L-15</td><td>价格 overlay 在事务内逐行全局 q() 读（脱事务 + 抢第二连接）</td><td class="loc">sales:221 → store-price.service.ts:36-41</td><td>高峰加剧池争用（见 P-03）；改每单一次批量 + cx(c)</td></tr>
+    <tr><td><span class="chip p3">P3</span></td><td class="loc">L-16</td><td>业务日口径混用：单号 ymd 走服务器本地日、昨日对账走 <code>toISOString().slice</code>(UTC)，DB 会话东八区</td><td class="loc">sales:632-635 · sync:556/633 · jobs:79</td><td>服务器时区非 Asia/Shanghai 时跨零点归属漂移；统一 CURRENT_DATE</td></tr>
+    <tr><td><span class="chip p3">P3</span></td><td class="loc">L-17</td><td>needsPriceAuth 判据 <code>!it.custom</code> 字段名不存在（实为 customEntry），恒真</td><td class="loc">sales.module.ts:69-70</td><td>开放键行被强制要改价票据（偏严不资损，但意图走样）</td></tr>
+    <tr><td><span class="chip p3">P3</span></td><td class="loc">L-18</td><td>盘盈/快速调整入库用裸 UPDATE（非 upsert）</td><td class="loc">inventory:413-415,953-954</td><td>本店无行时盘盈只进 batches 不进台账；改 ON CONFLICT</td></tr>
+    <tr><td><span class="chip p3">P3</span></td><td class="loc">L-19</td><td>跨店退货按 line_amount/qty 单价，未含券/整单折扣分摊（与单店 calcRows 口径不一致）</td><td class="loc">return-chain:82-83</td><td>用券后退货偏多退；复用订单级净额重算</td></tr>
+    <tr><td><span class="chip p3">P3</span></td><td class="loc">L-20</td><td>积分按整单 payable 计提（含券/积分/分红抵扣部分）</td><td class="loc">sales:926</td><td>与 validSpend 口径不同源，留积分套利空间（视业务规则）</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════ 性能 ═══════════ -->
+<section id="perf" data-component="findings-performance">
+  <div class="sec-head"><h2>四、性能与可用性（9 项）</h2><span class="sec-note">数据规模假设：2 万 SKU / 日均 3000 单 / 年 100 万订单 / 1000 万+ 流水 —— 连接池 40、超时 15s 已两度为此扩过</span></div>
+
+  <article class="finding lv-p1" id="P-02">
+    <div class="f-head"><span class="chip p1">P1</span><span class="f-id">P-02</span><h3 class="f-title">首页仪表盘趋势查询对 sales_orders 全表扫描（表达式 JOIN、无范围谓词）——每次刷新都扫</h3><span class="vtag">✓ 已逐行核验 reports.module.ts:274-282</span></div>
+    <pre class="code">FROM generate_series(CURRENT_DATE - 6, CURRENT_DATE, '1 day') d
+LEFT JOIN sales_orders o
+  ON <span class="hl">COALESCE(o.pay_paid_at, o.created_at)::date = d::date</span>  <span class="cm">-- 列上表达式，无 WHERE 范围 → 索引全废</span>
+ AND o.status='已完成'${trendFilter}</pre>
+    <div class="f-b">两年 200 万行的表，打开一次首页全扫一遍；“今日”卡（:43-49）同型。而项目其实<b>已有每日固化的 daily_settlement</b>（sales.jobs.ts），仪表盘却没有消费它。老板端一开报表，收银链路就分走连接。</div>
+    <div class="fix-box"><b>修复：</b>近 7 日趋势直接读物化日结表；确需明细时用 <code>created_at &gt;= CURRENT_DATE-7 AND &lt; CURRENT_DATE+1</code> 半开区间圈定再精筛；配表达式索引 <code>(store_id,(COALESCE(pay_paid_at,created_at)::date))</code>。</div>
+  </article>
+
+  <article class="finding lv-p1" id="P-03">
+    <div class="f-head"><span class="chip p1">P1</span><span class="f-id">P-03</span><h3 class="f-title">结账事务内 N+1 风暴：逐行 SELECT p.* + 每行全量拉门店覆盖价表 + 逐行 INSERT/扣批（20 行 ≈ 90–110 条串行语句，全在持锁事务内）</h3><span class="vtag">✓ 结构经 189-232/686-724 抽样核验</span></div>
+    <div class="f-b"><code>store-price.service.ts:40</code> 的 <code>loadMap</code> 在 <code>overlayOne</code> 循环里<b>每次全量拉整张 product_store_prices</b>（覆盖价 5000 行时每单重复解析 5000 行 × N 次）；sale_items 逐行 INSERT RETURNING、批次逐 alloc 三条语句。叠加 P-01 全局锁与 L-04 事务内 HTTP——三者共同构成“结账慢 = 全体收银慢”的放大链。</div>
+    <div class="fix-box"><b>修复：</b>入口收集 productIds 一次 <code>= ANY($1)</code>；loadMap 每单一次；sale_items/stock_flows/批次扣减改多值 INSERT + unnest 批量 UPDATE，把事务内语句数从 O(行×批) 压到常数。</div>
+  </article>
+
+  <table class="compact">
+    <tr><th style="width:56px">级别</th><th style="width:56px">ID</th><th>问题</th><th style="width:290px">位置</th><th>量级估算与方案</th></tr>
+    <tr><td><span class="chip p1">P1</span></td><td class="loc">P-04</td><td>进销存汇总：每商品 5 个 stock_flows 相关子查询且 <code>created_at::date</code> 废索引</td><td class="loc">reports.module.ts:548-576</td><td>2 万 SKU ≈ 每请求 5000 万+ 行次 → 分钟级；改 GROUP BY 集合查询 + FILTER，期初走快照</td></tr>
+    <tr><td><span class="chip p1">P1</span></td><td class="loc">P-05</td><td>全店盘点单大事务：2 万行创建 = 4 万条语句；审核逐差异 5–6 条，锁全表明细数分钟</td><td class="loc">inventory:334-344,531-536,400-420</td><td>同 SKU 结账被 batches FOR UPDATE 卡死；unnest 批量 + 按 500 行分片多事务 + 进度态</td></tr>
+    <tr><td><span class="chip p1">P1</span></td><td class="loc">P-06</td><td>审计归档无界 DELETE 单语句搬全量 + audit_logs 无 created_at 索引（archive.job 有正确写法，此处漏改）</td><td class="loc">d3.care.ts:22-28</td><td>首设保留期一次几十万行 → 长事务 + WAL 洪峰；照抄 archive.job 的 LIMIT 5000 循环</td></tr>
+    <tr><td><span class="chip p1">P1</span></td><td class="loc">P-07</td><td>exportDataset 同步 readFileSync 全量样本图 + zip + base64 一次性返回</td><td class="loc">ai.module.ts:1120-1148</td><td>1 万样本 ≈ 4GB 堆峰值（OOM）+ 事件循环停摆数秒~分钟（期间全店识别/结账卡死）；改流式打包到临时文件 + 下载链接 + fsp 异步 IO</td></tr>
+    <tr><td><span class="chip p2">P2</span></td><td class="loc">P-08</td><td>五类热查询缺索引：audit_logs(target_type,target_id)、product_barcodes(product_id)、purchase_order_items(po_id)、sale_refund_items(refund_id)、member_coupons(coupon_id)</td><td class="loc">对照 db/001_init.sql 索引清单核验查询热点</td><td>会员详情/价目表 json_agg/收货审核/退款上限每查全扫；各补一条 CREATE INDEX（项目已有 188-190 号 list_indexes 迁移惯例，照做）</td></tr>
+    <tr><td><span class="chip p2">P2</span></td><td class="loc">P-09</td><td>POS 价目表每设备全量重建 + 全表 stringify 求 md5 版本；ai.emb 全店向量 JSONB 载入 + JS 逐帧余弦（阻塞事件循环 100–300ms/帧）</td><td class="loc">pos.module.ts:36-107 · ai.emb.ts:249-320</td><td>价目表用 (max(updated_at),count) 指纹 + 304；向量检索上 pgvector 或挪 worker_threads</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════ 质量与架构 ═══════════ -->
+<section id="quality" data-component="findings-quality">
+  <div class="sec-head"><h2>五、代码质量、架构与测试（7 项）</h2><span class="sec-note">supercharge 15 类坏味道画像 —— 卫生项好于均值（TODO=0/死代码≈0），结构性风险集中在巨型函数与零单测</span></div>
+
+  <div class="two-col">
+    <div class="panel">
+      <h4>坏味道量化（backend 97 文件）</h4>
+      <div class="bar-row"><span>上帝模块 &gt;500 行</span><div class="bar"><i style="width:100%;background:var(--c-p1)"></i></div><span>16 个</span></div>
+      <div class="bar-row"><span>函数 &gt;50 行</span><div class="bar"><i style="width:40%;background:var(--c-p1)"></i></div><span>32 个</span></div>
+      <div class="bar-row"><span>嵌套 ≥4 层</span><div class="bar"><i style="width:55%;background:var(--c-p2)"></i></div><span>44 个</span></div>
+      <div class="bar-row"><span><code>: any</code> 标注</span><div class="bar"><i style="width:76%;background:var(--c-p2)"></i></div><span>755 处</span></div>
+      <div class="bar-row"><span>catch 总数（静默 4–6）</span><div class="bar"><i style="width:33%;background:var(--c-p2)"></i></div><span>327</span></div>
+      <div class="bar-row"><span>参数 &gt;4 函数</span><div class="bar"><i style="width:24%;background:var(--c-p3)"></i></div><span>19 个</span></div>
+      <div class="bar-row"><span>TODO / 注释残留代码</span><div class="bar"><i style="width:2%;background:var(--c-ok)"></i></div><span>0 / ≈1</span></div>
+      <div class="bar-row"><span>tx 内误用全局 q()</span><div class="bar"><i style="width:2%;background:var(--c-ok)"></i></div><span>0 处</span></div>
+    </div>
+    <div>
+      <article class="finding lv-p1" id="Q-01" style="margin-top:0">
+        <div class="f-head"><span class="chip p1">P1</span><span class="f-id">Q-01</span><h3 class="f-title">巨型编排函数与上帝模块：checkout() 单函数 976 行嵌套 6 层；purchase.module 2850 行 74 路由</h3></div>
+        <div class="f-b">Top10 模块全部 >459 行、除 members 外全部超 500 行阈值，“@Controller + 内联 SQL + 业务规则 + 外部 HTTP”四合一。checkout 是资金正确性的最大单体——任何规则改动都在千行内定位，无法单测任何子步骤，多人协作必冲突。<b>它是本报告 L 组多数缺陷的宿主环境</b>。</div>
+        <div class="fix-box"><b>重构（行为不变）：</b>先抽纯函数（计价/分摊/FIFO/落账），按聚合拆 <code>CheckoutPricing / InventoryDeduction / PaymentSettle / MemberReward</code> 四服务，checkout 退化为编排；SQL 下沉 Repository。</div>
+      </article>
+      <article class="finding lv-p1" id="Q-02">
+        <div class="f-head"><span class="chip p1">P1</span><span class="f-id">Q-02</span><h3 class="f-title">零单元测试 + 零 CI：金额分摊、FIFO、退款回算、发号并发等最需要数值测试的算法完全裸奔</h3></div>
+        <div class="f-b">全后端仅 1 个 1914 行 e2e（170 断言，依赖运行中的服务端）。本报告 L/P 组的 9 个资金类缺陷，任何一个都可用十几行表驱动单测在提交时拦截；而 <code>tsc --noEmit</code>/lint/测试也没有 CI 门禁。测试金字塔缺基座是“改一处崩三处”的根因。</div>
+        <div class="fix-box"><b>修复：</b>先补特征测试（characterization tests）锁住现状行为——从 r2/分摊/FIFO/calcRows 纯函数开刀，vitest 即可；GitHub Actions（或等价）跑 type-check + 单测 + e2e 冒烟。</div>
+      </article>
+    </div>
+  </div>
+
+  <table class="compact">
+    <tr><th style="width:56px">级别</th><th style="width:56px">ID</th><th>问题</th><th style="width:290px">位置 / 数据</th><th>说明与手法</th></tr>
+    <tr><td><span class="chip p2">P2</span></td><td class="loc">Q-03</td><td>DRY 违背：<code>assertSigned</code> 两文件逐字节重复；<code>cx()</code> 助手被本地重实现 6 处</td><td class="loc">inventory:55-62 ≡ purchase:55-62 · ai/ai.ocr/ai.pricing/coupons/purchase/sign</td><td>Pull Up Method → 共享 SignatureGuard；删本地 cx 统一 import（丢 rowCount 类分叉已在埋雷）</td></tr>
+    <tr><td><span class="chip p2">P2</span></td><td class="loc">Q-04</td><td>金额三套口径并存：整数分 / <code>r2()</code> 浮点元（237 处）/ NUMERIC 字符串强转（215 处）</td><td class="loc">db.ts:89 + 全后端</td><td>仓库自带《金额分单位化专项评审.md》未落地；Replace Primitive with Object（Money 内部存分），禁 r2 于金额路径</td></tr>
+    <tr><td><span class="chip p2">P2</span></td><td class="loc">Q-05</td><td>资金降级路径静默吞异常无日志（sales:976、refund:108/299/336/504、auth:1370）</td><td class="loc">170 个无绑定 catch 中的真问题子集</td><td>金额口径悄悄变化无从排查；降级保留但必须 log.warn + traceId（与 L-10 同点修）</td></tr>
+    <tr><td><span class="chip p2">P2</span></td><td class="loc">Q-06</td><td>运维配置面：<code>.env.example</code> 仅文档化 2/23 个实际引用变量；无 <code>statement_timeout</code>/<code>idle_in_transaction_session_timeout</code> 护栏；报表与收银共用一个池</td><td class="loc">db.ts:18-32 + 全模块 grep</td><td>PAY_ENC_KEY 等关键项缺文档易静默降级；报表走独立只读小池；补启动期必填 env fail-fast 清单</td></tr>
+    <tr><td><span class="chip p3">P3</span></td><td class="loc">Q-07</td><td>低危卫生：<code>as any</code> 属性绕过 53、console/audit/appendFile 三套日志通道、超时魔法数（6000/8000/3000）散落、分页上限不一致（200/100/50）</td><td class="loc">device/ai/products 等</td><td>命名常量 + 统一 Log Adapter + parsePaging；机会性处理</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════ 前端 ═══════════ -->
+<section id="frontend" data-component="findings-frontend">
+  <div class="sec-head"><h2>六、前端（Web / H5 / Electron，8 项）</h2><span class="sec-note">渲染纪律总体好（609 处 innerHTML 抽样大多已 esc、eval/new Function 为 0）；缺口集中在防重、超时与桌面端注入面</span></div>
+  <table class="compact">
+    <tr><th style="width:56px">级别</th><th style="width:56px">ID</th><th>问题</th><th style="width:280px">位置</th><th>说明与修复</th></tr>
+    <tr><td><span class="chip p0">P0</span></td><td class="loc">F-01</td><td>会员卡号内联 JS 二次解码 XSS（详见第一节）</td><td class="loc">frontend-desktop/renderer/pos.js:339</td><td>data-* + 事件委托；onclick 禁拼动态值（构建期门禁）</td></tr>
+    <tr><td><span class="chip p1">P1</span></td><td class="loc">F-02</td><td><code>openDetailModal(title)</code> 不转义 title → 分类名存储型 XSS 回环</td><td class="loc">common-ui.js:18-20 → dashboard.js:270/178</td><td>函数内统一 esc(title)；错误消息两处（inventory-mgr:24/purchase-mgr:26）同补</td></tr>
+    <tr><td><span class="chip p1">P1</span></td><td class="loc">F-03</td><td>h5 与 web 的 call/fetch 封装无 try/catch、无超时 → 弱网下 unhandledrejection，用户点按钮毫无反馈</td><td class="loc">frontend-h5/app.js:12-22 · api.js:69-81</td><td>仿桌面端范本（pos.js:18-35 有 AbortController）：网络异常返回 {code:-1} + 全局 unhandledrejection 兜底 toast</td></tr>
+    <tr><td><span class="chip p1">P1</span></td><td class="loc">F-04</td><td>提交防重缺失：247 个 async 提交点仅 13 处禁用按钮；取单结账/充值代收/对账逐行保存双击即二次 POST</td><td class="loc">pos.js:479-494,538-549 · h5:349-358 · recon.js:800-821</td><td>统一提交守卫 + 写接口带 clientRequestId 幂等键（与 L-03 同族）</td></tr>
+    <tr><td><span class="chip p2">P2</span></td><td class="loc">F-05</td><td>JWT 存 localStorage 且 <code>imgUrl()</code> 把 token 拼进图片 URL query（进服务端访问日志/历史；任何 XSS 可直取长效凭据）</td><td class="loc">api.js:60,116 · pos.js:118 · h5:58</td><td>httpOnly Cookie + SameSite 或短时效签名 URL；桌面端 token 改走 preload 桥内存态</td></tr>
+    <tr><td><span class="chip p2">P2</span></td><td class="loc">F-06</td><td>Electron 主窗 <code>loadURL(http://…)</code> 明文远程执行 JS，该页持有 DesktopShell 特权桥（静默打印/kiosk/quit）；print-html IPC 无预览打印任意 HTML</td><td class="loc">frontend-desktop/src/main.js:267/290/414,531-533</td><td>contextIsolation/nodeIntegration 配置本身合规；改 https+证书指纹或 webRequest 源白名单；print-html 注入页加 CSP。注：桌面端无 401 回登录处理一并补</td></tr>
+    <tr><td><span class="chip p2">P2</span></td><td class="loc">F-07</td><td>suppliers.js 附件 URL 未 esc 拼属性 + target=_blank 缺 rel=noopener；window.open 四处同缺</td><td class="loc">suppliers.js:449,502 · home.js:426 等</td><td>esc + 强制 noopener + 协议白名单</td></tr>
+    <tr><td><span class="chip p3">P3</span></td><td class="loc">F-08</td><td>金额浮点前端累加（reduce 元浮点、出口一次性舍入）、0 AbortController 请求竞态、无 CSP、数量上界缺失、h5 esc 不转单引号、esc/money 四端分叉（server.mjs 两份已不同）、products.js 2087 行上帝文件</td><td class="loc">pos.js:292/485 · h5:436 · 全端</td><td>前端以分整数运算；请求竞态加序号/Abort；共享 shared/ 模块收敛四端重复。展示性浮点误差影响小，关键在 payments 提交口径（见第七节核验）</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════ 行动计划 ═══════════ -->
+<section id="actions" data-component="action-plan">
+  <div class="sec-head"><h2>七、行动优先级与路线图</h2><span class="sec-note">按 严重度 × 影响 × 工作量 排序；估算为单名熟悉代码库工程师的工作量</span></div>
+
+  <ul class="timeline">
+    <li>
+      <div class="tl-when">第 1 周 · 止血（合计 ≈4–5 人日，全部为局部小改）</div>
+      <ul class="tight">
+        <li><b>L-01</b> sync status 双赋值合并（0.5d，含假 HQ 集成用例）——连锁失败处理立即复活</li>
+        <li><b>L-02</b> fifoAlloc/applyOutStock 去默认参数全链路传 curStore()（0.5d）——多店上线前置条件</li>
+        <li><b>L-03</b> micropay PENDING 占位前置 + 退款同检（1d）——双扣闭环</li>
+        <li><b>F-01/F-02</b> 桌面 onclick 数据改 data-*；openDetailModal 内 esc（0.5d）+ 全端 onclick 门禁规则</li>
+        <li><b>P-02</b> 仪表盘趋势改读 daily_settlement（1d）——老板端打开首页不再全表扫</li>
+        <li>顺手（quick wins）：S-05 脚本删弱连接串回退、S-03 /signatures 挂鉴权、F-07 noopener、L-17 字段名修正</li>
+      </ul>
+    </li>
+    <li>
+      <div class="tl-when">第 2–4 周 · 结账链路与券/库存口径（≈2 周）</div>
+      <ul class="tight">
+        <li><b>P-01 + L-11</b> 发号计数器表统一改造，30+ 种单号一处迁移（3d，含撞号并发测试）</li>
+        <li><b>P-03</b> 结账批量取价/loadMap 一次化/sale_items 多值化（3d）——事务语句数降一个量级</li>
+        <li><b>L-04</b> HQ 扣款/通道退款两阶段化（4–5d，动协议，需灰度）</li>
+        <li><b>L-05/L-06/L-07/L-08</b> 券封顶、退货回补台账、口径统一、水位连续前缀（各 0.5–1d）</li>
+        <li><b>S-01</b> 停用即推 token_version（0.5d）；<b>F-03/F-04</b> 请求层超时 + 提交守卫铺开（2d）</li>
+      </ul>
+    </li>
+    <li>
+      <div class="tl-when">第 2 个月 · 结构性还债（与业务迭代并行）</div>
+      <ul class="tight">
+        <li><b>Q-02</b> 特征测试基座：计价/分摊/FIFO/calcRows 纯函数抽离 + vitest 表驱动 + CI 门禁（1.5 周，先于任何大重构）</li>
+        <li><b>Q-01</b> checkout 按聚合拆分四服务（行为不变，依赖上条的测试网）</li>
+        <li><b>P-04…P-08</b> 报表集合化、盘点分片、归档分批、缺失索引一批、价目表指纹化</li>
+        <li><b>S-04</b> LEGACY 密钥过渡截止机制；<b>Q-04</b> Money 分单位收敛（按评审文档推进）</li>
+        <li><b>F-06</b> Electron https/源锁定 + <b>F-05</b> 凭据载体改造（httpOnly Cookie）</li>
+      </ul>
+    </li>
+  </ul>
+
+  <div class="callout info" style="margin-top:20px"><h5>验收标准建议（修复后逐项回测）</h5>
+  <ul class="tight" style="margin-bottom:0">
+    <li>并发测试：同 out_trade_no 双请求 → 通道侧仅一笔；8 收银机并行结账 → 无 timeout、单号无撞、P95 结账事务语句数 &lt; 20。</li>
+    <li>连锁演练：分店盘点/报损/退货 → 总部与分店 inventory_current、batches、stock_flows 三账相符；假 HQ 返回 rejected → 单据 3 次退避后进 dead。</li>
+    <li>安全回归：桌面端注入卡号样本、openDetailModal 分类名样本在 CSP 下不执行；/signatures 未登录 401。</li>
+  </ul></div>
+</section>
+
+<!-- ═══════════ 核验 ═══════════ -->
+<section id="verification" data-component="verification">
+  <div class="sec-head"><h2>八、结论核验与已排除项</h2><span class="sec-note">supercharge 纪律：扫描代理的报告是「主张」不是「证据」——以下为本轮亲自取证情况</span></div>
+  <div class="two-col">
+    <div class="panel">
+      <h4>直接读码复核通过（8 项）</h4>
+      <ul class="tight" style="font-size:13.2px">
+        <li>L-01 <span class="loc">sync-store.service.ts:160-211</span> 三处 status 双赋值逐行目视确认</li>
+        <li>L-02 <span class="loc">inventory:1398/1421 + grep 调用点</span> 408/409/774/959 未传参、1063 正确传参</li>
+        <li>L-03 <span class="loc">pay.gateway.ts:95-139</span> 先查后扣、PENDING 仅事后写</li>
+        <li>L-10 <span class="loc">sales.module.ts:965-994</span> catch 吞 + 后续 audit 同事务</li>
+        <li>S-02 <span class="loc">return-chain:55-99</span> acceptStore 未鉴权直落 store_id</li>
+        <li>P-02 <span class="loc">reports:271-284</span> 无范围谓词表达式 JOIN</li>
+        <li>F-01 <span class="loc">pos.js:333-341</span> onclick 拼 card_no/balance</li>
+        <li>P-01 <span class="loc">db.ts:76-81</span> xact 级锁 + LIKE count（自读）</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h4>主动降级 / 排除的“疑似问题”</h4>
+      <ul class="tight" style="font-size:13.2px">
+        <li><b>降级：</b>“前端提交金额可篡改”（counter/pos 传前端算的 payments.amount）——复核后端：payable 服务端重算（sales:428）、落账 <code>settlePaidCas</code> 逐分 CAS 校验（:1044-1049），前端价仅展示口径 → 由 P0 降为 F-08 纵深防御。</li>
+        <li><b>排除：</b>约 60 处 SQL <code>${...}</code> 拼接——逐点核验为参数位编号、Number 钳制或白名单字面量，无一可被外部输入控制；md5/sha1 均为非加密用途（指纹/缓存键）；remote.sign 取件码不充当凭据。</li>
+        <li><b>排除：</b>优惠券/余额/退款的“读后写”竞态——实有 FOR UPDATE/原子累加/CAS（正面结论）；循环依赖告警系注释文字误报；sign.ts 路径拼接输入链证明不受请求控制；stateCache 等无界增长嫌疑排除。</li>
+        <li><b>正面确认：</b>179 个 tx() 块 0 处混用全局 q()；TODO/调试残留 0；member/员工 token 双向隔离；@Public 全清单逐一评估（ratelimit 默认不信 XFF、NodeGuard timingSafeEqual+nonce）。</li>
+      </ul>
+    </div>
+  </div>
+  <p class="f-b" style="margin-top:12px;color:var(--fg-muted);font-size:12.8px">诚实性说明：S-03/S-04/S-06、L-05…L-09、P-04…P-07 及前端 F-03/F-04/F-05 等条目来自五路深度扫描的结构化报告（含行号与代码摘录），审计员对同文件邻近行做了模式抽检且未发现编造；行号可能因后续提交 ± 数行漂移，动手前请以符号搜索定位为准。L-14（促销超发）与 S-08（改价票据复用）置信度相对较低，建议修复时先行验证。</p>
+</section>
+
+<!-- ═══════════ 覆盖度 ═══════════ -->
+<section id="coverage" data-component="coverage">
+  <div class="sec-head"><h2>九、审查方法与覆盖度</h2></div>
+  <table class="compact">
+    <tr><th style="width:190px">维度</th><th>说明</th></tr>
+    <tr><td>方法</td><td>production-code-audit 全维度检测（架构/安全/性能/质量/测试/生产就绪）+ supercharge 15 类坏味道扫描与严重度矩阵；五路并行深度分析代理（安全、资金逻辑、性能、后端质量、前端）+ 审计员逐条回读源码验证 + 主动证伪。</td></tr>
+    <tr><td>已深读/逐点核验</td><td>backend：common 全部关键文件（db/auth/member-auth/scope/context/http/ratelimit/secret/uploads/cert）；sales / sales.fifo / sales.jobs / inventory / purchase / products / reports / pos / refund / return-chain / coupons / promotions / members / member-app / pay.gateway / sync / sync-store / shift / auth 的资金与守卫路径；db/001_init.sql 及 190 个迁移的索引清单。</td></tr>
+    <tr><td>已模式化扫描</td><td>全 97 个后端文件 + 前端三端全部 JS：SQL 拼接、@Public/RequirePerms、child_process/fetch/fs IO、Math.random/md5、FOR UPDATE/竞态、innerHTML/esc、防重/超时、catch/any/TODO 统计。</td></tr>
+    <tr><td style="color:var(--c-p1)">未覆盖 / 建议专项</td><td>purchase 供应商结算寄售全段(~1700 行)、bigcustomer、dividend、member-chain 补偿链、chain HQ 侧全量、各 ai.* 算法内部、db 迁移逐条、hiprint/jquery 等 vendor 已知 CVE、mobile-apk、release 构建物。其中 <b>dividend/member-chain 与本报告 L-04/L-09 的资金后果直接相关</b>，建议下一轮专项。</td></tr>
+    <tr><td>本次改动</td><td>0 —— 纯审查报告，未修改任何源码文件（用户仅要求报告；修复建议均附于对应条目）。</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════ 附录 ═══════════ -->
+<section id="appendix" data-component="appendix">
+  <div class="sec-head"><h2>附录 · 量化画像</h2></div>
+  <div class="two-col">
+    <div class="panel">
+      <h4>代码规模 Top 热点文件（后端）</h4>
+      <div class="bar-row"><span class="loc">purchase.module</span><div class="bar"><i style="width:100%;background:var(--seed-primary)"></i></div><span>2850</span></div>
+      <div class="bar-row"><span class="loc">products.module</span><div class="bar"><i style="width:71%;background:var(--seed-primary)"></i></div><span>2029</span></div>
+      <div class="bar-row"><span class="loc">chain.module</span><div class="bar"><i style="width:60%;background:var(--seed-primary)"></i></div><span>1709</span></div>
+      <div class="bar-row"><span class="loc">ai.module</span><div class="bar"><i style="width:53%;background:var(--seed-primary)"></i></div><span>1515</span></div>
+      <div class="bar-row"><span class="loc">inventory.module</span><div class="bar"><i style="width:51%;background:var(--seed-primary)"></i></div><span>1455</span></div>
+      <div class="bar-row"><span class="loc">sales.module</span><div class="bar"><i style="width:48%;background:var(--c-p0)"></i></div><span>1376</span></div>
+      <div class="bar-row"><span class="loc">auth.module</span><div class="bar"><i style="width:48%;background:var(--seed-primary)"></i></div><span>1372</span></div>
+      <div class="bar-row"><span class="loc">前端 products.js</span><div class="bar"><i style="width:73%;background:var(--c-p2)"></i></div><span>2087</span></div>
+      <div class="bar-row"><span class="loc">前端 settings.js</span><div class="bar"><i style="width:55%;background:var(--c-p2)"></i></div><span>1565</span></div>
+    </div>
+    <div class="panel">
+      <h4>体检指标速览</h4>
+      <table class="compact" style="border:none">
+        <tr><td>源码规模</td><td style="text-align:right"><b>63.4K 行 / 180 文件</b>（后端 35,717 · Web 25,375 · 桌面 1,641 · H5 727）</td></tr>
+        <tr><td>测试</td><td style="text-align:right">e2e 1 文件 170 断言 · <b style="color:var(--c-p0)">单测 0 · CI 0</b></td></tr>
+        <tr><td>SQL 参数化</td><td style="text-align:right">全量参数化 · 拼接 60 处均白名单/数字（0 可利用）</td></tr>
+        <tr><td>事务纪律</td><td style="text-align:right">179 tx 块 0 处连接逃逸 · audit 随事务回滚设计</td></tr>
+        <tr><td>innerHTML 使用</td><td style="text-align:right">609 处（web 548 / h5 35 / 桌面 26），抽样多数已 esc</td></tr>
+        <tr><td>eval / new Function</td><td style="text-align:right"><b style="color:var(--c-ok)">0</b></td></tr>
+        <tr><td>Electron 基线</td><td style="text-align:right">contextIsolation ✓ · nodeIntegration ✗(已关) · 远程 HTTP 源未锁</td></tr>
+        <tr><td>提交点防重覆盖</td><td style="text-align:right">13 / 247（5%）</td></tr>
+        <tr><td>索引补课</td><td style="text-align:right">迁移 188-190 持续加索引；仍有 5 类热点缺</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<footer data-component="report-footer">
+  <p><b>超市收银系统 v5.0.14 · 源码审查报告</b> — 2026-10-09 生成。方法：production-code-audit（全维度缺陷检测）× supercharge（15 类坏味道 + 严重度矩阵 + 验证纪律），五路并行深度扫描、关键结论逐条回读源码取证。</p>
+  <p>本报告为静态审查结论；第七节验收标准建议在修复后以并发/演练实测复核。共 49 项发现：P0 6 / P1 18 / P2 20 / P3 5。未修改任何被审代码。</p>
+</footer>
+</main>
+</body>
+</html>

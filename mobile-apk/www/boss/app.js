@@ -442,6 +442,9 @@ function logout() {
   TOKEN = ''; ME = null;
   /* V5.0.14b：统一登录入口 —— 退出后回员工端初始登录页（由账号角色判定进哪个端），
    * 不再停留在老板端自己的登录页。同会话的员工端登录态一并清除（单一会话口径）。 */
+  /* V5.0.19h（F-05）：补清自身 boss_token —— 旧实现只清 pwa_token/pwa_post_login，
+   * 自身长效凭据残留 localStorage，登出后仍可被读取（V-28「登出即失效」命中点）。 */
+  try { localStorage.removeItem(LS.token); } catch { }
   try { localStorage.removeItem('pwa_token'); } catch { }
   try { localStorage.removeItem('pwa_post_login'); } catch { }
   resolvePwaUrl().then(u => { location.replace(u || location.pathname); });

@@ -12,7 +12,7 @@
 import { Body, Controller, Post } from '@nestjs/common';
 import { AuthUser, CurrentUser } from '../common/auth';
 import { BizException } from '../common/http';
-import { q, tx, audit } from '../common/db';
+import { q, tx, audit, seqLock, cx as cxr } from '../common/db';   // V5.0.19i（Q-03）
 import { PRODUCT_VISIBLE } from '../common/sql';   // V5.0.0 商品可售可见性
 
 /** V4.14.8 签字1：手写签名姓名识别（本地 VL 模型；未启用/不可达时返回空名 → 前端回退人工填写） */
@@ -348,8 +348,10 @@ export class AiOcrController {
     const writable = okRows.filter(r => !r.blocked);
     if (!writable.length) throw new BizException(50010, '全部明细被低价保护拦截（可在识别结果中勾选强制通过）');
     return tx(async c => {
-      const cx = (sql: string, p: any[] = []) => c.query(sql, p).then((x: any) => x.rows);
-      const seq = await cx(`SELECT count(*)+1 AS n FROM inbound_orders WHERE inbound_no LIKE $1`, [`RK-${new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '')}-%`]);
+      const cx = (sql: string, p: any[] = []) => cxr(c, sql, p);   // V5.0.19i（Q-03）：委托 common/db 规范实现
+      // L-11：改用 doc_seq 原子发号（原裸 count(*)+1 并发撞 inbound_no 唯一约束）
+      const rkToday = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '');
+      const seq = await seqLock(c, 'inbound_orders', 'inbound_no', `RK-${rkToday}-%`);
       const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '');
       const no = `RK-${today}-${String(seq[0].n).padStart(3, '0')}`;
       const ord = await cx(

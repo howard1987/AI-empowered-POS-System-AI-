@@ -70,11 +70,18 @@ async function api(method, path, body) {
   return r.data;
 }
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-/* V4.28.5 F-09：/uploads 已挂登录鉴权，<img src> 无法带 header → 拼 ?token= */
+/* V5.0.19h（F-05）：图片改用 60s img 短时票据（/auth/img-ticket），不再拼长效 pwa_token 进 URL。
+ * 票据缓存 50s；页面初始化时预取（见 loadPending），渲染前 await 确保就绪。 */
+let _imgTicket = '', _imgTicketExp = 0;
+async function refreshImgTicket() {
+  if (_imgTicketExp > Date.now() + 8000) return _imgTicket;
+  try { const r = await api('POST', '/auth/img-ticket'); _imgTicket = (r && r.ticket) || ''; _imgTicketExp = Date.now() + 50000; } catch { _imgTicket = ''; _imgTicketExp = 0; }
+  return _imgTicket;
+}
 const imgUrl = p => {
   const url = API_BASE + String(p || '');
-  if (!/^\/uploads\//.test(String(p || '')) || !TOKEN) return url;
-  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN);
+  if (!/^\/(uploads|signatures)\//.test(String(p || '')) || !TOKEN) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(_imgTicketExp > Date.now() ? _imgTicket : '');
 };
 
 /* ── 队列视图 ── */

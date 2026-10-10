@@ -3,6 +3,7 @@ import {
   CallHandler, ExecutionContext, Injectable, NestInterceptor,
 } from '@nestjs/common';
 import { Observable, map } from 'rxjs';
+import { logError } from './logger';
 
 /** 业务异常：code 按《开发执行文件》第 4 节错误码段（50xxx 业务规则等） */
 export class BizException extends HttpException {
@@ -51,15 +52,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
       const detail = exception instanceof Error ? (exception.stack || exception.message) : String(exception);
       // V4.14.4 安全加固：未知异常详情只进服务端日志，不向客户端透传（原实现会把
       // PG 报错原文（含表名/约束名/SQL 片段）返回给前端，属于信息泄露）
-      console.error('[未处理异常]', detail);
-      try {
-        const fs = require('fs');
-        const path = require('path');
-        const dir = path.join(__dirname, '..', '..', 'logs');
-        fs.mkdirSync(dir, { recursive: true });
-        fs.appendFileSync(path.join(dir, 'error.log'),
-          `[${new Date().toISOString()}] [filter] ${detail}\n`);
-      } catch { /* 日志失败不影响主流程 */ }
+      // Q-07 #8：日志统一走 logger（error.log 由 logger.ts 独占写）
+      logError('未处理异常', detail);
       // body-parser 超限（PayloadTooLargeError，type=entity.too.large）→ 413 中文提示
       const tooLarge = exception instanceof Error && (exception as any).type === 'entity.too.large';
       if (tooLarge) {

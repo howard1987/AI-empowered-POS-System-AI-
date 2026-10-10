@@ -1,4 +1,4 @@
-import { Module, Controller, Get, Post, Delete, Body, Param, ParseIntPipe, Query } from '@nestjs/common';
+import { Module, Controller, Get, Post, Delete, Body, Param, ParseIntPipe, Query, Req, Res } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { q, q1, tx, cx, r2, r3, audit, pool } from '../common/db';
 import { curStore, curEmp } from '../common/context';
@@ -34,7 +34,25 @@ class PosController {
   // ═══════════ 价目表（T14 应急包） ═══════════
 
   @Get('pricebook')
-  async pricebook(@CurrentUser() user: AuthUser) {
+  async pricebook(@CurrentUser() user: AuthUser, @Req() req: any, @Res({ passthrough: true }) res: any) {
+    // P-09（前半）：价目表指纹——4 张来源表的廉价聚合（count+max）算 md5，
+    //   If-None-Match 命中即 304：跳过全量 json_agg 重建、跳过快照写入。设备多、调用频时收益显著。
+    const fp = String((await q(
+      `SELECT md5(CONCAT(
+          (SELECT count(*) FROM products p WHERE p.deleted_at IS NULL AND ${PRODUCT_VISIBLE('$1')}), '|',
+          (SELECT COALESCE(max(updated_at)::text, '-') FROM products p2 WHERE p2.deleted_at IS NULL), '|',
+          (SELECT COALESCE(max(id)::text, '-') FROM product_barcodes), '|',
+          (SELECT count(*) FROM product_barcodes), '|',
+          (SELECT COALESCE(max(id)::text, '-') FROM product_units), '|',
+          (SELECT count(*) FROM product_units), '|',
+          (SELECT COALESCE(max(updated_at)::text, '-') FROM product_store_prices WHERE store_id = $1), '|',
+          (SELECT count(*) FROM product_store_prices WHERE store_id = $1)
+       )) AS fp`, [user.storeId]))[0]?.fp || '');
+    res.setHeader('ETag', `"${fp}"`);
+    res.setHeader('Cache-Control', 'no-cache');
+    const inm = String(req.headers['if-none-match'] || '').replace(/"/g, '');
+    if (inm && inm === fp) { res.status(304); return null; }
+
     const items = await q(
       `SELECT p.id,
               p.goods_no AS "goodsNo",
@@ -423,7 +441,7 @@ class PosController {
   @Post('held/:id/checkout')
   async checkoutHeld(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { payments: { channel: string; amount: number; externalNo?: string }[]; couponId?: number; shiftId?: number; guestPhone?: string },
+    @Body() body: { payments: { channel: string; amount: number; externalNo?: string }[]; couponId?: number; shiftId?: number; guestPhone?: string; clientRef?: string },
     @CurrentUser() user: AuthUser,
   ) {
     // P2-M4：先 CAS 认领（挂单中→结账中），并发双击/双端取单时后到者立即失败，结账异常则回置
@@ -451,6 +469,7 @@ class PosController {
       shiftId: body.shiftId,
       remark: `挂单#${id}取单结账`,
       guestPhone: body.guestPhone,
+      clientRef: body.clientRef,   // F-04：透传幂等单号（sales.checkout 已按 clientRef 去重，防取单双击/丢响应重复落单）
     }); } catch (e) {
       await q(`UPDATE held_orders SET status='挂单中' WHERE id=$1 AND status='结账中'`, [id]); // 失败回置可重取
       throw e;
@@ -684,7 +703,7 @@ class PosController {
     const refunds = await q1<any>(
       `SELECT COUNT(*)::int AS cnt, COALESCE(SUM(r.amount),0)::float8 AS amount
          FROM sale_refunds r JOIN sales_orders o ON o.id = r.order_id
-        WHERE o.store_id=$1 AND r.status='已退款' AND COALESCE(r.pay_paid_at, r.created_at)::date=$2::date`,
+        WHERE o.store_id=$1 AND r.status='已退款' AND r.created_at::date=$2::date`,
       [user.storeId, d]);
     const neg = await q1<any>(
       `SELECT COUNT(*)::int AS cnt FROM audit_logs

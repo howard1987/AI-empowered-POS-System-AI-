@@ -6,6 +6,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, Public } from '../common/auth';
 import { normalizeChineseText } from './text-normalize';
+import { TTS_PREHEAT_DELAY_MS } from '../common/timeouts';   // V5.0.19i（Q-07）
 
 /**
  * V4.24.1 服务端离线神经语音（piper）：
@@ -377,5 +378,5 @@ if (hasEngine()) {
   setTimeout(() => {
     synthResident('欢迎光临', 1).catch(() => { });
     synthResident('欢迎光临', 1.05).catch(() => { });
-  }, 3000);
+  }, TTS_PREHEAT_DELAY_MS);
 }

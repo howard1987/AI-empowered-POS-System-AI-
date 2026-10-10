@@ -14,7 +14,7 @@ export function openDetailModal(title, html, opts = {}) {
   mask.className = 'modal-mask';
   mask.style.cssText = 'display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:4vh 12px';
   mask.innerHTML = `<div class="modal" style="width:min(${opts.width || 860}px, 94vw);max-width:94vw;max-height:88vh;display:flex;flex-direction:column;margin-bottom:6vh">
-    <h3 style="display:flex;align-items:center;gap:10px"><span style="flex:1">${title}</span></h3>
+    <h3 style="display:flex;align-items:center;gap:10px"><span style="flex:1">${esc(title)}</span></h3>
     <div class="cdm-body" style="overflow:auto">${html}</div></div>`;
   document.body.appendChild(mask);
   const close = () => { mask.remove(); opts.onClose?.(); };

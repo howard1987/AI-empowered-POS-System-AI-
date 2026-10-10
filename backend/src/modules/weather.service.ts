@@ -6,6 +6,7 @@
  *  - 降级：外网失败/城市解析失败 → 静默读缓存旧值（stale 标记），绝不抛错阻塞业务（同条码链「宁缺毋滥」）
  */
 import { q, q1 } from '../common/db';
+import { EXTERNAL_API_TIMEOUT_MS } from '../common/timeouts';   // V5.0.19i（Q-07）
 
 export interface WxDay {
   date: string;            // YYYY-MM-DD
@@ -104,7 +105,7 @@ async function geocodeOpenMeteo(city: string): Promise<{ lat: number; lng: numbe
   if (mem) return mem;
   try {
     const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=zh&format=json`,
-      { signal: AbortSignal.timeout(8000) });
+      { signal: AbortSignal.timeout(EXTERNAL_API_TIMEOUT_MS) });
     if (!res.ok) return null;
     const j: any = await res.json();
     const hit = j?.results?.[0];
@@ -123,7 +124,7 @@ async function geocodeQWeather(city: string, key: string, host: string): Promise
     const legacy = host.includes('qweather.com');
     const geoHost = legacy ? 'https://geoapi.qweather.com' : `${host.replace(/\/+$/, '')}/geo`;
     const url = `${geoHost}/v2/city/lookup?location=${encodeURIComponent(city)}&key=${encodeURIComponent(key)}`;
-    const res = await fetch(url, { headers: { 'X-QW-Api-Key': key }, signal: AbortSignal.timeout(8000) });
+    const res = await fetch(url, { headers: { 'X-QW-Api-Key': key }, signal: AbortSignal.timeout(EXTERNAL_API_TIMEOUT_MS) });
     if (!res.ok) return null;
     const j: any = await res.json();
     const hit = j?.location?.[0];

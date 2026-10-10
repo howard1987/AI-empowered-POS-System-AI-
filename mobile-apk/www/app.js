@@ -117,6 +117,9 @@ async function api(method, path, body) {
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+  // V5.0.19h（F-06）：会话过期（token 失效/被踢）→ 自动回登录页，不卡在收银台报错。
+  // 仅在「持有 TOKEN 时」触发，避免登录页本身 401（密码错）形成循环。
+  if (res.status === 401 && TOKEN) { logout(); return { code: 40100, msg: '登录已过期，请重新登录', data: null }; }
   return res.json().catch(() => ({ code: -1, msg: '网络异常（HTTP ' + res.status + '）', data: null }));
 }
 async function call(method, path, body) {

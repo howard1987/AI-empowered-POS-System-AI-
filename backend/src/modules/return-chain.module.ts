@@ -14,11 +14,12 @@ import { q, q1, tx, cx, audit, r2, r3 } from '../common/db';
 import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms } from '../common/auth';
 import { curStore } from '../common/context';
-import { chainEnabled, hqStoreId, isHqStore } from '../common/scope';
+import { chainEnabled, hqStoreId, isHqStore, assertStoreAllowed } from '../common/scope';
 import { publish } from '../common/outbox';
 import { COST_REF } from '../common/sql';
 import { seqLock } from '../common/db';
 import { SettingsService } from './settings.module';
+import { calcRefundRows } from './refund.module';   // L-19：跨店退货与单店共用退款重算口径
 
 /* ═══════════════════════ 跨店退货（R6/R9，方案 §5.7） ═══════════════════════ */
 
@@ -65,13 +66,14 @@ class CrossReturnService {
   async apply(user: AuthUser, dto: { orderNo: string; storeId?: number; items: { saleItemId: number; qty: number }[]; reason?: string }) {
     const lookup = await this.lookup(user, dto.orderNo);
     const acceptStore = Number(dto.storeId ?? user.storeId);
+    // S-02 修复：受理店必须过写路径 scope 断言 —— 防 A 店收银员把退货单/资金往来挂到任意 B 店（单店部署该断言为空操作，零回归）
+    assertStoreAllowed(acceptStore, '跨店退货受理店');
     if (lookup.sameStore) throw new BizException(50074, '原单即本店销售，请走本店退货，无需跨店');
     if (!Array.isArray(dto.items) || !dto.items.length) throw new BizException(40003, '退货明细不能为空');
 
     return tx(async c => {
-      // 逐行重算金额（服务端唯一权威；unit = line_amount / qty 按比例）
-      let amount = 0;
-      const rows: { saleItemId: number; qty: number; amount: number }[] = [];
+      // 逐行校验（可退量以总部台账为准）
+      const calcItems: { saleItemId: number; qty: number; line: any }[] = [];
       for (const it of dto.items) {
         const li = lookup.items.find((x: any) => x.saleItemId === Number(it.saleItemId));
         if (!li) throw new BizException(50072, `明细行#${it.saleItemId}不属于该原单或不可退`);
@@ -79,12 +81,15 @@ class CrossReturnService {
         if (!(qty > 0) || qty > li.refundable) {
           throw new BizException(50072, `${li.name} 可退数量不足（可退 ${li.refundable}）`);
         }
-        const unit = Number(li.lineAmount) / Number(li.qty);
-        const amt = r2(unit * qty);
-        amount += amt;
-        rows.push({ saleItemId: li.saleItemId, qty, amount: amt });
+        calcItems.push({ saleItemId: li.saleItemId, qty, line: { qty: li.qty, unit_price: li.unitPrice } });
       }
-      amount = r2(amount);
+      // L-19（拍板 2026-10-09）：金额口径与单店 calcRows 完全一致——订单级净额重算
+      // （退前剩余实付 − 退后应收：按原单门店重跑促销、券不回退同额抵扣、抹零重算），
+      // 替代原「按行单价直算」——用券/整单折扣后跨店退货偏多退的口径缺陷。
+      const order = (await cx(c, `SELECT * FROM sales_orders WHERE id=$1`, [lookup.orderId]))[0];
+      const calc = await calcRefundRows(c, this.settings, order, calcItems);
+      const amount = calc.amount;
+      const rows = calcItems.map((ci, i) => ({ saleItemId: ci.saleItemId, qty: ci.qty, amount: calc.rowAmts[i] }));
       if (amount <= 0) throw new BizException(40003, '退货金额计算为 0');
 
       const ymd = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10).replace(/-/g, '');
@@ -268,6 +273,15 @@ class StoreCrossReturnController {
               WHERE batch_no=$3 AND store_id=$1 ORDER BY id DESC LIMIT 1`,
             [user.storeId, Number(it.productId), `KR-${String(t.refund_no)}`,
              Number(it.hqCost ?? 0), id, user.sub]);
+          // L-06 修复：跨店退货 new_batch 入库必须同步回补 inventory_current。
+          // 结账超卖闸 / 落账唯一以 inventory_current 为准（与 D4「两本账同源」一致），否则退回的货
+          // 「账面在 batches、闸门锁 inventory_current」→ 卖不出或落账扣成负。仿 receiveTransfer 的 ON CONFLICT upsert。
+          await cx(c,
+            `INSERT INTO inventory_current (store_id, product_id, qty_total, qty_on_order)
+             VALUES ($1,$2,$3,0)
+             ON CONFLICT (store_id, product_id)
+             DO UPDATE SET qty_total = inventory_current.qty_total + $3, updated_at=now()`,
+            [user.storeId, Number(it.productId), Number(it.qty)]);
         }
       }
       await cx(c, `UPDATE cross_return_tasks SET status=$2, recv_by=$3, recv_at=now(), recv_remark=$4 WHERE id=$1`,

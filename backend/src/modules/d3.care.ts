@@ -15,19 +15,29 @@ async function sGet(k: string): Promise<any> {
 }
 const unq = (v: any) => String(v ?? '').replace(/"/g, '').trim();
 
-/** ① 审计日志保留期清理：返回 { skipped?, days?, moved } */
-export async function cleanupAuditLogs(): Promise<{ skipped?: boolean; days?: number; moved?: number }> {
+/** ① 审计日志保留期清理：返回 { skipped?, days?, moved, batches } */
+export async function cleanupAuditLogs(): Promise<{ skipped?: boolean; days?: number; moved?: number; batches?: number }> {
   const days = Number(unq(await sGet('auth.audit_retention')));
   if (!Number.isFinite(days) || days <= 0) return { skipped: true, days };
   const cut = await q1<{ t: Date }>(`SELECT (now() - ($1 || ' days')::interval) AS t`, [String(days)]);
-  const moved = await q(
-    `WITH x AS (
-         DELETE FROM audit_logs WHERE created_at < $1
-         RETURNING id, store_id, employee_id, module, action, target_type, target_id, detail, ip, created_at)
-     INSERT INTO audit_logs_archive (id, store_id, employee_id, module, action, target_type, target_id, detail, ip, created_at)
-     SELECT * FROM x RETURNING id`, [cut!.t]);
-  if (moved.length) console.log(`[审计清理] 迁移超期审计日志 ${moved.length} 行 → audit_logs_archive（保留期 ${days} 天）`);
-  return { moved: moved.length };
+  // P-06 修复：原单条 DELETE…RETURNING 一次搬全量（首跑几十万行） → 长事务 + WAL 洪峰，可能拖垮 DB。
+  // 改为每批 LIMIT 5000 循环、每批独立小事务（PG DELETE 无 LIMIT，用 id IN (子查询 LIMIT) 实现分批）。
+  const CHUNK = 5000;
+  let total = 0, batches = 0;
+  while (true) {
+    const moved = await q(
+      `WITH x AS (
+           DELETE FROM audit_logs
+            WHERE id IN (SELECT id FROM audit_logs WHERE created_at < $1 LIMIT $2)
+           RETURNING id, store_id, employee_id, module, action, target_type, target_id, detail, ip, created_at)
+       INSERT INTO audit_logs_archive (id, store_id, employee_id, module, action, target_type, target_id, detail, ip, created_at)
+       SELECT * FROM x RETURNING id`, [cut!.t, CHUNK]);
+    total += moved.length;
+    batches++;
+    if (moved.length < CHUNK) break;
+  }
+  if (total) console.log(`[审计清理] 迁移超期审计日志 ${total} 行 → audit_logs_archive（保留期 ${days} 天，${batches} 批）`);
+  return { moved: total, batches };
 }
 
 /** ② 开业日全员广播（batch_key 幂等，同日重复调用不重发） */

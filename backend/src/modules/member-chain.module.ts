@@ -30,6 +30,7 @@ import { BizException } from '../common/http';
 import { AuthUser, CurrentUser, RequirePerms, Public } from '../common/auth';
 import { nodeIdentity, publish } from '../common/outbox';
 import { NodeGuard } from '../common/node-guard';
+import { HQ_HTTP_TIMEOUT_MS } from '../common/timeouts';   // V5.0.19i（Q-07）
 
 /* ═══════════════════════ 门店侧助手（被 sales/refund/members 引用） ═══════════════════════ */
 
@@ -50,7 +51,7 @@ function nodeNonce(): string {
   try { return crypto.randomUUID(); } catch { return `${Date.now()}-${Math.random()}`; }
 }
 
-async function nodeReq(method: 'GET' | 'POST', path: string, body?: unknown, timeoutMs = 8000): Promise<any> {
+async function nodeReq(method: 'GET' | 'POST', path: string, body?: unknown, timeoutMs = HQ_HTTP_TIMEOUT_MS): Promise<any> {
   const id = await nodeIdentity();
   if (!id || id.role !== 'store' || !id.hqBase || !id.selfToken) {
     throw new BizException(50070, '本节点未配置为连锁门店节点（缺节点编码/密钥/总部地址）');
@@ -79,12 +80,12 @@ async function nodeReq(method: 'GET' | 'POST', path: string, body?: unknown, tim
 }
 
 /** 门店 → 总部 POST（member 资产端点） */
-export function hqMemberPost(path: string, body: unknown, timeoutMs = 8000): Promise<any> {
+export function hqMemberPost(path: string, body: unknown, timeoutMs = HQ_HTTP_TIMEOUT_MS): Promise<any> {
   return nodeReq('POST', `/hq/member/${path}`, body, timeoutMs);
 }
 
 /** 门店 → 总部 GET（实时查档） */
-export function hqMemberGet(query: string, timeoutMs = 8000): Promise<any> {
+export function hqMemberGet(query: string, timeoutMs = HQ_HTTP_TIMEOUT_MS): Promise<any> {
   return nodeReq('GET', `/hq/member/lookup?${query}`, undefined, timeoutMs);
 }
 
