@@ -11,7 +11,15 @@
 -- ⚠ 必须与 scripts/server-up.mjs 的 ensureAppRole() 同步（那里每次启动会重新 GRANT），
 --    否则服务一重启权限就被授回来，本迁移形同虚设。
 --
--- 幂等：REVOKE 对不存在的权限不报错，可重复执行。
-
-REVOKE TRUNCATE ON ALL TABLES IN SCHEMA public FROM pos_app;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE TRUNCATE ON TABLES FROM pos_app;
+-- 幂等：REVOKE 对"不存在的权限"不报错，但**角色本身不存在时会报
+-- role "pos_app" does not exist**（2026-10-10 e2e 干净集群实证）。
+-- 故仅当 pos_app 角色已存在（生产路径由 server-up.mjs ensureAppRole 先建）才执行。
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pos_app') THEN
+    REVOKE TRUNCATE ON ALL TABLES IN SCHEMA public FROM pos_app;
+    ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE TRUNCATE ON TABLES FROM pos_app;
+  ELSE
+    RAISE NOTICE '197: pos_app 角色不存在（全新集群/e2e），跳过 REVOKE——部署时 ensureAppRole 建角色后重启会按需生效';
+  END IF;
+END $$;

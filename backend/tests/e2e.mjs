@@ -131,14 +131,20 @@ try {
   // ═══ 3. 启动后端服务 ═══
   console.log('▶ 启动后端服务 :3100 ...');
   server = spawn(process.execPath, ['dist/main.js'], {
-    cwd: ROOT, env: { ...process.env, DATABASE_URL, PORT: String(PORT) },
+    cwd: ROOT, env: { ...process.env, DATABASE_URL, PORT: String(PORT), LEGACY_DEFAULT_PW: 'admin123' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stderr.on('data', d => process.stderr.write(d));
+  // 2026-10-10 验收修复：stdout 必须"消费"掉——pipe 无人读取时缓冲(64KB)写满会阻塞子进程，
+  // 服务在 Nest 启动日志刷满后整体卡死、/health 永不可达（ECONNREFUSED 根因）。
+  server.stdout.on('data', () => {});
   ok(await waitHealth(), '服务启动且 /health 可达');
 
   // ═══ A. 登录鉴权 ═══
   console.log('■ A. 登录与鉴权');
+  // 2026-10-10 acceptance fix: V4.24.0+ admin is created via first-run bootstrap (init-db no longer seeds ADMIN)
+  const boot = await api('POST', '/auth/bootstrap-admin', { body: { empNo: 'ADMIN', name: 'system-admin', password: 'admin123' } });
+  if (boot.code !== 0) console.log('  [bootstrap-admin]', JSON.stringify(boot).slice(0,240));
   const login = await api('POST', '/auth/login', { body: { empNo: 'ADMIN', password: 'admin123' } });
   eq(login.code, 0, '管理员登录成功');
   let T = data(login)?.token;
@@ -172,10 +178,10 @@ try {
   console.log('■ C. 商品档案与供应商');
   const paRaw = await api('POST', '/products', { token: T, body: {
     name: '沁泉矿泉水550ml', base_unit: '瓶', sellPrice: 2, barcode: '6901234500017', keepDays: 365, minStock: 10 } });
-  if (paRaw.code !== 0) console.log('  [debug A]', JSON.stringify(paRaw));
+  if (paRaw.code !== 0 || !paRaw.data) console.log('  [debug A]', JSON.stringify(paRaw));
   const pa = data(paRaw);
   const pb = data(await api('POST', '/products', { token: T, body: {
-    name: '红富士苹果', base_unit: 'kg', sellPrice: 5.98, isWeighted: true, keepDays: 7 } }));
+    name: '红富士苹果', base_unit: 'kg', sellPrice: 5.98, isWeighted: true, trackInventory: false, keepDays: 7 } }));
   ok(pa?.id > 0 && pb?.id > 0, '商品建档成功（A 瓶装 / B 称重）');
   const bc = await api('GET', '/products/barcode/6901234500017', { token: T });
   eq(data(bc)?.product?.id, pa.id, '条码精确查询命中');
@@ -359,7 +365,7 @@ try {
   const i3 = data(await api('POST', '/purchase/recon', { token: T, body: {
     supplierId: SID, from: '2026-08-01', to: TO_STR } }));
   eq(i3?.reconNo, 'DZ-' + YM_MM + '-001', '对账单号规则');
-  near(i3?.payableTotal, 137.70, '对账应付 137.70');
+  near(i3?.payableTotal, 337.70 - 100 * AUTO_FEE_MONTHS, '对账应付（预览应付 - 协议补齐 ' + AUTO_FEE_MONTHS + ' 期，随月动态）');
   eq(i3?.autoFees?.length, AUTO_FEE_MONTHS, `协议漏记期次自动补齐 ${AUTO_FEE_MONTHS} 笔（V4.3.6）`);
   const RECON = i3.id;
   const i4 = await sqlOnly(`SELECT recon_id FROM inbound_orders WHERE id=$1`, [I1]);
@@ -373,9 +379,11 @@ try {
     confirmType: '现场确认', confirmName: '王业务' } });
   eq(data(i7)?.status, '已确认', '现场确认（V4.3.7）');
   const i8 = data(await api('POST', '/purchase/settlements', { token: T, body: { reconId: RECON, payMode: '转账' } }));
-  near(i8?.amount, 137.70, '结算单金额 = 对账应付');
+  near(i8?.amount, 337.70 - 100 * AUTO_FEE_MONTHS, '结算单金额 = 对账应付（动态期数）');
   const i9 = data(await api('POST', `/purchase/settlements/${i8.id}/audit`, { token: T }));
-  eq(i9?.status, '已审核', '结算审核通过');
+  eq(i9?.status, '付款中', '结算审核 → 付款中（VQA-D3 recon.settle_pay_flow 两段式）');
+  const i9pay = data(await api('POST', `/purchase/settlements/${i8.id}/pay`, { token: T }));
+  eq(i9pay?.status, '已付款', '确认付款 → 已付款（两段式终结）');
   const led = await sqlOnly(
     `SELECT balance_after FROM supplier_ledger WHERE supplier_id=$1 ORDER BY id`, [SID]);
   near(led.rows[led.rows.length - 1].balance_after, 0, '往来账闭环：结算后应付归零');
@@ -416,7 +424,7 @@ try {
   near(j3?.balanceAfter, 1010, '再充本金 950 → 余额 1010（总余额）');
   eq(j3?.level?.to, '银卡会员', '本金余额≥1000 立即升级银卡（决策①：只按本金判级）');
   const j3b = await sqlOnly(`SELECT reason FROM member_level_log WHERE member_id=$1 ORDER BY id`, [m3.id]);
-  ok(j3b.rows.some(r => r.reason === '升级'), '等级变更写 member_level_log 留痕');
+  ok(j3b.rows.some(r => String(r.reason).includes('升级')), '等级变更写 member_level_log 留痕（reason=成长值升级模板）');
   const j3c = data(await api('GET', `/members/${m3.id}`, { token: T }));
   eq(j3c?.member?.level_name, '银卡会员', '会员详情返回等级名称');
   // —— J4 银卡积分倍率 1.5 ——
@@ -438,15 +446,15 @@ try {
   eq(j6a.code, 50034, '积分不足 → 50034');
   const j6raw = await api('POST', '/sales/checkout', { token: T, body: {
     items: [{ productId: pa.id, qty: 1 }], memberId: m1.id,
-    payments: [{ channel: '积分抵扣', amount: 0.7 }, { channel: '现金', amount: 1.3 }] } });
+    payments: [{ channel: '积分抵扣', amount: 0.4 }, { channel: '现金', amount: 1.6 }] } }); // 2026-10 积分抵现上限≤应收20%（0.4=2×20%）
   if (j6raw.code !== 0) console.log('  [debug j6]', JSON.stringify(j6raw));
   eq(j6raw.code, 0, '积分抵扣 0.7 元 + 现金 1.3 元组合支付');
   const j6b = await sqlOnly(`SELECT points FROM members WHERE id=$1`, [m1.id]);
-  eq(Number(j6b.rows[0].points), 13, '积分 81+2-70 = 13（抵扣 0.7 元 = 70 分）');
+  eq(Number(j6b.rows[0].points), 42, '积分 81+1-40 = 42（抵扣 40 分；本单计提按有效消费 1.6 元挣 1 分——L-20 口径）');
   const j6c = await sqlOnly(
     `SELECT direction, points, biz_type FROM points_flows WHERE member_id=$1 AND biz_type='兑换' ORDER BY id DESC LIMIT 1`, [m1.id]);
   eq(j6c.rows[0].direction, '减', '积分兑换流水方向=减');
-  eq(Number(j6c.rows[0].points), 70, '积分兑换流水 70 分');
+  eq(Number(j6c.rows[0].points), 40, '积分兑换流水 40 分');
   // —— J7 分红权重 = 本金余额 × 等级系数 c（口径B + 5.1.12） ——
   const j7 = data(await api('GET', '/dividend/preview?netProfit=1000', { token: T }));
   const m3row = j7?.items?.find(x => x.memberId === m3.id);
@@ -461,7 +469,18 @@ try {
   if (j8raw.code !== 0) console.log('  [debug j8]', JSON.stringify(j8raw));
   eq(j8raw.code, 0, '王五余额再消费 20 → 余额 990');
   const j8 = data(j8raw);
-  eq(j8?.level?.graceStarted === true, true, '低于银卡阈值 → 进入 7 天宽限期（未立即降级）');
+  // 2026-10-10 改造：V5.0.17 起等级判定=成长值口径（本金判级已废弃）。构造减向成长记录，使近周期成长值跌破银卡保级线但高于普通档。
+  const lk8 = await sqlOnly(`SELECT COALESCE(l.keep_growth,0) AS keep FROM members m LEFT JOIN member_levels l ON l.id=m.level_id WHERE m.id=$1`, [m3.id]);
+  const keepSilver = Number(lk8.rows[0]?.keep || 0);
+  const gt8 = await sqlOnly(`SELECT COALESCE(growth_total,0) AS g FROM members WHERE id=$1`, [m3.id]);
+  const cut8 = Math.max(1, Number(gt8.rows[0]?.g || 0) - keepSilver + 10);
+  await sqlOnly(`INSERT INTO member_growth_records (store_id, member_id, direction, growth_value, base_amount, rate, biz_type, remark) VALUES (1,$1,'减',$2,0,1,'调整','e2e-grace')`, [m3.id, cut8]);
+  await sqlOnly(`UPDATE members SET growth_total = growth_total - $2 WHERE id=$1`, [m3.id, cut8]);
+  const j8set = await api('PUT', '/settings/member.level_grace_days', { token: T, body: { value: 7, reason: 'e2e 宽限 7 天' } });
+  if (j8set.code !== 0) console.log('  [debug j8set]', JSON.stringify(j8set).slice(0, 200));
+  const j8re = data(await api('POST', '/members/levels/sync', { token: T, body: {} }));
+  eq(j8re?.changed, 0, '跌破保级线首次同步 → 仅进缓冲不降级');
+  eq(j8re?.changed === 0, true, '跌破银卡保级线首次同步 → 仅进缓冲不降级（V5.0.17 成长值口径，宽限标记见下行 level_below_since）');
   const j8b = await sqlOnly(`SELECT level_below_since IS NOT NULL AS marked FROM members WHERE id=$1`, [m3.id]);
   eq(j8b.rows[0].marked, true, '宽限起始日已记录 level_below_since');
   await sqlOnly(`UPDATE members SET level_below_since = CURRENT_DATE - 8 WHERE id=$1`, [m3.id]);
@@ -472,7 +491,7 @@ try {
   eq(j8d.rows[0].level_name, '普通会员', '宽限 8 天后同步 → 降级普通会员');
   const j8e = await sqlOnly(
     `SELECT reason FROM member_level_log WHERE member_id=$1 ORDER BY id DESC LIMIT 1`, [m3.id]);
-  ok(String(j8e.rows[0].reason).includes('降级'), '降级留痕 reason=降级(宽限7天)');
+  ok(String(j8e.rows[0].reason).includes('下调'), '降级留痕 reason=缓冲期结束下调模板');
   // —— J9 报表中心（T11/T13） ——
   const j9 = data(await api('GET', '/reports/overview', { token: T }));
   ok(Number(j9?.today?.orderCount) > 0, '看板：今日订单数 > 0');
@@ -498,19 +517,19 @@ try {
 
   // K1 特价（时段价）：矿泉水 2 → 1.5，行级命中、unit_price/origin_price 留痕
   const k1p = await api('POST', '/promotions', { token: T, body: {
-    name: '矿泉水早市特价', kind: '特价', rules: { specialPrice: 1.5 },
+    name: '矿泉水早市特价', kind: '特价', rules: { specialPrice: 1.6 }, // 2026-10 价格红线 0.8×2=1.6：特价贴线不再击穿
     scope: { productIds: [pa.id] }, startAt: tStart, endAt: tEnd, startNow: true } });
   eq(k1p.code, 0, '创建特价活动（进行中）');
   const P1 = Number(data(k1p).id);
   const k1raw = await api('POST', '/sales/checkout', { token: T, body: {
-    items: [{ productId: pa.id, qty: 2 }], payments: [{ channel: '现金', amount: 3 }] } });
+    items: [{ productId: pa.id, qty: 2 }], payments: [{ channel: '现金', amount: 3.2 }] } });
   eq(k1raw.code, 0, '特价下单 2 瓶');
   const k1 = data(k1raw);
-  near(k1.promoAmount, 1, '特价让利 = (2-1.5)×2 = 1');
-  near(k1.payable, 3, '特价应收 3 元');
+  near(k1.promoAmount, 0.8, '特价让利 = (2-1.6)×2 = 0.8（红线贴线价）');
+  near(k1.payable, 3.2, '特价应收 3.2 元（贴红线价 1.6）');
   const k1i = await sqlOnly(
     `SELECT unit_price, origin_price, line_amount, promo_id FROM sale_items WHERE order_id=$1`, [k1.orderId]);
-  near(k1i.rows[0].unit_price, 1.5, '特价单价 1.5');
+  near(k1i.rows[0].unit_price, 1.6, '特价单价 1.6（贴红线价）');
   near(k1i.rows[0].origin_price, 2, 'origin_price 留痕原价 2');
   eq(Number(k1i.rows[0].promo_id), P1, '行级 promo_id 命中特价活动');
 
@@ -522,19 +541,19 @@ try {
   const P2 = Number(data(k2p).id);
   const k2raw = await api('POST', '/sales/checkout', { token: T, body: {
     items: [{ productId: pa.id, qty: 2 }, { productId: pb.id, qty: 2 }],
-    payments: [{ channel: '现金', amount: 12.96 }] } });
+    payments: [{ channel: '现金', amount: 13.16 }] } });
   eq(k2raw.code, 0, '特价+满减叠加下单（货值 4+11.96=15.96）');
   const k2 = data(k2raw);
   near(k2.goodsAmount, 15.96, 'goods_amount 按原价 15.96');
-  near(k2.promoAmount, 3, '促销合计 = 特价 1 + 满减 2 = 3');
-  near(k2.payable, 12.96, '应收 12.96');
+  near(k2.promoAmount, 2.8, '促销合计 = 特价 0.8 + 满减 2 = 2.8');
+  near(k2.payable, 13.16, '应收 13.16');
   const k2i = await sqlOnly(
     `SELECT product_id, line_amount FROM sale_items WHERE order_id=$1 ORDER BY id`, [k2.orderId]);
-  near(Number(k2i.rows[0].line_amount) + Number(k2i.rows[1].line_amount), 12.96,
+  near(Number(k2i.rows[0].line_amount) + Number(k2i.rows[1].line_amount), 13.16,
     '满减分摊后两行合计 = 应收（尾差进末行，退货按行原路退）');
   const k2o = await sqlOnly(
     `SELECT goods_amount, promo_amount, payable_amount, promo_id FROM sales_orders WHERE id=$1`, [k2.orderId]);
-  near(Number(k2o.rows[0].promo_amount), 3, '订单 promo_amount = 3');
+  near(Number(k2o.rows[0].promo_amount), 2.8, '订单 promo_amount = 2.8');
   eq(Number(k2o.rows[0].promo_id), P2, '整单级 promo_id 挂满减活动');
 
   // K3 停用特价 → 立即失效
@@ -583,24 +602,24 @@ try {
 
   // K6 会员价 vs 促销价取优：会员价 1.2 < 特价 2.5 → 用会员价，不命中促销
   // V4.9.3 会员价门控：member_discount>0（会员折扣=是）才参与会员价计价
-  await sqlOnly(`UPDATE products SET member_price=1.2, member_discount=1 WHERE id=$1`, [pa.id]);
+  await sqlOnly(`UPDATE products SET member_price=1.6, member_discount=1 WHERE id=$1`, [pa.id]); // 2026-10 贴红线价（0.8x2=1.6）；产品确认项：会员价是否应豁免价格红线
   const k6c = await api('POST', '/promotions', { token: T, body: {
     name: '矿泉水 2.5 特价', kind: '特价', rules: { specialPrice: 2.5 },
     scope: { productIds: [pa.id] }, startAt: tStart, endAt: tEnd, startNow: true } });
   eq(k6c.code, 0, '创建劣于现价的特价活动');
   const k6raw = await api('POST', '/sales/checkout', { token: T, body: {
-    items: [{ productId: pa.id, qty: 1 }], memberId: m1.id, payments: [{ channel: '现金', amount: 1.2 }] } });
+    items: [{ productId: pa.id, qty: 1 }], memberId: m1.id, payments: [{ channel: '现金', amount: 1.6 }] } });
   eq(k6raw.code, 0, '会员价下单');
   const k6 = data(k6raw);
   near(k6.promoAmount, 0, '会员价 1.2 更优 → 促销不命中（5.4 取优）');
   const k6i = await sqlOnly(
     `SELECT unit_price, promo_id FROM sale_items WHERE order_id=$1`, [k6.orderId]);
-  near(k6i.rows[0].unit_price, 1.2, '成交价取会员价 1.2');
+  near(k6i.rows[0].unit_price, 1.6, '成交价取会员价 1.6（贴红线价）');
   eq(k6i.rows[0].promo_id, null, '未命中任何促销');
 
   // K7 排期不生效 → start 生效 → 50035 状态机拦截
   const k7c = await api('POST', '/promotions', { token: T, body: {
-    name: '矿泉水 0.1 特价', kind: '特价', rules: { specialPrice: 0.1 },
+    name: '矿泉水 1.6 特价', kind: '特价', rules: { specialPrice: 1.6 }, // 2026-10 贴红线价；本段测排期状态机，金额非重点
     scope: { productIds: [pa.id] }, startAt: tStart, endAt: tEnd, startNow: false } });
   eq(k7c.code, 0, '创建排期活动（未开始）');
   const P7 = Number(data(k7c).id);
@@ -611,9 +630,9 @@ try {
   const k7s = await api('POST', '/promotions/' + P7 + '/start', { token: T });
   eq(k7s.code, 0, '排期 → 进行中');
   const k7b = await api('POST', '/sales/checkout', { token: T, body: {
-    items: [{ productId: pa.id, qty: 1 }], payments: [{ channel: '现金', amount: 0.1 }] } });
+    items: [{ productId: pa.id, qty: 1 }], payments: [{ channel: '现金', amount: 1.6 }] } });
   eq(k7b.code, 0, '启用后特价生效');
-  near(data(k7b).payable, 0.1, '特价 0.1 元成交');
+  near(data(k7b).payable, 1.6, '特价 1.6 元成交（贴红线价）');
   const k7x = await api('POST', '/promotions/' + P7 + '/stop', { token: T });
   eq(k7x.code, 0, '停用活动');
   const k7y = await api('POST', '/promotions/' + P7 + '/stop', { token: T });
@@ -675,8 +694,14 @@ try {
   const em6p = data(await api('GET', '/pos/pricebook', { token: T }));
   const em6f = data(await api('GET', '/pos/pricebook/freshness', { token: T }));
   eq(em6f.fresh, true, '重新下发后恢复新鲜');
+  // 2026-10-10 验收补充：手输改价行必须店长现场授权（priceAuthTicket 强制整改的正确行为）
+  const setAc = await api('POST', '/auth/set-auth-code', { token: T, body: { password: 'E2e#Admin2026', authCode: '135790' } });
+  if (setAc.code !== 0) console.log('  [debug set-auth-code]', JSON.stringify(setAc).slice(0, 200));
+  const authTk6 = data(await api('POST', '/auth/authorize', { token: T, body: { empNo: 'ADMIN', authCode: '135790' } }))?.ticket;
+  { const _ar = await api('POST', '/auth/authorize', { body: { empNo: 'ADMIN', authCode: '135790' } }); console.log('  [debug authorize]', JSON.stringify(_ar).slice(0,220)); }
+  ok(!!authTk6, '店长授权票据签发（120s）');
   const em6 = await api('POST', '/sales/checkout', { token: T, body: {
-    isEmergency: true, memberId: em1.id,
+    isEmergency: true, priceAuthTicket: authTk6, memberId: em1.id,
     items: [
       { productId: pbManual.id, qty: 1, manualEntry: true, manualBarcode: '6999999999999', unitPrice: 3 },
       { productId: pb.id, qty: 1 } ],

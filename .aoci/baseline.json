@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-09-27T00:42:49Z",
-  "updated_at": "2026-10-10T04:49:29Z",
+  "updated_at": "2026-10-10T07:15:37Z",
   "files": {
     ".codebuddy/teams/f1a20b55e80a4597bcbb4705ec75bba9/_auto_f1a20b55e80a4597bcbb4705ec75bba9/config.json": {
       "role": "index",
@@ -1480,9 +1480,9 @@
     },
     "backend/db/197_v5019g_revoke_app_truncate.sql": {
       "role": "index",
-      "sha256": "dac38dfa27ab9c6ba473eea3f01868128bf63e47e27ced0070eb8a93e2bde18e",
-      "size": 1133,
-      "normalized_sha256": "7bd4aaf2b0a12fadedc51a73ac6125c91c3724b690a152d18d70fe6ab6d69d0b"
+      "sha256": "6d9d8ce3386d4bb982d31f38622f971dcda466c303b01314e707403a5463c7e1",
+      "size": 1604,
+      "normalized_sha256": "f550958fbf89cea928144b583149e27d61838788c7a8cead506a04c38889b1a1"
     },
     "backend/db/198_v5019h_p08_indexes.sql": {
       "role": "index",
@@ -3804,9 +3804,9 @@
     },
     "backend/tests/e2e.mjs": {
       "role": "observe",
-      "sha256": "67b240b83b28f2ab38b95f0690a4a9ac9a5f77382ec0f0d81d56ad9831cb89c0",
-      "size": 149152,
-      "normalized_sha256": "b0e99ab2282ed0601f647e52890d205f5f039e97b00543f50063e503aa77e40b"
+      "sha256": "0ac1da67c591753c0aec891160c5ccbb8007af7ee59e3fa708a76c6ad7e4b361",
+      "size": 152768,
+      "normalized_sha256": "b6d9d9ad117e3985b4bf67fa55ca9dc9b80ea95d5cca44b2df435a6082bb5adc"
     },
     "backend/tests/unit/coupons.pure.test.ts": {
       "role": "observe",
